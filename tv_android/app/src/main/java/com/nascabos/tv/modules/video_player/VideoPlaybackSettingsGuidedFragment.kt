@@ -20,16 +20,22 @@ class VideoPlaybackSettingsGuidedFragment : GuidedStepSupportFragment() {
 
     override fun onCreateActions(actions: MutableList<GuidedAction>, savedInstanceState: Bundle?) {
         actions += buildDefaultQualityAction()
+        actions += buildAudioDownmixAction()
     }
 
     override fun onResume() {
         super.onResume()
         refreshDefaultQualityAction()
+        refreshAudioDownmixAction()
     }
 
     override fun onGuidedActionClicked(action: GuidedAction) {
         if (action.id == ID_DEFAULT_QUALITY) {
             add(requireActivity().supportFragmentManager, VideoDefaultQualityGuidedFragment())
+        } else if (action.id == ID_AUDIO_DOWNMIX) {
+            val next = !VideoPlaybackSettingsStore.getAudioDownmix(requireContext())
+            VideoPlaybackSettingsStore.setAudioDownmix(requireContext(), next)
+            refreshAudioDownmixAction()
         }
     }
 
@@ -39,6 +45,17 @@ class VideoPlaybackSettingsGuidedFragment : GuidedStepSupportFragment() {
             .id(ID_DEFAULT_QUALITY)
             .title(getString(R.string.video_playback_default_quality))
             .description(VideoPlaybackSettingsStore.qualityLabel(requireContext(), current))
+            .build()
+    }
+
+    private fun buildAudioDownmixAction(): GuidedAction {
+        val enabled = VideoPlaybackSettingsStore.getAudioDownmix(requireContext())
+        return GuidedAction.Builder(requireContext())
+            .id(ID_AUDIO_DOWNMIX)
+            .title(getString(R.string.video_playback_audio_downmix))
+            .description(getString(R.string.video_playback_audio_downmix_desc))
+            .checkSetId(CHECK_SET_ID_AUDIO_DOWNMIX)
+            .checked(enabled)
             .build()
     }
 
@@ -55,8 +72,20 @@ class VideoPlaybackSettingsGuidedFragment : GuidedStepSupportFragment() {
         if (pos >= 0) notifyActionChanged(pos)
     }
 
+    internal fun refreshAudioDownmixAction() {
+        if (!isAdded) return
+        val action = findActionById(ID_AUDIO_DOWNMIX) ?: return
+        val enabled = VideoPlaybackSettingsStore.getAudioDownmix(requireContext())
+        if (action.isChecked == enabled) return
+        action.isChecked = enabled
+        val pos = findActionPositionById(ID_AUDIO_DOWNMIX)
+        if (pos >= 0) notifyActionChanged(pos)
+    }
+
     companion object {
         private const val ID_DEFAULT_QUALITY = 1L
+        private const val ID_AUDIO_DOWNMIX = 2L
+        private const val CHECK_SET_ID_AUDIO_DOWNMIX = 21
     }
 }
 

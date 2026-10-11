@@ -14,6 +14,9 @@ class VideoLibrary {
 
   /// 是否在影视主页显示该库分类（只有内置电影/电视剧默认开启）
   final bool showInHome;
+
+  /// 音频响度归一化：开启后扫描/重扫该库时测量音频响度，播放转码时对齐音量
+  final bool audioNormalize;
   final int sort;
   final int sourceCount;
   final int movieCount;
@@ -28,6 +31,7 @@ class VideoLibrary {
     required this.libType,
     required this.isDefault,
     required this.showInHome,
+    required this.audioNormalize,
     required this.sort,
     required this.sourceCount,
     required this.movieCount,
@@ -70,6 +74,7 @@ class VideoLibrary {
     String? libType,
     bool? isDefault,
     bool? showInHome,
+    bool? audioNormalize,
     int? sort,
     int? sourceCount,
     int? movieCount,
@@ -84,6 +89,7 @@ class VideoLibrary {
       libType: libType ?? this.libType,
       isDefault: isDefault ?? this.isDefault,
       showInHome: showInHome ?? this.showInHome,
+      audioNormalize: audioNormalize ?? this.audioNormalize,
       sort: sort ?? this.sort,
       sourceCount: sourceCount ?? this.sourceCount,
       movieCount: movieCount ?? this.movieCount,
@@ -110,6 +116,11 @@ class VideoLibrary {
         showInHomeRaw == 1 ||
         showInHomeRaw == '1';
 
+    final audioNormalizeRaw = json['audio_normalize'];
+    final audioNormalize = audioNormalizeRaw == true ||
+        audioNormalizeRaw == 1 ||
+        audioNormalizeRaw == '1';
+
     return VideoLibrary(
       id: asInt(json['id']),
       name: (json['name']?.toString() ?? '').trim(),
@@ -117,6 +128,7 @@ class VideoLibrary {
       libType: (json['lib_type']?.toString() ?? 'movie').trim(),
       isDefault: isDefault,
       showInHome: showInHome,
+      audioNormalize: audioNormalize,
       sort: asInt(json['sort']),
       sourceCount: asInt(json['source_count']),
       movieCount: asInt(counts['movie']),

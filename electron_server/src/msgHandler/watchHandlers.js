@@ -45,6 +45,7 @@ function handleVideoWatchWorkerMessage({ initUtil, Logger, message }) {
         initUtil.startTinyImageWorker();
         initUtil.startNfoFetchWorker();
         void initUtil.maybeStartSubtitlePreExtractWorker();
+        void initUtil.maybeStartVideoLoudnessWorker();
       } catch (err) {
         Logger.error('❌ newVideoCome handler error:', err);
       }
@@ -62,6 +63,7 @@ function handleVideoIndexWorkerMessage({ initUtil, Logger, message }) {
         initUtil.startTinyImageWorker();
         initUtil.startNfoFetchWorker();
         void initUtil.maybeStartSubtitlePreExtractWorker();
+        void initUtil.maybeStartVideoLoudnessWorker();
       } catch (err) {
         Logger.error('❌ videoIndexingFinished handler error:', err);
       }

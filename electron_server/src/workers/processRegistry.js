@@ -32,6 +32,10 @@ const WORKER_META = {
     nameKey: 'process.worker.subtitlePreExtract.name',
     purposeKey: 'process.worker.subtitlePreExtract.purpose',
   },
+  'videoIndex/videoLoudnessWorker/videoLoudnessWorker.js': {
+    nameKey: 'process.worker.videoLoudness.name',
+    purposeKey: 'process.worker.videoLoudness.purpose',
+  },
   'subtitleVttWorker.js': { nameKey: 'process.worker.subtitleVtt.name', purposeKey: 'process.worker.subtitleVtt.purpose' },
   'videoIndex/videoScrapeWorker/videoScrapeWorker.js': { nameKey: 'process.worker.videoScrape.name', purposeKey: 'process.worker.videoScrape.purpose' },
   'backgroundTaskWorker.js': { nameKey: 'process.worker.backgroundTask.name', purposeKey: 'process.worker.backgroundTask.purpose' },

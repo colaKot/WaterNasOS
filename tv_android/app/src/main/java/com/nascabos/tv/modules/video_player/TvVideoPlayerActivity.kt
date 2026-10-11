@@ -2957,6 +2957,8 @@ class TvVideoPlayerActivity : AppCompatActivity() {
         if (subtitleIndex != null) sb.append("&subtitleIndex=").append(subtitleIndex)
         if (subtitlePath != null) sb.append("&subtitlePath=").append(Uri.encode(subtitlePath))
         if (burn) sb.append("&subtitleBurn=true")
+        // TV 本地降混开关：始终显式回传 0/1，使本机设置独立于其它客户端的全局降混配置
+        sb.append("&audioDownmix=").append(if (VideoPlaybackSettingsStore.getAudioDownmix(this)) "1" else "0")
         sb.append("&p2pChannel=video")
         if (token.isNotEmpty()) sb.append("&accessToken=").append(Uri.encode(token))
         return sb.toString()

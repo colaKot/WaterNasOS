@@ -29,6 +29,7 @@ class tableVideoLibrary {
         table.string('lib_type').notNullable(); // movie | tv | image | mixed
         table.integer('is_default').notNullable().defaultTo(0); // 1 = 内置，不可删除
         table.integer('show_in_home').notNullable().defaultTo(0); // 1 = 主页显示该库分类
+        table.integer('audio_normalize').notNullable().defaultTo(0); // 1 = 扫描时测量该库音频响度并在转码时归一化
         table.integer('sort').notNullable().defaultTo(0);
         table.timestamp('create_time').defaultTo(knex.fn.now());
       });
@@ -44,6 +45,10 @@ class tableVideoLibrary {
       if (!colNames.has('show_in_home')) {
         await knex.raw(`ALTER TABLE ${this.tableName} ADD COLUMN show_in_home INTEGER NOT NULL DEFAULT 0`).catch(() => {});
         Logger.info(`✅ Added show_in_home column to table ${this.tableName}`);
+      }
+      if (!colNames.has('audio_normalize')) {
+        await knex.raw(`ALTER TABLE ${this.tableName} ADD COLUMN audio_normalize INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+        Logger.info(`✅ Added audio_normalize column to table ${this.tableName}`);
       }
     }
 

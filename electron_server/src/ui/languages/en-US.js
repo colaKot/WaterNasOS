@@ -102,6 +102,8 @@ export default {
   'process.worker.subtitleVtt.purpose': 'Extracts subtitles from video files for the client player',
   'process.worker.subtitlePreExtract.name': 'Subtitle pre-extraction worker',
   'process.worker.subtitlePreExtract.purpose': 'Pre-extracts embedded subtitles so they appear quickly when selected in the player',
+  'process.worker.videoLoudness.name': 'Audio Loudness Measure Worker',
+  'process.worker.videoLoudness.purpose': 'Measures audio loudness of video files so playback can normalize volume between sources',
   'process.worker.videoScrape.name': 'Video Library Auto Scrape Worker',
   'process.worker.videoScrape.purpose': 'Automatically scrapes NFO info for video files in Video Library module',
   'process.worker.backgroundTask.name': 'System Background Task Worker',

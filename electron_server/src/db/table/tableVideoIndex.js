@@ -22,6 +22,9 @@ class tableVideoIndex {
         table.string('play_rel_path').defaultTo('');
         table.string('nfo_name').defaultTo('');
         table.string('nfo_name_fl').defaultTo('');
+        // ⭐ 自然排序键（2026-10-12）：数字段补零后的 lower(显示名)，
+        //    混合库两侧归并排序时用它，见 firstLetterUtil.getNaturalSortKey
+        table.string('natural_name').defaultTo('');
         table.string('media_type').defaultTo('');
         table.integer('season_count').notNullable().defaultTo(0);
         table.integer('episod_count').notNullable().defaultTo(0);
@@ -67,6 +70,8 @@ class tableVideoIndex {
       };
       await addColumn('play_rel_path', "TEXT DEFAULT ''");
       await addColumn('gen_subtitle_vtt', 'INTEGER NOT NULL DEFAULT 0');
+      // ⭐ 自然排序键（2026-10-12）：老库补列后是空串，必须跑回填脚本
+      await addColumn('natural_name', "TEXT DEFAULT ''");
     }
 
     // 图片索引独立表（说明见本文件末尾 _ensureImageIndexTable）
@@ -135,6 +140,9 @@ class tableVideoIndex {
         table.string('path').notNullable(); // 文件所在目录
         table.string('filename').notNullable();
         table.string('filename_fl').defaultTo(''); // 首字母（搜索用）
+        // ⭐ 自然排序键：数字段左侧补零后的 lower(filename)，见 firstLetterUtil.getNaturalSortKey
+        //    排序时直接 ORDER BY 这一列（纯文本 BINARY 序 == 自然序，且能走索引）
+        table.string('natural_name').defaultTo('');
         table.string('ext').defaultTo('');
         table.integer('size').notNullable().defaultTo(0);
         table.integer('width').notNullable().defaultTo(0);
@@ -169,6 +177,9 @@ class tableVideoIndex {
     await addColumn('file_hash', "TEXT DEFAULT ''");
     await addColumn('is_favorite', 'INTEGER NOT NULL DEFAULT 0');
     await addColumn('create_time', 'INTEGER NOT NULL DEFAULT 0');
+    // ⭐ 自然排序键（2026-10-12）：列建好后**旧行是空串**，
+    //    必须跑 tool/_backfill_natural_name.js 回填，否则旧图会全排在最前面。
+    await addColumn('natural_name', "TEXT DEFAULT ''");
   }
 
   async _ensureImageIndexIndexes(knex) {
@@ -182,6 +193,8 @@ class tableVideoIndex {
       { name: 'uidx_image_index_path_filename', sql: `CREATE UNIQUE INDEX uidx_image_index_path_filename ON image_index (path, filename)` },
       { name: 'idx_image_index_lib_taken', sql: `CREATE INDEX idx_image_index_lib_taken ON image_index (library_id, taken_at DESC, id DESC)` },
       { name: 'idx_image_index_lib_path', sql: `CREATE INDEX idx_image_index_lib_path ON image_index (library_id, path)` },
+      // ⭐ 自然排序索引（2026-10-12）：ORDER BY natural_name 走这条，避免 7 万行排序
+      { name: 'idx_image_index_lib_natural', sql: `CREATE INDEX idx_image_index_lib_natural ON image_index (library_id, natural_name, id)` },
       // 部分索引：只索引待生成缩略图的行 ⇒ 取队列 O(log n)，不用扫 7 万行
       { name: 'idx_image_index_pending_tiny', sql: `CREATE INDEX idx_image_index_pending_tiny ON image_index (id) WHERE gen_tiny = 0` },
     ];

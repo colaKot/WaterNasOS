@@ -76,6 +76,11 @@ function handleExpressStarted({ initUtil, Logger, message, serverId, jwtSecret }
       .catch(() => {});
     Promise.resolve()
       .then(async () => {
+        await initUtil.maybeStartVideoLoudnessWorker({ requirePending: true });
+      })
+      .catch(() => {});
+    Promise.resolve()
+      .then(async () => {
         await ensureP2pConnectWorkerState({ initUtil, serverId });
       })
       .catch(() => {});

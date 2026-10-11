@@ -9,7 +9,7 @@ import '../service/video_list_api_service.dart';
 import '../view/parts/video_list_sort_menu.dart';
 import '../../../../utils/device_utils.dart';
 
-enum VideoListSortBy { favoriteTime, viewTime, year, score, createTime, name }
+enum VideoListSortBy { favoriteTime, viewTime, year, score, createTime, name, takenTime }
 
 enum VideoListSortOrder { asc, desc }
 
@@ -122,6 +122,8 @@ class VideoListController extends GetxController {
   static const String _keyShowFanartPrefix = 'video_list_show_fanart';
   /// 布局模式（瀑布流 / 普通网格）的持久化前缀，同样按「库 / 影集」分开存。
   static const String _keyWaterfallPrefix = 'video_list_waterfall';
+  /// 名称显示开关的持久化前缀，同样按「库 / 影集」分开存。
+  static const String _keyShowNamePrefix = 'video_list_show_name';
   static double posterScaleMin = DeviceUtils.isMobile ? 0.9 : 0.7;
   static double posterScaleMax = DeviceUtils.isMobile ? 1.6 : 1.4;
   static const double posterScaleStep = 0.1;
@@ -217,6 +219,18 @@ class VideoListController extends GetxController {
   /// 默认**开**（图片库/混合库的主要用途就是看图，瀑布流更好看）。
   final RxBool waterfallEnabled = true.obs;
 
+  /// ⭐ 名称显示开关（2026-10-11）：true = 在卡片上显示文件 / 影片名称。
+  ///
+  /// **呈现位置由布局决定**（用户明确要求）：
+  /// * 瀑布流 → 名字压在**图片内部的最下方**（`VideoMediaTile(overlayTitle: true)`），
+  ///   不占额外高度 ⇒ 每项的主轴高度仍严格按 `columnWidth / aspect` 计算。
+  /// * 普通网格 → 名字写在**图片下方**（和影视列表的卡片一样），
+  ///   所以网格的 `childAspectRatio` 要把标题行的高度反算进去。
+  ///
+  /// 与 [waterfallEnabled] / [showFanart] 一样**按库 / 影集独立持久化**，
+  /// 默认**关**（图片库主要用途是看图）。
+  final RxBool showName = false.obs;
+
   // ================== 文件夹层级（图片库 / 混合库专用）==================
   /// 当前所在目录（空串 = 库根）
   final RxString folderPath = ''.obs;
@@ -310,6 +324,15 @@ class VideoListController extends GetxController {
     }
   }
 
+  /// ⭐ 这个列表是不是「图片 / 混合库」（走 [VideoMediaBrowserPage]）。
+  ///
+  /// 判据是 [initialMediaType]：图片库传 'image'，混合库传 ''（不限定类型），
+  /// 影视库传 'movie' / 'tv'。见 `VideoMediaBrowserPage` 构造 controller 的地方。
+  bool get isMediaGridLibrary {
+    final mt = initialMediaType.trim().toLowerCase();
+    return mt == 'image' || mt.isEmpty;
+  }
+
   bool get hasActiveFilters =>
       genres.isNotEmpty ||
       regions.isNotEmpty ||
@@ -339,6 +362,13 @@ class VideoListController extends GetxController {
       selectedYearGroupCount;
 
   bool get hasCustomSort {
+    // ⭐ 图片 / 混合库（2026-10-12）：默认是 name asc，不是 createTime desc；
+    //    这里若沿用影视库口径，会把「名字升序」误判成"用户自定义过"，
+    //    导致排序图标高亮 / 重置按钮逻辑出错。
+    if (isMediaGridLibrary) {
+      return sortBy.value != VideoListSortBy.name ||
+          sortOrder.value != VideoListSortOrder.asc;
+    }
     final defaultBy = isFavoriteList
         ? VideoListSortBy.favoriteTime
         : VideoListSortBy.createTime;
@@ -348,11 +378,26 @@ class VideoListController extends GetxController {
 
   int _page = 1;
   final int _pageSize = 30;
+
+  /// ⭐ 混合库翻页游标（2026-10-12）：服务端 _listMixedPaged 用「排序键 + 来源侧
+  /// + 表内 id」做 keyset 分页（两表归并下 offset 分页必然重复）。第一页为空，
+  /// 之后每页把响应里的 nextCursor 存下来、下一页原样回传。
+  /// 图片库 / 影视库服务端返回空串 ⇒ 这个变量恒为空，行为与原来完全一致。
+  String _cursor = '';
   Timer? _searchDebounce;
   StreamSubscription<int>? _deletedSubscription;
 
-  /// 排序持久化仅按 [listType] 区分；空字符串与多种入口共用 `default` 键。
+  /// 排序持久化键后缀。
+  ///
+  /// ⭐ 图片 / 混合库（2026-10-12）：必须走 [\_imageModeStorageSuffix]，
+  /// 与 [\_showFanartKey] / [\_waterfallKey] / [\_showNameKey] 一个口径 ——
+  /// 因为这些入口**都不带 listType**，若按 listType 取后缀，所有图片库 /
+  /// 影集全会撞到同一个 `default` 键，A 库选的排序会串到 B 库去。
+  /// 影视库没有 libraryId/collectionId…，[listType] 本身就唯一，行为不变。
   String _sortStorageSuffix() {
+    if (isMediaGridLibrary || libraryId > 0) {
+      return _imageModeStorageSuffix();
+    }
     final t = listType.trim();
     return t.isEmpty ? 'default' : t;
   }
@@ -394,6 +439,10 @@ class VideoListController extends GetxController {
         return VideoListSortBy.createTime;
       case 'name':
         return VideoListSortBy.name;
+      case 'taken_at':
+        // ⭐ 拍摄时间（2026-10-12）：与 [_toSortByParam] 的映射必须成对，
+        //    漏了这个 case 会导致「选了拍摄时间 → 重进库又退回默认」。
+        return VideoListSortBy.takenTime;
       default:
         return null;
     }
@@ -521,6 +570,27 @@ class VideoListController extends GetxController {
     } catch (_) {}
   }
 
+  String get _showNameKey =>
+      '${_keyShowNamePrefix}_${_imageModeStorageSuffix()}';
+
+  void _loadShowName() {
+    try {
+      showName.value = CacheManager().getBool(_showNameKey) ?? false;
+    } catch (_) {
+      showName.value = false;
+    }
+  }
+
+  /// 切换**当前库**的名称显示：true = 显示名称。
+  /// 纯 UI 状态，不重新拉数据；渲染位置随布局自动切换（见 [showName]）。
+  void setShowName(bool on) {
+    if (showName.value == on) return;
+    showName.value = on;
+    try {
+      CacheManager().setBool(_showNameKey, on);
+    } catch (_) {}
+  }
+
   @override
   void onInit() {
     super.onInit();
@@ -528,6 +598,14 @@ class VideoListController extends GetxController {
       _handleExternalDelete,
     );
     mediaType.value = initialMediaType;
+    // ⭐ 图片 / 混合库的默认排序 = **名字升序**（需求 2026-10-12）。
+    //    ⚠️ 必须放在 `_loadSortSettings()` **之前**：那个方法读不到缓存时会
+    //    保留这里设的默认值；读到缓存（用户上次手动选过）则覆盖它。
+    //    影视库维持原来的 viewTime desc 不动。
+    if (isMediaGridLibrary) {
+      sortBy.value = VideoListSortBy.name;
+      sortOrder.value = VideoListSortOrder.asc;
+    }
     if (isFavoriteList) {
       sortBy.value = VideoListSortBy.favoriteTime;
       sortOrder.value = VideoListSortOrder.desc;
@@ -536,6 +614,7 @@ class VideoListController extends GetxController {
     _loadPosterScale();
     _loadShowFanart();
     _loadWaterfall();
+    _loadShowName();
     genres.assignAll(
       initialGenres.map((e) => e.trim()).where((e) => e.isNotEmpty),
     );
@@ -574,6 +653,7 @@ class VideoListController extends GetxController {
     autoLoadFailed.value = false;
     try {
       _page = 1;
+      _cursor = '';
       final effectiveMediaType = initialMediaType.trim().isNotEmpty
           ? initialMediaType.trim()
           : mediaType.value.trim();
@@ -601,11 +681,13 @@ class VideoListController extends GetxController {
         sortOrder: _toSortOrderParam(sortOrder.value),
         folderPath: folderPath.value,
         folderMode: effectiveFolderMode,
+        cursor: _cursor,
         showLoading: showLoading,
       );
       items.assignAll(res.items);
       total.value = res.pagination.total;
       hasMore.value = res.pagination.hasNextPage;
+      _cursor = res.pagination.nextCursor;
       availablePaths.assignAll(res.validPaths);
       // 子文件夹列表跟本级文件一起取，避免「内容区空白一下再蹦出目录卡片」
       await loadFolders();
@@ -748,12 +830,16 @@ class VideoListController extends GetxController {
         // ⭐ 翻页必须沿用同一个文件夹口径，否则第 2 页会悄悄变成「整库」
         folderPath: folderPath.value,
         folderMode: effectiveFolderMode,
+        // ⭐ 混合库游标：必须与上一页的 folderPath/sortBy 完全一致，
+        //    否则游标里的排序键会与新口径错位（表现：第 2 页开始乱序）。
+        cursor: _cursor,
         showLoading: false,
       );
       _page = nextPage;
       items.addAll(res.items);
       total.value = res.pagination.total;
       hasMore.value = res.pagination.hasNextPage;
+      _cursor = res.pagination.nextCursor;
       autoLoadFailed.value = false;
     } catch (_) {
       autoLoadFailed.value = true;
@@ -957,6 +1043,12 @@ class VideoListController extends GetxController {
         return 'create_time';
       case VideoListSortBy.name:
         return 'name';
+      case VideoListSortBy.takenTime:
+        // ⭐ 拍摄时间（2026-10-12）：图片库 / 混合库专用。服务端
+        //    `_normalizeSortBy` 不认这个值时回落 create_time，所以这里必须
+        //    显式映射成它认的字符串 —— 见 electron_server 的
+        //    `_normalizeSortBy` 白名单（已同步加 'taken_at'）。
+        return 'taken_at';
     }
   }
 

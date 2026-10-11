@@ -5,7 +5,7 @@ const path = require('path');
 const FileUtil = require('../../utils/fileUtil');
 const VideoFfprobeUtil = require('../../utils/videoFfprobeUtil');
 const { readAndParseNfo } = require('./nfoParser');
-const { getFirstLetter, isSeasonFolderName, parseEpisodeFromName, parseSeasonNumberFromName, normalizeNameForNfoGuess, isSeasonFolderOfShow } = require('./videoIndexUtil');
+const { getFirstLetter, getNaturalSortKey, isSeasonFolderName, parseEpisodeFromName, parseSeasonNumberFromName, normalizeNameForNfoGuess, isSeasonFolderOfShow } = require('./videoIndexUtil');
 
 function _isImageExt(ext) {
   const e = String(ext || '').toLowerCase();
@@ -478,8 +478,27 @@ async function syncVideoIndex2KeyFromNfoFields({ knex, indexId, mediaType, nfoRe
   return true;
 }
 
+/**
+ * ⭐ 补 natural_name（自然排序键）。
+ *
+ * 放在这里而不是各个 buildXxxRow 里，是因为**所有视频/剧集写库都必经 upsertIndex**
+ * （8 处构造点、文件名变量名还不统一：name / filename / baseName）。
+ * 单一收口 = 不会漏、不用改 8 处。
+ *
+ * ⚠️ 表达式必须与 videoListService 里排序用的 **完全一致**：
+ *       COALESCE(NULLIF(nfo_name, ''), filename)
+ *    否则「写入的键」和「排序依据」会错位。
+ */
+function _withNaturalName(row) {
+  if (!row || typeof row !== 'object') return row;
+  const display = (row.nfo_name && String(row.nfo_name).trim()) || row.filename || '';
+  row.natural_name = getNaturalSortKey(display);
+  return row;
+}
+
 async function upsertIndex(knex, row) {
   if (!row || !row.path || !row.filename) return 0;
+  _withNaturalName(row);
   await knex('video_index').insert(row).onConflict(['path', 'filename']).merge(row);
   const existed = await knex('video_index')
     .where({ path: row.path, filename: row.filename })
@@ -524,6 +543,9 @@ async function buildImageIndexRow({ fullPath, dirPath, filename, ext, libraryId 
     path: String(dirPath),
     filename: String(filename),
     filename_fl: getFirstLetter(filename),
+    // ⭐ 自然排序键（2026-10-12）：lower + 数字段补零，排序直接 ORDER BY 这列。
+    //    见 utils/firstLetterUtil.getNaturalSortKey 的注释（1,2,10 而不是 1,10,2）。
+    natural_name: getNaturalSortKey(filename),
     ext: ext || '',
     size: Number(stat.size || 0) || 0,
     width: 0, // ⚠️ 扫描期不读 sharp 元数据：7 万张图逐张 metadata() 是扫描最慢的一环，
@@ -560,6 +582,8 @@ async function upsertImageIndex(knex, row) {
       'file_mtime',
       'file_ctime',
       'create_time',
+      // ⭐ 文件名可能被重命名（同名不同内容替换），排序键必须跟着更新
+      'natural_name',
       // ⚠️ 故意不含 width/height：扫描期不读图片尺寸（7 万张逐张 metadata() 是最大的
       //    性能坑），若把 0 写进去会覆盖掉迁移时保留的正确值。
       // ⚠️ 也不含 gen_tiny：否则已生成的缩略图会被重置回 0 反复重做。
@@ -597,6 +621,7 @@ async function upsertImageIndexBatch(knex, rows) {
         'file_mtime',
         'file_ctime',
         'create_time',
+        'natural_name',
         // width/height / gen_tiny 同单条版本，刻意不覆盖
       ]);
   });

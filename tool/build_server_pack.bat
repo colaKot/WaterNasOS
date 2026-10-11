@@ -21,6 +21,22 @@ if /I not "%~2"=="nokill" taskkill /F /IM WaterNasOSServer.exe >nul 2>&1
 echo ==== pack start %DATE% %TIME% out=%OUT% ==== > "%LOG%"
 "C:\Program Files\nodejs\node.exe" node_modules\electron-builder\out\cli\cli.js --win --x64 --dir -c.win.signAndEditExecutable=false -c.npmRebuild=false -c.electronDist=node_modules\electron\dist -c.directories.output=%OUT% >> "%LOG%" 2>&1
 set RC=%ERRORLEVEL%
+rem --- 图标：上面的 signAndEditExecutable=false 会让 electron-builder 跳过 rcedit，
+rem     于是打包出的 exe 保留 electron 出厂默认图标（文件图标 / 任务栏图标都是它）。
+rem     这里在构建成功后用 rcedit 把 libs\logo.ico 补写进 win-unpacked 下的主 exe。
+if "%RC%"=="0" call :set_icon
 echo ==== EXITCODE=%RC% %DATE% %TIME% ==== >> "%LOG%"
 rem ⚠️ 必须 exit /b 带出真实退出码（见 build_web.bat 同处注释）。
 endlocal & exit /b %RC%
+
+:set_icon
+set RCEDIT=node_modules\electron-winstaller\vendor\rcedit.exe
+if not exist "%RCEDIT%" (
+  echo [icon] rcedit.exe not found, skip >> "%LOG%"
+  goto :eof
+)
+for %%F in ("%OUT%\win-unpacked\*.exe") do (
+  echo [icon] set-icon %%~nxF ^<- libs\logo.ico >> "%LOG%"
+  "%RCEDIT%" "%%~fF" --set-icon "libs\logo.ico" >> "%LOG%" 2>&1
+)
+goto :eof

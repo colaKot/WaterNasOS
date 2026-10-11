@@ -5,7 +5,7 @@ const path = require('path');
 const config = require('../../config/config');
 const FileUtil = require('../../utils/fileUtil');
 const Logger = require('../../utils/logger');
-const { getFirstLetter } = require('../../utils/firstLetterUtil');
+const { getFirstLetter, getNaturalSortKey } = require('../../utils/firstLetterUtil');
 
 function isVideoFileExt(ext) {
   const e = String(ext || '').toLowerCase();
@@ -597,6 +597,7 @@ module.exports = {
   isVideoFileExt,
   isImageFileExt,
   getFirstLetter,
+  getNaturalSortKey,
   isSeasonFolderName,
   parseSeasonNumberFromName,
   parseEpisodeFromName,

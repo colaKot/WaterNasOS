@@ -384,6 +384,26 @@ class _LibraryCard extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(width: 10),
+          // 音频响度归一化：开启后扫描/重扫该库时测量音量，播放转码时对齐（默认关闭）
+          Tooltip(
+            message: 'video_audio_normalize'.tr,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.graphic_eq,
+                  size: 14,
+                  color: faint,
+                ),
+                const SizedBox(width: 4),
+                CustomSwitch(
+                  value: library.audioNormalize,
+                  onChanged: (v) => ctrl.setAudioNormalize(library, v),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(width: 4),
         ],
       ),

@@ -56,6 +56,11 @@ class VideoListApiService extends BaseApiService {
     String? sortOrder,
     String? folderPath,
     String? folderMode,
+    /// ⭐ 混合库翻页游标（2026-10-12）：上一页响应的 `pagination.nextCursor`。
+    /// 混合库是「图片 + 视频」两表归并，offset 分页在归并场景下必然重复，
+    /// 所以服务端改游标分页 —— 只有**混合库**会返回非空游标；图片库 / 影视库
+    /// 该值恒为空串，传不传都不影响。
+    String? cursor,
     bool showLoading = false,
   }) async {
     final res = await apiPost<Map<String, dynamic>>(
@@ -90,6 +95,8 @@ class VideoListApiService extends BaseApiService {
           'folderMode': folderMode.trim(),
           'folderPath': folderPath ?? '',
         },
+        // ⭐ 混合库游标：只在非空时带上（空串 = 第一页，服务端等价于不传）。
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
       },
       showLoading: showLoading,
     );
@@ -129,6 +136,9 @@ class VideoListPagination {
   final bool hasNextPage;
   final bool hasPrevPage;
 
+  /// ⭐ 混合库专属：下一页游标（2026-10-12）。空串 = 没有下一页 / 本库不用游标。
+  final String nextCursor;
+
   const VideoListPagination({
     required this.total,
     required this.page,
@@ -136,6 +146,7 @@ class VideoListPagination {
     required this.totalPages,
     required this.hasNextPage,
     required this.hasPrevPage,
+    this.nextCursor = '',
   });
 
   const VideoListPagination.empty()
@@ -144,7 +155,8 @@ class VideoListPagination {
       limit = 30,
       totalPages = 0,
       hasNextPage = false,
-      hasPrevPage = false;
+      hasPrevPage = false,
+      nextCursor = '';
 
   factory VideoListPagination.fromJson(Map<String, dynamic> json) {
     return VideoListPagination(
@@ -154,6 +166,7 @@ class VideoListPagination {
       totalPages: (json['totalPages'] as num?)?.toInt() ?? 0,
       hasNextPage: (json['hasNextPage'] as bool?) ?? false,
       hasPrevPage: (json['hasPrevPage'] as bool?) ?? false,
+      nextCursor: (json['nextCursor'] as String?) ?? '',
     );
   }
 }

@@ -100,6 +100,8 @@ export default {
   'process.worker.subtitleVtt.purpose': '用于从视频文件中提取字幕，字幕用于前端播放器',
   'process.worker.subtitlePreExtract.name': '字幕预提取进程',
   'process.worker.subtitlePreExtract.purpose': '用于预先提取视频中的内置字幕，避免播放器选中字幕后无法及时显示',
+  'process.worker.videoLoudness.name': '音频响度测量进程',
+  'process.worker.videoLoudness.purpose': '用于测量影音文件的音频响度，便于播放时做响度归一化',
   'process.worker.videoScrape.name': '影音库影音信息自动刮削进程',
   'process.worker.videoScrape.purpose': '用于自动刮削影音库模块的影音文件NFO信息',
   'process.worker.backgroundTask.name': '系统背景任务进程',

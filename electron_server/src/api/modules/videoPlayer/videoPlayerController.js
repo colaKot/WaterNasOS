@@ -16,6 +16,7 @@ const FileUtil = require('../../../utils/fileUtil');
 const { hasPermission } = require('../../../utils/permissionUtil');
 const jwtUtil = require('../../../utils/jwtUtil');
 const thunderSubtitleService = require('./thunderSubtitleService');
+const VideoLibraryService = require('../video/library/videoLibraryService');
 
 ffmpeg.setFfmpegPath(ffmpegPath.path);
 ffmpeg.setFfprobePath(ffprobePath.path);
@@ -127,6 +128,23 @@ function _isMp4CompatibleAudioCodec(codecName) {
   const codec = _normalizeText(codecName).toLowerCase();
   if (!codec) return true;
   return new Set(['aac', 'alac', 'ac3', 'eac3', 'ec3', 'mp3', 'mp2']).has(codec);
+}
+
+/** 读取该文件已缓存的响度测量值（异步入库补齐）；不可用或未测量返回 null */
+async function _readCachedAudioLoudness(db, filePath) {
+  if (!db) return null;
+  try {
+    const fileHash = await FileUtil.getFileHash(filePath);
+    if (!fileHash) return null;
+    const row = await db('video_ffmpeg_info').where({ id: fileHash }).first();
+    const raw = row && row.audio_loudness != null ? String(row.audio_loudness) : '';
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || parsed.unavailable) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function _shouldFallbackMovCopyAudio(db, filePath) {
@@ -682,7 +700,7 @@ class VideoPlayerController {
   async transcode(req, res) {
     try {
       await tableVideoTranscodeSession.deleteOlderThanMs(24 * 60 * 60 * 1000, req.dbVideo).catch(() => null);
-      const { filePath, playId, seek, width, resolution, bitrate, audioIndex, subtitleIndex, subtitlePath, subtitleBurn, videoCopy, client, device_id, deviceId } = req.query;
+      const { filePath, playId, seek, width, resolution, bitrate, audioIndex, subtitleIndex, subtitlePath, subtitleBurn, videoCopy, audioDownmix: audioDownmixQuery, client, device_id, deviceId } = req.query;
 
       if (!filePath || !playId) {
         return ResponseUtil.error(req, res, 'videoPlayer.INVALID_PARAMS');
@@ -719,7 +737,7 @@ class VideoPlayerController {
           }
         }
       }
-      // 音频降混：影视设置里的开关，开启后转码时把非双声道音轨降混成双声道
+      // 音频降混：请求显式传入的 audioDownmix 优先（如 TV 端本地开关，需独立于全局配置）；未携带时回退到影视设置里的全局开关
       let audioDownmix = false;
       try {
         const downmixRaw = await tableConfig.getConfigByKey('videoAudioDownmix');
@@ -727,6 +745,22 @@ class VideoPlayerController {
       } catch (_) {
         audioDownmix = false;
       }
+      if (audioDownmixQuery !== undefined && audioDownmixQuery !== null && String(audioDownmixQuery).trim() !== '') {
+        const v = String(audioDownmixQuery).trim().toLowerCase();
+        audioDownmix = v === '1' || v === 'true';
+      }
+      // 音频响度归一化：按该文件所属影视库的开关判断（库级设置）；
+      // 开启时带上该文件已测量好的响度值（两遍精准模式）
+      let audioNormalize = false;
+      try {
+        const libService = new VideoLibraryService(req.dbVideo);
+        audioNormalize = await libService.isAudioNormalizeEnabledForPath(playbackSource.logicalFilePath);
+      } catch (_) {
+        audioNormalize = false;
+      }
+      const audioLoudness = audioNormalize
+        ? await _readCachedAudioLoudness(req.dbVideo, playbackSource.logicalFilePath)
+        : null;
       const baseOptions = {
         seek: seekSeconds,
         width: Number.isFinite(w) && w > 0 ? w : undefined,
@@ -739,6 +773,8 @@ class VideoPlayerController {
         // 视频是否原画直通（仅转音频）。Worker 会再校验 HDR/字幕烧录等不适用场景后回退重编。
         videoCopy: videoCopy === 'true',
         audioDownmix,
+        audioNormalize,
+        audioLoudness: audioLoudness || undefined,
         segmentDurationSeconds: 2,
       };
 

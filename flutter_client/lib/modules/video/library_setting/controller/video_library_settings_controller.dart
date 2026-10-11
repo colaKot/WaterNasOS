@@ -146,6 +146,48 @@ class VideoLibrarySettingsController extends GetxController {
     }
   }
 
+  /// 切换「音频响度归一化」：乐观更新，失败回滚
+  ///
+  /// ⚠️ 与 [setShowInHome] 同理，必须用 [RxList.refresh] 让 UI 重建。
+  /// 开启后服务端会自动启动响度测量进程，为库中已有文件补齐测量值。
+  Future<void> setAudioNormalize(VideoLibrary library, bool value) async {
+    final idx = libraries.indexWhere((e) => e.id == library.id);
+    if (idx < 0) return;
+
+    final before = libraries[idx];
+    if (before.audioNormalize == value) return;
+
+    libraries[idx] = before.copyWith(audioNormalize: value);
+    libraries.refresh();
+
+    try {
+      final res = await VideoLibraryApiService.instance.setAudioNormalize(
+        library.id,
+        value,
+        showLoading: false,
+      );
+      if (!res.success) {
+        _rollback(before, idx);
+        ToastUtil.show(res.message ?? 'operation_failed'.tr);
+        return;
+      }
+      final dynamic updated = res.data;
+      if (updated is Map) {
+        final map = updated.cast<String, dynamic>();
+        if (map.isNotEmpty) {
+          final parsed = VideoLibrary.fromJson(map);
+          if (parsed.id > 0) {
+            libraries[idx] = parsed;
+            libraries.refresh();
+          }
+        }
+      }
+    } catch (_) {
+      _rollback(before, idx);
+      ToastUtil.show('operation_failed'.tr);
+    }
+  }
+
   void _rollback(VideoLibrary before, int idx) {
     if (idx < 0 || idx >= libraries.length) return;
     libraries[idx] = before;

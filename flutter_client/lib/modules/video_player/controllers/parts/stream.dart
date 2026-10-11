@@ -185,11 +185,52 @@ extension PlayerTracks on PlayerController {
     return false;
   }
 
+  /// 判断视频轨是否为杜比视界（判定口径与服务端 `isDolbyVisionStream` 保持一致）。
+  /// DV Profile 5 的基底层在 Chromium/Media3 上无法正确渲染，直放会发紫，必须走转码。
+  bool _isDolbyVisionVideoTrack(Map<String, dynamic> v) {
+    final tag = v['codec_tag_string']?.toString().toLowerCase() ?? '';
+    if (tag == 'dvhe' || tag == 'dvh1') return true;
+    final tags = v['tags'];
+    final encoder = tags is Map ? (tags['encoder']?.toString() ?? '') : '';
+    if (encoder.toLowerCase().contains('dovi')) return true;
+    final sideDataType = v['side_data_type']?.toString().toLowerCase() ?? '';
+    if (sideDataType.contains('dovi') || sideDataType.contains('dolby')) return true;
+    final dvProfile = num.tryParse('${v['dv_profile']}');
+    if (dvProfile != null && dvProfile > 0) return true;
+    if ('${v['rpu_present_flag']}' == '1') return true;
+    final sideList = v['side_data_list'];
+    if (sideList is List) {
+      for (final sd in sideList) {
+        if (sd is! Map) continue;
+        final t = sd['side_data_type']?.toString().toLowerCase() ?? '';
+        if (t.contains('dovi') || t.contains('dolby')) return true;
+        final p = num.tryParse('${sd['dv_profile']}');
+        if (p != null && p > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  /// 当前视频轨里是否存在杜比视界流。
+  bool _hasDolbyVisionVideoTrack() {
+    for (final v in _rawVideoTracks) {
+      if (_isDolbyVisionVideoTrack(v)) return true;
+    }
+    return false;
+  }
+
   /// Android 原画：仅对 ExoPlayer 难以直链的容器强制转码（对齐 TV 端）。
   void checkAndroidIfNeedTranscode() {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     if (playbackEngineType.value != PlaybackEngineType.media3) return;
     if (currentQuality.value != 'original') return;
+
+    // 杜比视界直放会发紫（尤其 Profile 5），一律交给服务端色调映射后重编
+    if (_hasDolbyVisionVideoTrack()) {
+      currentQuality.value = fallbackTranscodeQuality;
+      _playId ??= const Uuid().v4();
+      return;
+    }
 
     final ext = path
         .extension(currentSourcePathForInfo())
@@ -254,6 +295,14 @@ extension PlayerTracks on PlayerController {
       needTranscode = true;
       videoReason = true;
       unsupportedReason = 'Container $playbackExt not supported on Web';
+    }
+
+    // 杜比视界（尤其 Profile 5）在 Chromium 无法正确渲染，直放会发紫，必须重编视频。
+    // 注意要有 videoReason（而非 audioReason），否则会被「仅转音频、视频直通」分支绕过。
+    if (!needTranscode && _hasDolbyVisionVideoTrack()) {
+      needTranscode = true;
+      videoReason = true;
+      unsupportedReason = 'Dolby Vision video: force transcode on Web';
     }
 
     // 1. 检查音频编码

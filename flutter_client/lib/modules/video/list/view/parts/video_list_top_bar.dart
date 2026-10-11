@@ -348,6 +348,9 @@ class _VideoListTopBarState extends State<VideoListTopBar> {
         return Icons.star_border;
       case VideoListSortBy.name:
         return Icons.sort_by_alpha;
+      case VideoListSortBy.takenTime:
+        // ⭐ 拍摄时间（2026-10-12）：图片 / 混合库专用排序。
+        return Icons.camera_alt_outlined;
     }
   }
 }

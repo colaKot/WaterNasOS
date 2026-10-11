@@ -23,6 +23,8 @@ class TableFfmpegVideoInfo {
         table.integer('height');
         // Playback hints cache (JSON, built from container atoms / tags), for faster open experience.
         table.text('playback_hints');
+        // 音频响度测量结果（JSON，loudnorm 首遍输出），供转码做两遍线性响度归一化
+        table.text('audio_loudness');
         table.integer('create_time');
       });
       Logger.info('✅ video_ffmpeg_info table created');
@@ -37,6 +39,7 @@ class TableFfmpegVideoInfo {
     };
 
     await ensureColumn('playback_hints', t => t.text('playback_hints'));
+    await ensureColumn('audio_loudness', t => t.text('audio_loudness'));
   }
 
   static async createIndexes(knex) {

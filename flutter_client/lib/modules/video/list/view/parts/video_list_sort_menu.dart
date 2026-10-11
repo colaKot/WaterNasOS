@@ -25,6 +25,59 @@ class VideoListSortEntry {
 List<VideoListSortEntry> getVideoListSortEntries(
   VideoListController controller,
 ) {
+  // ⭐ 图片 / 混合库（2026-10-12）：只列**它真正支持**的排序。
+  //    需求明确「默认名字升序」⇒ 名字项排最前，且 asc 在前。
+  //    ⛔ 不给 year / score / favorite_time：那是影视库的字段，
+  //       图片库 / 混合库没有（混合库虽有影片，但排序要两侧统一口径，
+  //       按上映年份排图片毫无意义）。
+  if (controller.isMediaGridLibrary) {
+    return <VideoListSortEntry>[
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.name,
+        order: VideoListSortOrder.asc,
+        labelKey: 'name_asc',
+      ),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.name,
+        order: VideoListSortOrder.desc,
+        labelKey: 'name_desc',
+      ),
+      const VideoListSortEntry.divider(),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.takenTime,
+        order: VideoListSortOrder.desc,
+        labelKey: 'video_list_sort_taken_desc',
+      ),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.takenTime,
+        order: VideoListSortOrder.asc,
+        labelKey: 'video_list_sort_taken_asc',
+      ),
+      const VideoListSortEntry.divider(),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.viewTime,
+        order: VideoListSortOrder.desc,
+        labelKey: 'video_list_sort_view_time_desc',
+      ),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.viewTime,
+        order: VideoListSortOrder.asc,
+        labelKey: 'video_list_sort_view_time_asc',
+      ),
+      const VideoListSortEntry.divider(),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.createTime,
+        order: VideoListSortOrder.desc,
+        labelKey: 'create_time_desc',
+      ),
+      const VideoListSortEntry.option(
+        by: VideoListSortBy.createTime,
+        order: VideoListSortOrder.asc,
+        labelKey: 'create_time_asc',
+      ),
+    ];
+  }
+
   final showFavoriteTime = controller.isFavoriteList;
   return <VideoListSortEntry>[
     if (showFavoriteTime) ...[

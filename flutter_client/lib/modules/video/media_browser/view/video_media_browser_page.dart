@@ -1,8 +1,11 @@
+import 'package:WaterNasOS/core/routes/app_routes.dart';
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
 import 'package:WaterNasOS/modules/base/components/custom_no_data.dart';
 import 'package:WaterNasOS/modules/base/components/custom_segmented_icon_toggle.dart';
+import 'package:WaterNasOS/modules/video/base/beans/video_item_bean.dart';
 import 'package:WaterNasOS/modules/video/list/controller/video_list_controller.dart';
 import 'package:WaterNasOS/modules/video/list/view/parts/video_list_grid.dart';
+import 'package:WaterNasOS/modules/video/list/view/parts/video_list_sort_menu.dart';
 import 'package:WaterNasOS/modules/video/media_browser/view/parts/media_folder_grid.dart';
 import 'package:WaterNasOS/modules/video/media_browser/view/parts/media_masonry_sliver.dart';
 import 'package:WaterNasOS/modules/video/media_browser/view/parts/video_media_grid.dart';
@@ -82,11 +85,50 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
   }
 
   Future<void> _openViewer(VideoListController ctrl, int index) async {
+    // ⭐ 混合库点视频：**直接进播放页**，不经过中间的全屏查看器
+    //    （需求 2026-10-11：视频没有可看的"信息"，中间那一层纯属多一次点击）。
+    final items = ctrl.items;
+    if (index >= 0 && index < items.length && !items[index].isImage) {
+      await _openVideoFromList(ctrl, items[index]);
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) =>
             VideoMediaViewerPage(controller: ctrl, initialIndex: index),
       ),
+    );
+  }
+
+  /// 从列表直接进播放器：把**本库全部视频**作为播放列表，
+  /// 这样在播放器里也能继续切上一个/下一个。
+  ///
+  /// 口径与 [VideoMediaViewerPage] 里那份完全一致（`playFilePath` 优先，
+  /// 回退 `fullPath`；`id` 用来定位初始项）—— 两处必须同步改。
+  Future<void> _openVideoFromList(
+    VideoListController ctrl,
+    VideoHomeItemBean tapped,
+  ) async {
+    final playlist = <Map<String, dynamic>>[];
+    var initialIndex = -1;
+    for (final it in ctrl.items) {
+      if (it.isImage) continue;
+      final playPath =
+          (it.playFilePath.isNotEmpty ? it.playFilePath : it.fullPath).trim();
+      if (playPath.isEmpty) continue;
+      if (identical(it, tapped) || it.id == tapped.id) {
+        initialIndex = playlist.length;
+      }
+      playlist.add(<String, dynamic>{
+        'path': playPath,
+        'name': it.nfoName.isNotEmpty ? it.nfoName : it.filename,
+      });
+    }
+    if (playlist.isEmpty) return;
+    if (initialIndex < 0) initialIndex = 0;
+    await AppRoutes.toVideoPlayer(
+      playlist: playlist,
+      initialIndex: initialIndex,
     );
   }
 
@@ -126,6 +168,9 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
                   final folders = ctrl.subFolders.toList(growable: false);
                   final waterfallOn = ctrl.waterfallEnabled.value;
                   final showFanart = ctrl.showFanart.value;
+                  // ⭐ 名称显示开关同样必须在这里（build 阶段）读一次：
+                  //    下面两个 Sliver 内部都是 layout 阶段，读不到 Rx 依赖。
+                  final showName = ctrl.showName.value;
                   final showFolderSection =
                       ctrl.showFolderCards && folders.isNotEmpty;
 
@@ -169,11 +214,16 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
                                 ? MediaMasonrySliver(
                                     items: items,
                                     showFanart: showFanart,
+                                    // ⭐ 瀑布流：名字压在图片内部最下方
+                                    showName: showName,
                                     onOpen: (index) => _openViewer(ctrl, index),
                                   )
                                 : VideoMediaGrid(
                                     controller: ctrl,
                                     showFanart: showFanart,
+                                    // ⭐ 网格：名字写在图片下方（由 Grid 自己读
+                                    //    controller.showName —— 它是 StatelessWidget
+                                    //    且内部有 Obx，本来就要自己监听）
                                     onOpen: (index) => _openViewer(ctrl, index),
                                   ),
                           ),
@@ -249,6 +299,12 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
           const SizedBox(width: 6),
           _buildViewToggle(ctrl),
           const SizedBox(width: 6),
+          // ⭐ 排序（2026-10-12，需求）：**放在视图开关之前**，与影视列表
+          //    顶栏的排布一致（先排序，再布局类开关）。默认名字升序。
+          //    直接用影视库那套 [VideoListSortMenu] —— 它内部会按
+          //    `isMediaGridLibrary` 自动换成图片 / 混合库适用的排序项。
+          VideoListSortMenu(controller: ctrl),
+          const SizedBox(width: 6),
           // ⭐ 两个开关（2026-10-10）：
           //   [瀑布流 | 网格]   —— 布局，与「文件夹 / 整库平铺」正交
           //   [封面图 | 缩略图] —— 视频条目用竖版封面还是横版缩略图
@@ -256,6 +312,10 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
           _buildLayoutToggle(ctrl),
           const SizedBox(width: 6),
           _buildImageModeToggle(ctrl),
+          const SizedBox(width: 6),
+          // ⭐ 名称显示开关（2026-10-11）：瀑布流压在图片内部最下方，
+          //    网格写在图片下方（与影视列表卡片一致）
+          _buildNameToggle(ctrl),
           const SizedBox(width: 6),
           SizedBox(
             width: 240,
@@ -334,6 +394,26 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         secondTooltip: 'video_list_image_fanart'.tr,
         secondSelected: ctrl.showFanart.value,
         onChanged: ctrl.setShowFanart,
+      );
+    });
+  }
+
+  /// 名称显示开 / 关。
+  ///
+  /// 用同一个两段组件当**开关**（而不是单独画一个按钮）：本页所有视图控制
+  /// 都是这个组件的两段形态，保持一致；「不显示 / 显示」正好是它的两段。
+  /// ⚠️ 图标显示的是**当前形态**（与 [_buildViewToggle] 同一约定）。
+  Widget _buildNameToggle(VideoListController ctrl) {
+    return Obx(() {
+      final on = ctrl.showName.value;
+      return CustomSegmentedIconToggle(
+        firstIcon: Icons.hide_image_outlined,
+        secondIcon: Icons.title_rounded,
+        firstTooltip: 'video_list_hide_name'.tr,
+        secondTooltip: 'video_list_show_name'.tr,
+        secondSelected: on,
+        // 组件语义：secondSelected = 选中后半（显示名称）
+        onChanged: ctrl.setShowName,
       );
     });
   }

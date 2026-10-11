@@ -502,13 +502,9 @@ class VideoConfigController {
       }
       const results = await Promise.all(savePairs);
       if (!results.every(Boolean)) return ResponseUtil.error(req, res, 'common.ERROR', 500);
-      return ResponseUtil.success(
-        req,
-        res,
-        audioDownmix === null ? { quality } : { quality, audioDownmix },
-        'video.PLAY_QUALITY_CONFIG_SAVED',
-        200
-      );
+      const payload = { quality };
+      if (audioDownmix !== null) payload.audioDownmix = audioDownmix;
+      return ResponseUtil.success(req, res, payload, 'video.PLAY_QUALITY_CONFIG_SAVED', 200);
     } catch (_) {
       return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }

@@ -36,6 +36,14 @@ class MediaMasonrySliver extends StatelessWidget {
   /// 视频条目用横版缩略图（fanart 3:2）还是竖版封面（poster 2:3）
   final bool showFanart;
 
+  /// ⭐ 名称显示（2026-10-11）：瀑布流里名字压在**图片内部最下方**。
+  ///
+  /// 刻意**不占额外高度** —— 每项的主轴高度仍严格等于
+  /// `columnWidth / aspect`，[SliverVariedExtentList.itemExtentBuilder] 与
+  /// 实际 child 高度必须逐像素一致，否则 `scrollExtent` 会被算错、
+  /// 出现"滚到底还有空白 / 加载不出来"。
+  final bool showName;
+
   final void Function(int index) onOpen;
 
   const MediaMasonrySliver({
@@ -44,6 +52,7 @@ class MediaMasonrySliver extends StatelessWidget {
     required this.onOpen,
     this.desiredColumnWidth = 430,
     this.showFanart = false,
+    this.showName = false,
   });
 
   /// 没有宽高信息时的兜底比例：4:3（需求明确「不要方形」）
@@ -200,6 +209,11 @@ class MediaMasonrySliver extends StatelessWidget {
                               // ⭐ 透传「封面图 / 缩略图」开关：漏了它的话，
                               //    瀑布流里切这个开关将完全没有反应（只有网格模式会变）。
                               showFanart: showFanart,
+                              // ⭐ 透传「名称显示」开关。overlayTitle: true ⇒
+                              //    名字压在图片内部最下方，**不改变 itemExtent**
+                              //    （上面 itemExtentBuilder 只算 columnWidth / aspect）。
+                              showName: showName,
+                              overlayTitle: true,
                               onTap: () => onOpen(itemIndex),
                             ),
                           );

@@ -448,7 +448,9 @@ function _normalizeSortBy(input) {
   const v = String(input || '')
     .trim()
     .toLowerCase();
-  if (v === 'year' || v === 'score' || v === 'create_time' || v === 'name' || v === 'favorite_time' || v === 'view_time') return v;
+  // ⭐ 'taken_at'（拍摄时间）2026-10-12 加入白名单：图片库 / 混合库默认排它。
+  //    不加的话会被下面的兜底改成 create_time，前端选了"拍摄时间"却没反应。
+  if (v === 'taken_at' || v === 'year' || v === 'score' || v === 'create_time' || v === 'name' || v === 'favorite_time' || v === 'view_time') return v;
   return 'create_time';
 }
 
@@ -457,6 +459,114 @@ function _normalizeSortOrder(input) {
     .trim()
     .toLowerCase();
   return v === 'asc' ? 'asc' : 'desc';
+}
+
+/**
+ * ⭐ 混合库的排序键映射（2026-10-12）。
+ *
+ * 视频侧没有 `taken_at`（拍摄时间），只有 `create_time`（入库时间）。
+ * 若图片侧按 taken_at、视频侧按 create_time，两侧就是**两个不同的时钟** ——
+ * 表现为混排序列里图片和视频各占一段，而不是真交错。
+ * 所以混合库里把 `taken_at` 统一降到 `create_time`：
+ *   · 图片库（纯 image_index）：仍走 `taken_at`，真实拍摄时间有意义
+ *   · 混合库：两侧都走 `create_time`，口径一致
+ * 前端菜单文案仍是「拍摄时间」，服务端做映射，前端无需感知。
+ */
+function _mixedEffectiveSortBy(sortBy) {
+  return sortBy === 'taken_at' ? 'create_time' : sortBy;
+}
+
+/**
+ * 混合库「图片侧条目 id」的命名空间偏移量（2026-10-12）。
+ *
+ * image_index 与 video_index 的 id 各自从 1 自增 ⇒ **会撞号**。混合库把两类
+ * 条目放在同一个 `items` 数组里给前端，撞号会导致 ValueKey 冲突 / 按 id 定位
+ * 跳错条。这里给图片侧 id 加上一个足够大的常量偏移，保证：
+ *   · 与 video_index 的 id 空间不重叠（video_index 实测 max ≈ 3.3e5）
+ *   · 与原 image_index id 不重叠（实测 max ≈ 7.5e4）
+ * 取值 1e9 留出两个数量级余量；响应里另有 `image_id` 保留原始 id。
+ */
+const MIXED_IMAGE_ID_OFFSET = 1000000000;
+
+/**
+ * 混合库 keyset 分页游标编解码（2026-10-12）。
+ *
+ * 游标 = 「上一页最后一条的**排序键** + 来源侧 + 表内 id」，格式：
+ *   `${sortKey}\u0001${src}\u0001${sid}`
+ *     sortKey: 统一投影成 TEXT 的排序键（name → lower(name)；
+ *              时间 → printf('%020d', …)）
+ *     src    : 0 = image_index，1 = video_index
+ *     sid    : 该表内的 id（两表 id 会撞号 ⇒ 必须配 src 才唯一）
+ *
+ * ⚠️ 分隔符用 \u0001 而不是 `|`：排序键是**任意文件名**，完全可能包含 `|`，
+ *    用 `|` 会把游标切错（实测文件名里带 `|` 的并不罕见）。
+ * ⚠️ JSON 会转义反斜杠，中文与反斜杠都安全；但为了和 SQL 里 `lower()`
+ *    的结果逐字节一致，这里**不做任何 URL/JSON 包装**，原样存原样比。
+ */
+function _encodeMixedCursor(sortKey, src, sid) {
+  return `${sortKey === undefined || sortKey === null ? '' : sortKey}\u0001${Number(src) || 0}\u0001${Number(sid) || 0}`;
+}
+
+function _decodeMixedCursor(raw) {
+  const s = String(raw == null ? '' : raw);
+  if (!s) return null;
+  const parts = s.split('\u0001');
+  if (parts.length !== 3) return null;
+  const src = Number(parts[1]);
+  const sid = Number(parts[2]);
+  if (!Number.isFinite(src) || !Number.isFinite(sid)) return null;
+  return { key: parts[0], src, sid };
+}
+
+/** image_index 的主排序列表达式（必须与 _makeImageQuery 的 ORDER BY 一字不差） */
+function _imageSortColumnExpr(sortBy) {
+  // ⭐ name 走 natural_name（数字段补零后的 lower(filename)）而不是 lower(filename)：
+  //    后者是逐字符文本序 ⇒ 1,10,11,2,20…；前者是自然序 ⇒ 1,2,10,11,20…
+  //    见 utils/firstLetterUtil.getNaturalSortKey。
+  if (sortBy === 'name') return 'i.natural_name';
+  if (sortBy === 'view_time') return 'i.view_time';
+  if (sortBy === 'create_time') return 'i.create_time';
+  return 'i.taken_at';
+}
+
+/** video_index 的主排序列表达式（与 _listMixedPaged 里视频侧 ORDER BY 一致） */
+function _videoSortColumnExpr(sortBy) {
+  // ⭐ 同图片侧：name 走 natural_name（自然序），不是 lower(nfo_name) 文本序
+  if (sortBy === 'name') return 'v.natural_name';
+  if (sortBy === 'view_time') return 'v.view_time';
+  return 'v.create_time';
+}
+
+/**
+ * 在 query 上加 keyset 条件：只保留「排在 (key, id) 之后」的行。
+ *
+ * 二元组比较，方向随 `order`：
+ *   asc : (col > key) OR (col = key AND id > id)
+ *   desc: (col < key) OR (col = key AND id < id)
+ *
+ * ⚠️ `idCol` 必须传**当前查询用的表别名**（图片侧 `i.id`、视频侧 `v.id`）——
+ *    写死 `i.id` 会让视频侧的条件恒真（`v.id` 与 `i.id` 无关），表现为
+ *    「翻页时视频侧每次都从第一条重新来」。
+ * ⚠️ `col = key` 对字符串列必须成立 —— name 走的是 `lower()` 表达式，
+ *    所以比较的是「同样 lower 之后的值」，与游标里存的小写一致。
+ */
+function _applyKeysetAfter(q, { columnExpr, idCol, key, id, order }) {
+  const asc = order === 'asc';
+  const op = asc ? '>' : '<';
+  const idOp = asc ? '>' : '<';
+  const idExpr = idCol || 'i.id';
+  if (key === null || key === undefined) {
+    // 键为空的边界：空键在同方向下要么全在最前、要么全在最后，用 IS NULL 处理
+    q.andWhere(b => {
+      b.whereRaw(`${columnExpr} IS NULL AND ${idExpr} ${idOp} ?`, [id]);
+      b.orWhereRaw(`${columnExpr} IS NOT NULL`);
+    });
+    return;
+  }
+  q.andWhere(b => {
+    b.whereRaw(`${columnExpr} ${op} ?`, [key]);
+    b.orWhereRaw(`(${columnExpr} = ? AND ${idExpr} ${idOp} ?)`, [key, id]);
+  });
 }
 
 class VideoListService {
@@ -628,7 +738,7 @@ class VideoListService {
 
   /** 构造图片查询（每次调用返回全新 query，便于 count / select 各用一份）。
    *  `hideSameNameVideo` 非空时（混合库）：与影片同名的图片不再出现。 */
-  _makeImageQuery({ libraryId, search, sortBy, sortOrder, paths, exactPaths, hideSameNameVideo }) {
+  _makeImageQuery({ libraryId, search, sortBy, sortOrder, paths, exactPaths, hideSameNameVideo, afterKey, afterId }) {
     const q = this.knexVideo('image_index as i').where('i.library_id', Number(libraryId) || 0);
     this._applyImageSearch(q, search);
     if (Array.isArray(exactPaths)) {
@@ -641,14 +751,34 @@ class VideoListService {
     }
 
     const order = sortOrder === 'asc' ? 'asc' : 'desc';
+    // ⭐ keyset 分页（2026-10-12）：给一张/混合库翻页用。传了 afterKey/afterId
+    //    就只取「在 (afterKey, afterId) 之后」的行 —— 二元组比较，同键行
+    //    跨页不会重复或漏。详见 _listMixedPaged 的游标说明。
+    if (afterKey !== undefined && afterKey !== null) {
+      _applyKeysetAfter(q, {
+        columnExpr: _imageSortColumnExpr(sortBy),
+        idCol: 'i.id',
+        key: afterKey,
+        id: Number(afterId) || 0,
+        order,
+      });
+    }
     if (sortBy === 'name') {
-      q.orderByRaw(`lower(i.filename) ${order}`);
+      // ⭐ 必须与 _imageSortColumnExpr 一致（自然序，不是 lower(filename) 文本序）
+      q.orderBy('i.natural_name', order);
     } else if (sortBy === 'view_time') {
       q.orderBy('i.view_time', order);
+    } else if (sortBy === 'create_time') {
+      // ⭐ 2026-10-12：原来落进 else ⇒ 按 taken_at（拍摄时间）排。但「添加时间」是
+      //    create_time（扫描入库时间），两者在截图 / 下载图里能差好几年。
+      q.orderBy('i.create_time', order);
     } else {
+      // 默认 / 'taken_at'：拍摄时间
       q.orderBy('i.taken_at', order);
     }
-    q.orderBy('i.id', 'desc');
+    // ⭐ 末位 id 必须与主排序**同向**：混合库在 JS 里归并时要靠这个顺序
+    //    保证「同键」项在两侧各自稳定，否则同一张图在翻页时会重复 / 漏。
+    q.orderBy('i.id', order);
     return q;
   }
 
@@ -760,7 +890,7 @@ class VideoListService {
   }
 
   /** 混合库（lib_type = 'mixed'）：图片与视频各取够页数后在内存归并 */
-  async _listMixedPaged({ library, safePage, safeLimit, offset, search, sortBy, sortOrder, uid, validPaths, sourceList, folderPath, folderMode }) {
+  async _listMixedPaged({ library, safePage, safeLimit, offset, search, sortBy, sortOrder, uid, validPaths, sourceList, folderPath, folderMode, cursorRaw }) {
     const libId = Number(library && library.id) || 0;
     const knex = this.knexVideo;
     let paths = validPaths;
@@ -768,23 +898,47 @@ class VideoListService {
       paths = intersectPaths(paths, sourceList);
     }
     const scope = this._resolveFolderScope({ folderPath, folderMode, validPaths: paths });
+    // ⭐ 混合库归并排序的方向（图片侧在 _makeImageQuery 里另算一次，口径一致）
+    const order = sortOrder === 'asc' ? 'asc' : 'desc';
+    // ⭐ 混合库里 taken_at 统一降到 create_time：视频侧没有拍摄时间，
+    //    两侧必须同一个时钟才可能真交错（详见 _mixedEffectiveSortBy）。
+    const mixedSortBy = _mixedEffectiveSortBy(sortBy);
     // ⭐ 混合库里「与影片同名的图片」不再单独出现（需求 2026-10-11）：
     //    它已经作为那张影片的封面 / 缩略图了。判定走 SQL，口径与视频侧完全一致。
     const imgArgs = {
       libraryId: libId,
       search,
-      sortBy,
+      sortBy: mixedSortBy,
       sortOrder,
       paths: scope.prefixPaths,
       exactPaths: scope.exactPaths,
       hideSameNameVideo: { exactPaths: scope.exactPaths, prefixPaths: scope.prefixPaths },
     };
 
-    // 归并上限：避免深分页时两边各拉几十万行（超过则退化为「各自前 N 条」）
-    const MERGE_CAP = 3000;
-    const take = Math.max(safeLimit, Math.min(offset + safeLimit, MERGE_CAP));
+    // ---- 分页策略：**游标 + 单条 UNION 归并**（2026-10-12 重写 第 3 版）----
+    //
+    // 走过的坑（都实测复现过）：
+    //   ① 原始实现：两侧各取前 take 条 → JS 归并 → slice(offset)。take 被
+    //      MERGE_CAP=3000 封顶 ⇒ 深分页整页重复（3782 行只有 3294 个唯一 id）。
+    //   ② JS 里"两侧各取 window 条候选再归并"：**永远无法保证窗口够大**。
+    //      实测图片名普遍排在视频名之前 ⇒ 图片侧把窗口全部占满，视频侧的候选
+    //      根本没进窗口，`merged[limit]` 落在一个视频上，游标就在两个值之间
+    //      来回震荡（p1 与 p3 的 nextCursor 完全相同）。
+    //
+    // ✅ 现方案：把**归并本身交给 SQL**（UNION ALL + 统一排序键列），
+    //    这样 keyset 游标由 SQLite 自己保证单调，不再依赖 JS 侧窗口够不够。
+    //    两侧键类型不同（图片按 filename、视频按 nfo_name||filename；时间列
+    //    也都是整数），所以 UNION 时把排序键统一成 **TEXT** 形式：
+    //        · name       : lower(名字)
+    //        · 时间类      : printf('%020d', 时间列) —— 补零后字符串序 == 数值序
+    //    再配 `src`（0=图片 / 1=视频）与各自 id 做完整 tiebreak。
+    //    ⚠️ 时间列可能为 NULL ⇒ COALESCE(...,0)，否则 printf 出 NULL 会排乱。
+    //
+    // 实际实现见 _mixedUnionPage：它把「原样返回给前端的列」与「排序键」分开，
+    // 只用后者排序 / seek，避免把排序键混进响应。
+    const cursor = _decodeMixedCursor(cursorRaw);
+    const pageLimit = Math.max(1, Math.min(safeLimit, 200));
 
-    // ---- 图片侧 ----
     const imgCountRow = await this._makeImageQuery(imgArgs)
       .clearSelect()
       .clearOrder()
@@ -793,12 +947,7 @@ class VideoListService {
       .catch(() => null);
     const imageTotal = Math.max(0, Number(imgCountRow && (imgCountRow.cnt ?? imgCountRow['count(*)'])) || 0);
 
-    const imgRows = await this._makeImageQuery(imgArgs)
-      .select(this._imageSelectColumns())
-      .limit(take)
-      .catch(() => []);
-
-    // ---- 视频侧（简化：混合库不做 genres/actors 这类影视专属筛选）----
+    // ---- 视频侧 base（沿用原有可见性 / 搜索条件）----
     const vidBase = () => {
       const q = knex('video_index as v').whereIn('v.media_type', VIDEO_INDEX_MEDIA_TYPES);
       if (Array.isArray(scope.exactPaths)) {
@@ -822,36 +971,37 @@ class VideoListService {
     const vidCountRow = await vidBase().clearSelect().clearOrder().countDistinct({ cnt: 'v.id' }).first().catch(() => null);
     const videoTotal = Math.max(0, Number(vidCountRow && (vidCountRow.cnt ?? vidCountRow['count(*)'])) || 0);
 
-    const vidRows = await vidBase()
-      .select(
+    // ---- 一把 SQL 完成「两侧归并 + 游标 + 取 limit」----
+    const rows = await this._mixedUnionPage({
+      imgQuery: this._makeImageQuery(imgArgs).select(this._imageSelectColumns()),
+      vidQuery: vidBase().select(
         'v.id', 'v.media_type', 'v.path', 'v.filename', 'v.ext', 'v.is_file', 'v.width', 'v.height',
         'v.duration', 'v.nfo_name', 'v.nfo_year', 'v.nfo_score', 'v.nfo_regions', 'v.nfo_genres',
         'v.poster_path', 'v.fanart_path', 'v.logo_path', 'v.play_rel_path', 'v.view_time', 'v.create_time',
-      )
-      .orderBy('v.create_time', 'desc')
-      .orderBy('v.id', 'desc')
-      .limit(take)
-      .catch(() => []);
-
-    // ---- 归并：统一排序键（图片用 taken_at，视频用 create_time，都归一到 ms）----
-    const merged = [];
-    for (const r of imgRows || []) {
-      const it = this._imageRowToListItem(r);
-      it._sortTime = Number(r.taken_at) || Number(r.create_time) || 0;
-      merged.push(it);
-    }
-    for (const r of vidRows || []) {
-      const d = r.create_time instanceof Date ? r.create_time.getTime() : Number(r.create_time) || 0;
-      merged.push({ ...r, _sortTime: d });
-    }
-    merged.sort((a, b) => {
-      if (b._sortTime !== a._sortTime) return b._sortTime - a._sortTime;
-      return (Number(b.id) || 0) - (Number(a.id) || 0);
+      ),
+      sortBy: mixedSortBy,
+      order,
+      cursor,
+      pageLimit,
     });
 
-    const pageSlice = merged.slice(offset, offset + safeLimit).map(r => {
-      const c = { ...r };
-      delete c._sortTime;
+    const pageEntries = rows.slice(0, pageLimit);
+    const last = pageEntries.length > 0 ? pageEntries[pageEntries.length - 1] : null;
+    const nextCursor = last ? _encodeMixedCursor(last.sortKey, last.kind === 'img' ? 0 : 1, last.sid) : null;
+
+    const pageSlice = pageEntries.map(e => {
+      const c = { ...e.row };
+      if (e.kind === 'img') {
+        // ⛔ 混合库里 image_index.id 与 video_index.id **会撞号**（各表独立自增，
+        //    实测两张表都有 id=1..5）。而前端的 items 会被当成一个列表用
+        //    （GetX 的 `items` + `ValueKey(id)`），id 撞号 ⇒ 列表项渲染错乱、
+        //    右侧导航按 id 定位会跳错条。
+        //    所以混合库里给图片侧的 id 打上命名空间；原 id 留在 image_id 里，
+        //    需要回查图片表的场景（缩略图 / 头像）用 image_id。
+        c.image_id = Number(e.row && e.row.id) || 0;
+        c.id = MIXED_IMAGE_ID_OFFSET + (Number(e.row && e.row.id) || 0);
+        c.media_type = c.media_type || 'image';
+      }
       return _normalizeListRow(c);
     });
 
@@ -867,6 +1017,9 @@ class VideoListService {
       }
     }
 
+    // ⚠️ 游标模式下「有没有下一页」以 SQL 是否多返回了一条为准（pageLimit+1），
+    //    不能靠 safePage < totalPages 推 —— total 是全量过滤计数。
+    const hasMoreByCursor = rows.length > pageEntries.length;
     const totalPages = Math.ceil(total / safeLimit);
     return {
       items: pageSlice,
@@ -877,10 +1030,178 @@ class VideoListService {
         page: safePage,
         limit: safeLimit,
         totalPages,
-        hasNextPage: safePage < totalPages,
+        hasNextPage: hasMoreByCursor,
         hasPrevPage: safePage > 1,
+        // 前端翻下一页时原样回传；为空串表示已到末页
+        nextCursor: hasMoreByCursor && nextCursor ? nextCursor : '',
       },
     };
+  }
+
+  /**
+   * 混合库「两侧归并 + 游标 seek + 取一页」的**单条 SQL**实现（2026-10-12）。
+   *
+   * 为什么不在 JS 里归并：见 `_listMixedPaged` 顶部注释 —— JS 侧候选窗口
+   * 永远无法保证够大（一侧可能把窗口占满），实测游标会在两个值间震荡。
+   * 交给 SQLite 后，排序与游标 seek 由同一把比较器完成，天然单调。
+   *
+   * 实现要点：
+   *   · 两侧各包一层子查询，把「排序键」统一投影成 **TEXT**：
+   *       name        → lower(名字)
+   *       时间类       → printf('%020d', COALESCE(时间列, 0))   （补零 ⇒ 字符串序 == 数值序）
+   *     ⚠️ 不能用数字列直接 UNION：图片/视频两侧的时间列都可能有 NULL，
+   *        且 SQLite 里 TEXT 与 INTEGER 混合排序会按类型分堆，结果不可预期。
+   *   · 统一加 `src`（0=图片 / 1=视频）、`sid`（表内 id）作为 tiebreak，
+   *     保证**全序唯一**，page 边界不会重复或漏。
+   *   · 游标 = (sortKey, src, sid) 三元组的 keyset 比较。
+   *   · 外层 `limit pageLimit+1` —— 多取一条用来判断还有没有下一页。
+   */
+  async _mixedUnionPage({ imgQuery, vidQuery, sortBy, order, cursor, pageLimit }) {
+    const knex = this.knexVideo;
+    const dir = order === 'asc' ? 'asc' : 'desc';
+    const isName = sortBy === 'name';
+    const isView = sortBy === 'view_time';
+
+    // 排序键统一投影成 TEXT：
+    //   name    → lower(名字)
+    //   时间类   → printf('%020d', COALESCE(时间列, 0))
+    //             （补零 ⇒ 定宽 ⇒ 字符串序 == 数值序；NULL 兜成 0）
+    const keySql = (nameExpr, timeCol) =>
+      isName
+        ? nameExpr
+        : `printf('%020d', COALESCE(${isView ? 'view_time' : timeCol}, 0))`;
+
+    // ⛔ UNION ALL 是按**位置**对齐列的，不是按名字。两侧列名/列数都不一样
+    //    （图片 11 列、视频 20 列），直接 select 数组会整体错位 ——
+    //    实测视频行的 `filename` 里塞进了 `path`，`path` 里塞进了 `media_type`。
+    // ✅ 所以两侧都显式 `AS` 成同一套**统一列名**，再 UNION。
+    //    两边不会同时为真的字段用 NULL 占位，最后按 `src` 还原。
+    const U = {
+      id: 'uid',                 // 各自表内 id（= 排序用的 sid）
+      media_type: 'umedia_type',
+      path: 'upath',
+      filename: 'ufilename',
+      ext: 'uext',
+      width: 'uwidth',
+      height: 'uheight',
+      size: 'usize',
+      taken_at: 'utaken_at',
+      view_time: 'uview_time',
+      create_time: 'ucreate_time',
+      is_favorite: 'uis_favorite',
+      // 视频专属
+      is_file: 'uis_file',
+      duration: 'uduration',
+      nfo_name: 'unfo_name',
+      nfo_year: 'unfo_year',
+      nfo_score: 'unfo_score',
+      nfo_regions: 'unfo_regions',
+      nfo_genres: 'unfo_genres',
+      poster_path: 'uposter_path',
+      fanart_path: 'ufanart_path',
+      logo_path: 'ulogo_path',
+      play_rel_path: 'uplay_rel_path',
+    };
+    const IMG_COL = {
+      id: 'i.id', media_type: null, path: 'i.path', filename: 'i.filename', ext: 'i.ext',
+      width: 'i.width', height: 'i.height', size: 'i.size', taken_at: 'i.taken_at',
+      view_time: 'i.view_time', create_time: 'i.create_time', is_favorite: 'i.is_favorite',
+    };
+    const VID_COL = {
+      id: 'v.id', media_type: 'v.media_type', path: 'v.path', filename: 'v.filename', ext: 'v.ext',
+      width: 'v.width', height: 'v.height', size: null, taken_at: null,
+      view_time: 'v.view_time', create_time: 'v.create_time', is_favorite: null,
+      is_file: 'v.is_file', duration: 'v.duration', nfo_name: 'v.nfo_name',
+      nfo_year: 'v.nfo_year', nfo_score: 'v.nfo_score', nfo_regions: 'v.nfo_regions',
+      nfo_genres: 'v.nfo_genres', poster_path: 'v.poster_path', fanart_path: 'v.fanart_path',
+      logo_path: 'v.logo_path', play_rel_path: 'v.play_rel_path',
+    };
+    // ⚠️ 为 NULL 占位列必须用 knex.raw —— 传字符串 'NULL' 会被 knex 当成
+    //    **列名**加反引号（实测报 `no such column: NULL`）。
+    const projCols = map =>
+      Object.keys(U).map(k =>
+        map[k] ? `${map[k]} AS ${U[k]}` : knex.raw(`NULL AS ${U[k]}`),
+      );
+
+    // keyset：游标三元组 (sortKey, src, sid)
+    // 条件： (k OP ck) OR (k = ck AND (src OP cs OR (src = cs AND sid OP cid)))
+    // ⚠️ src 与 sid 分别用**字面量**比较（不是列比较），所以这边按两侧各自
+    //    展开成一个布尔式，避免 SQLite 把 `0 >= 1` 之类当列引用。
+    const applyCursor = (q, isImg) => {
+      if (!cursor) return q;
+      const ck = `${cursor.key}`;
+      const cs = Number(cursor.src) || 0;
+      const cid = Number(cursor.sid) || 0;
+      const src = isImg ? 0 : 1;
+      const op = order === 'asc' ? '>' : '<';
+      const keyExpr = keySql(
+        isImg ? 'i.natural_name' : 'v.natural_name',
+        isImg ? 'i.create_time' : 'v.create_time',
+      );
+      const idExpr = isImg ? 'i.id' : 'v.id';
+      // 本侧是否可能排在同键游标之后：
+      //   asc  : src > cs           → 本侧(src)更大即可
+      //          src == cs          → 再看 id > cid
+      //   desc : src < cs           → 本侧(src)更小即可
+      //          src == cs          → 再看 id < cid
+      const afterBySrc = op === '>' ? src > cs : src < cs;
+      const sameSrc = src === cs;
+      let tail;
+      if (afterBySrc) tail = '1 = 1';
+      else if (sameSrc) tail = `${idExpr} ${op} ${cid}`;
+      else tail = '1 = 0';
+      return q.whereRaw(`(${keyExpr} ${op} ? OR (${keyExpr} = ? AND (${tail})))`, [ck, ck]);
+    };
+
+    const imgRaw = imgQuery
+      .clone()
+      .clearSelect()
+      .clearOrder()
+      .select(projCols(IMG_COL, true))
+      .select(knex.raw(`${keySql('i.natural_name', 'i.create_time')} AS sort_key`))
+      .select(knex.raw('0 AS src'));
+
+    const vidRaw = vidQuery
+      .clone()
+      .clearSelect()
+      .clearOrder()
+      .select(projCols(VID_COL, false))
+      .select(knex.raw(`${keySql('v.natural_name', 'v.create_time')} AS sort_key`))
+      .select(knex.raw('1 AS src'));
+
+    const imgSql = applyCursor(imgRaw, true).toSQL();
+    const vidSql = applyCursor(vidRaw, false).toSQL();
+    // ⛔ 不能用 knex 的 unionAll() —— 它会把两侧各包一层括号生成
+    //    `union all (select ...) union all (select ...)`，SQLite 在带
+    //    尾部 ORDER BY / LIMIT 时对这种写法直接报 `near "(": syntax error`
+    //    （实测）。所以自己拼字符串，两侧都用裸 SELECT。
+    const sql = `SELECT * FROM (${imgSql.sql}) UNION ALL SELECT * FROM (${vidSql.sql}) ORDER BY sort_key ${dir}, src ${dir}, ${U.id} ${dir} LIMIT ${Number(pageLimit) + 1}`;
+
+    let rows;
+    try {
+      rows = await knex.raw(sql, [...imgSql.bindings, ...vidSql.bindings]);
+    } catch (e) {
+      // 兜底：宁可少一页，也不要 500
+      rows = [];
+    }
+
+    return (rows || []).map(r => {
+      const isImg = Number(r.src) === 0;
+      // 按统一列名还原成「该侧原本的行结构」（前端 VideoHomeItemBean 认这套字段）
+      const row = {};
+      for (const k of Object.keys(U)) {
+        if (k === 'id') continue; // id 交给调用方按 src 决定是否加偏移
+        row[k] = r[U[k]];
+      }
+      row.id = Number(r[U.id]) || 0;
+      if (isImg) row.media_type = 'image';
+      return {
+        kind: isImg ? 'img' : 'vid',
+        sortKey: r.sort_key,
+        sid: Number(r[U.id]) || 0,
+        row,
+      };
+    });
   }
 
   /** 图片收藏集合（video_favorite 仍按 index_id 存，图片 id 与 video_index id 可能撞号，
@@ -888,7 +1209,6 @@ class VideoListService {
   async _loadImageFavoriteSet(_ids) {
     return new Set();
   }
-
   /* =======================================================================
    * 文件夹视图（图片库 / 混合库）：只列**直接子文件夹** + 本级文件数
    * -----------------------------------------------------------------------
@@ -1253,6 +1573,9 @@ class VideoListService {
         // 文件夹视图：exact = 只看本目录自身，subtree = 看整棵子树（搜索用）
         folderPath,
         folderMode,
+        // ⭐ 混合库翻页游标（2026-10-12）：由上一页响应的 pagination.nextCursor 回传。
+        //    空串 / 不传 = 第一页。图片库不走游标（单表 offset 分页没有归并问题）。
+        cursorRaw: String(params && (params.cursor ?? params.nextCursor ?? params.next_cursor) || ''),
       };
       if (earlyLibType === 'image') return await this._listImageOnlyPaged(common);
       return await this._listMixedPaged(common);
@@ -1440,7 +1763,9 @@ class VideoListService {
     } else if (sortBy === 'score') {
       query.orderBy('v.nfo_score', sortOrder);
     } else if (sortBy === 'name') {
-      query.orderByRaw(`lower(case when v.nfo_name is not null and trim(v.nfo_name) != '' then v.nfo_name else v.filename end) ${sortOrder}`);
+      // ⭐ 2026-10-12：改用 natural_name（自然序，1,2,10,11）保持一致。
+      //    原来是 lower(case when nfo_name…) 文本序 ⇒ 1,10,11,2。
+      query.orderBy('v.natural_name', sortOrder);
     } else {
       query.orderBy('v.create_time', sortOrder);
     }

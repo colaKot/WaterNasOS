@@ -64,6 +64,19 @@ class VideoLibraryApiService extends BaseApiService {
     );
   }
 
+  /// 切换「音频响度归一化」：开启后扫描/重扫该库时测量音频响度
+  Future<ApiResponse<Map<String, dynamic>>> setAudioNormalize(
+    int id,
+    bool audioNormalize, {
+    bool showLoading = true,
+  }) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/video/library/audio_normalize/$id',
+      body: {'audio_normalize': audioNormalize ? 1 : 0},
+      showLoading: showLoading,
+    );
+  }
+
   /// 删除影视库：内置库与仍有来源的库会被服务端拒绝
   Future<ApiResponse<Map<String, dynamic>>> deleteLibrary(
     int id, {

@@ -6,6 +6,7 @@ import com.nascabos.tv.R
 object VideoPlaybackSettingsStore {
     const val PREFS_NAME = "video_playback_settings"
     const val KEY_DEFAULT_QUALITY = "default_quality"
+    const val KEY_AUDIO_DOWNMIX = "audio_downmix"
     const val QUALITY_ORIGINAL = "original"
 
     val QUALITY_OPTIONS: List<String> =
@@ -38,6 +39,19 @@ object VideoPlaybackSettingsStore {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_DEFAULT_QUALITY, q)
+            .apply()
+    }
+
+    /** TV 端独立的音频降混开关：开启后转码请求带上 audioDownmix=1，与其它客户端的全局配置互不影响。默认关闭。 */
+    fun getAudioDownmix(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUDIO_DOWNMIX, false)
+    }
+
+    fun setAudioDownmix(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUDIO_DOWNMIX, enabled)
             .apply()
     }
 

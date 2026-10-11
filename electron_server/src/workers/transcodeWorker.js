@@ -258,6 +258,34 @@ const HDR_TONEMAP_OPENCL = 'opencl';
 const HDR_TONEMAP_VIDEOTOOLBOX = 'videotoolbox';
 const HDR_TONEMAP_FALLBACK = 'fallback';
 
+// 响度归一化目标：与主流流媒体平台对齐（约 -16 LUFS / -1.5 dBTP），避免不同片源音量忽大忽小
+const AUDIO_LOUDNORM_TARGET_I = -16;
+const AUDIO_LOUDNORM_TARGET_TP = -1.5;
+const AUDIO_LOUDNORM_TARGET_LRA = 11;
+
+/** 构建 loudnorm 滤镜：有入库测量的响度值时走两遍线性模式（更平滑），否则退回动态单遍 */
+function buildLoudnormFilter(measured) {
+  const base = `loudnorm=I=${AUDIO_LOUDNORM_TARGET_I}:TP=${AUDIO_LOUDNORM_TARGET_TP}:LRA=${AUDIO_LOUDNORM_TARGET_LRA}`;
+  const m = measured && typeof measured === 'object' ? measured : null;
+  if (!m) return base;
+  const inputI = Number(m.input_i);
+  const inputTp = Number(m.input_tp);
+  const inputLra = Number(m.input_lra);
+  const inputThresh = Number(m.input_thresh);
+  const targetOffset = Number(m.target_offset);
+  const usable =
+    Number.isFinite(inputI) &&
+    Number.isFinite(inputTp) &&
+    Number.isFinite(inputLra) &&
+    Number.isFinite(inputThresh) &&
+    Number.isFinite(targetOffset);
+  if (!usable) return base;
+  return (
+    `${base}:measured_I=${inputI}:measured_TP=${inputTp}:measured_LRA=${inputLra}` +
+    `:measured_thresh=${inputThresh}:offset=${targetOffset}:linear=true`
+  );
+}
+
 let hdrTonemapCapsCache = null;
 
 function getHdrTonemapCapabilities() {
@@ -273,6 +301,7 @@ function getHdrTonemapCapabilities() {
     tonemapOpencl: /\btonemap_opencl\b/.test(filtersText),
     tonemapVideotoolbox: /\btonemap_videotoolbox\b/.test(filtersText),
     scaleVt: /\bscale_vt\b/.test(filtersText),
+    loudnorm: /\bloudnorm\b/.test(filtersText),
   };
   return hdrTonemapCapsCache;
 }
@@ -794,6 +823,11 @@ async function startTranscoding(playId, filePath, options = {}) {
   const wantVideoCopy = options.videoCopy === true;
   // 音频降混：开启后把非双声道音轨降混成双声道；关闭时保持源声道数。
   const audioDownmix = options.audioDownmix === true;
+  // 响度归一化：开启后对音轨做响度对齐，避免不同片源音量忽大忽小（默认关闭）
+  const audioNormalize = options.audioNormalize === true;
+  // 入库时测量好的响度值（两遍精准模式）；缺失时退回动态单遍
+  const measuredLoudness =
+    options.audioLoudness && typeof options.audioLoudness === 'object' ? options.audioLoudness : null;
 
   return new Promise((resolve, reject) => {
     let usedHwOnce = false;
@@ -1120,6 +1154,17 @@ async function startTranscoding(playId, filePath, options = {}) {
       // 勾选「音频降混」时强制双声道；未勾选时保持源声道数
       if (audioDownmix) {
         outputOptions.push('-ac 2');
+      }
+      // 响度归一化：降混之后再对齐，保证输出音量一致；当前 ffmpeg 无 loudnorm 滤镜时静默跳过
+      if (audioNormalize) {
+        if (getHdrTonemapCapabilities().loudnorm) {
+          const audioFilterChain = [];
+          if (audioDownmix) audioFilterChain.push('aformat=channel_layouts=stereo');
+          audioFilterChain.push(buildLoudnormFilter(measuredLoudness));
+          outputOptions.push(`-af ${audioFilterChain.join(',')}`);
+        } else {
+          Logger.warn(`[TranscodeWorker] loudnorm filter unavailable, skip audio normalize: ${playId}`);
+        }
       }
       if (wmvFamily && seek !== null) {
         outputOptions.push('-avoid_negative_ts', 'make_zero', '-max_muxing_queue_size', '1024');

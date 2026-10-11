@@ -70,6 +70,32 @@ class VideoLibraryController {
   }
 
   /**
+   * 切换「音频响度归一化」（管理员）
+   * params: id
+   * body: { audio_normalize: 0 | 1 }
+   * 开启后：扫描/重扫该库时测量音频响度；已有文件在开启后会立即启动补齐测量
+   */
+  async setAudioNormalize(req, res) {
+    try {
+      const service = new VideoLibraryService(req.dbVideo);
+      const id = req.params && req.params.id;
+      const row = await service.setAudioNormalize(id, req.body || {});
+      const enabled = Number(row && row.audio_normalize) === 1;
+      // 开启时通知主进程启动响度测量进程，补齐该库已入库文件的测量值
+      if (enabled && typeof process.send === 'function') {
+        try {
+          process.send({ type: 'startVideoLoudnessWorker' });
+        } catch (_) {}
+      }
+      return ResponseUtil.success(req, res, row, 'video.VIDEO_LIBRARY_UPDATE_SUCCESS', 200);
+    } catch (err) {
+      const msgKey = err && err.message ? err.message : 'common.ERROR';
+      const statusCode = msgKey === 'common.NOT_FOUND' ? 404 : 400;
+      return ResponseUtil.error(req, res, msgKey, statusCode);
+    }
+  }
+
+  /**
    * 删除影视库（管理员）
    * 内置库不可删除；库内仍有来源时拒绝删除
    * params: id

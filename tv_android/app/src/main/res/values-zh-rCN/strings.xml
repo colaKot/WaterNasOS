@@ -283,6 +283,8 @@
     <string name="home_video_playback_settings">视频播放设置</string>
     <string name="video_playback_default_quality">默认播放码率</string>
     <string name="video_playback_default_quality_desc">视频播放时默认使用的码率，除原片外其他分辨率使用转码实现，在网络带宽有限时可使用此配置降低带宽需求</string>
+    <string name="video_playback_audio_downmix">音频降混为双声道</string>
+    <string name="video_playback_audio_downmix_desc">开启后，转码播放时把非双声道音轨降混为双声道；仅作用于本电视，与其它设备的设置互不影响。默认关闭。</string>
     <string name="feature_placeholder_video">功能开发中</string>
     <string name="feature_placeholder_photos">功能开发中</string>
     <string name="feature_placeholder_music">功能开发中</string>

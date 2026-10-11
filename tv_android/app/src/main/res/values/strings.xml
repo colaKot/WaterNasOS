@@ -283,6 +283,8 @@
     <string name="home_video_playback_settings">Video Playback Settings</string>
     <string name="video_playback_default_quality">Default playback quality</string>
     <string name="video_playback_default_quality_desc">Default quality used when playing videos. Resolutions other than original use transcoding and can reduce bandwidth on limited networks.</string>
+    <string name="video_playback_audio_downmix">Downmix audio to stereo</string>
+    <string name="video_playback_audio_downmix_desc">When enabled, non-stereo audio is downmixed to stereo during transcoded playback. Only affects this TV, independent from other devices. Off by default.</string>
     <string name="feature_placeholder_video">This feature is under development</string>
     <string name="feature_placeholder_photos">This feature is under development</string>
     <string name="feature_placeholder_music">This feature is under development</string>

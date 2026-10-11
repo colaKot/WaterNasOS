@@ -282,6 +282,44 @@ module.exports = {
     );
   },
 
+  // 响度归一化改为库级设置：只有当存在「开启归一化的影视库」且该库下有未测量的文件时才启动
+  async maybeStartVideoLoudnessWorker() {
+    try {
+      if (singletonWorkerManager.isWorkerRunning('videoLoudnessWorker')) return;
+      const { hasPendingVideoLoudnessWork } = require('../workers/videoIndex/videoLoudnessWorker/videoLoudnessRunner');
+      const hasPending = await hasPendingVideoLoudnessWork();
+      if (!hasPending) return;
+      this.startVideoLoudnessWorker();
+    } catch (error) {
+      Logger.error('❌ maybeStartVideoLoudnessWorker failed:', error);
+    }
+  },
+
+  startVideoLoudnessWorker() {
+    return singletonWorkerManager.startWorker(
+      'videoLoudnessWorker',
+      `videoIndex${path.sep}videoLoudnessWorker${path.sep}videoLoudnessWorker.js`,
+      {
+        env: {
+          WORKER_TYPE: 'videoLoudness',
+          PATH_DATABASE: this.pathDatabase,
+          PATH_CACHE: this.pathCache,
+        },
+        messageTypes: [],
+        tags: ['videoLoudnessWorker'],
+        onStart: () => {},
+        onStop: () => {},
+        onError: error => {
+          if (error) Logger.error('❌ video loudness worker error:', error);
+        },
+      }
+    );
+  },
+
+  async stopVideoLoudnessWorker() {
+    return singletonWorkerManager.stopWorker('videoLoudnessWorker');
+  },
+
   startNfoFetchWorker() {
     const worker = singletonWorkerManager.startWorker('nfoFetchWorker', `videoIndex${path.sep}nfoFetchWorker${path.sep}nfoFetchWorker.js`, {
       env: {

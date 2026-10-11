@@ -118,6 +118,10 @@ function handleStartTinyImageWorker({ initUtil }) {
   initUtil.startTinyImageWorker();
 }
 
+function handleStartVideoLoudnessWorker({ initUtil }) {
+  return initUtil.maybeStartVideoLoudnessWorker({});
+}
+
 
 module.exports = {
   startFileWorker: handleStartFileWorker,
@@ -130,4 +134,5 @@ module.exports = {
   stopBookIndexWorker: handleStopBookIndexWorker,
   stopMusicIndexWorker: handleStopMusicIndexWorker,
   startTinyImageWorker: handleStartTinyImageWorker,
+  startVideoLoudnessWorker: handleStartVideoLoudnessWorker,
 };

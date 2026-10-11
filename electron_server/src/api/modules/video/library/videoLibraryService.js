@@ -131,6 +131,51 @@ class VideoLibraryService {
     return await this.getLibraryById(id);
   }
 
+  // 切换「音频响度归一化」：开启后扫描/重扫时测量该库音频响度，播放转码时对齐音量
+  async setAudioNormalize(rawId, payload = {}) {
+    const id = Number(rawId || 0) || 0;
+    if (!id) throw new Error('validation.VALIDATION_ERROR');
+
+    const lib = await this.getLibraryById(id);
+    if (!lib) throw new Error('common.NOT_FOUND');
+
+    const raw = payload.audio_normalize ?? payload.audioNormalize;
+    const value = raw === true || raw === 1 || raw === '1' || raw === 'true' ? 1 : 0;
+
+    const affected = await this.knex(this.tableName)
+      .where({ id })
+      .update({ audio_normalize: value });
+    if (!Number(affected)) {
+      throw new Error('video.VIDEO_LIBRARY_UPDATE_FAILED');
+    }
+
+    return await this.getLibraryById(id);
+  }
+
+  // 该文件路径所属影视库是否开启响度归一化（按来源路径最长前缀匹配）
+  async isAudioNormalizeEnabledForPath(filePath) {
+    const resolved = filePath ? path.resolve(String(filePath)) : '';
+    if (!resolved) return false;
+
+    const rows = await this.knex(`${this.sourceTable} as s`)
+      .leftJoin(`${this.tableName} as l`, 'l.id', 's.library_id')
+      .select('s.path', 'l.audio_normalize')
+      .catch(() => []);
+
+    let best = null;
+    for (const r of rows || []) {
+      const root = r && r.path ? path.resolve(String(r.path)) : '';
+      if (!root) continue;
+      const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+      if (resolved !== root && !resolved.startsWith(prefix)) continue;
+      if (!best || root.length > best.len) {
+        best = { len: root.length, audio_normalize: r.audio_normalize };
+      }
+    }
+    if (!best) return false;
+    return Number(best.audio_normalize || 0) === 1;
+  }
+
   async deleteLibrary(rawId) {
     const id = Number(rawId || 0) || 0;
     if (!id) throw new Error('validation.VALIDATION_ERROR');
@@ -259,6 +304,7 @@ class VideoLibraryService {
         lib_type: lib.lib_type ? String(lib.lib_type) : 'movie',
         is_default: Number(lib.is_default || 0),
         show_in_home: Number(lib.show_in_home || 0),
+        audio_normalize: Number(lib.audio_normalize || 0),
         sort: Number(lib.sort || 0),
         source_count: libPaths.length,
         counts,
