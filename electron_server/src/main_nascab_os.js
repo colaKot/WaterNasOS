@@ -29,6 +29,34 @@ try {
     app.commandLine.appendSwitch('disable-gpu-compositing');
     app.commandLine.appendSwitch('use-angle', 'swiftshader');
   }
+  // ==========================================================================
+  // ⭐ 开发实例隔离（2026-10-12）
+  //
+  // 背景：`app.requestSingleInstanceLock()` 的锁**键 = Electron 的 userData 目录**。
+  //   而 Electron 的 userData 默认取 `%APPDATA%\<package.json name>`，
+  //   **不认我们的 `userDataFolder` 环境变量** —— 所以只改 userDataFolder
+  //   （数据库/缓存落别处了）**并不能**让两个实例共存：第二个实例仍会被单例锁
+  //   判为「重复启动」而直接退出。
+  //
+  // 修法：在**单例锁之前**把 Electron 的 userData 也指到同一个目录，
+  //   这样锁键、数据库、缓存、日志四者口径一致，开发实例与正式实例彻底隔离。
+  //
+  // ⚠️ 只在**显式设置了** userDataFolder 时才接管 —— 普通用户（不设该变量）
+  //    行为一字不变，仍是默认 userData + 单例锁。
+  // ⚠️ 必须在 requestSingleInstanceLock() **之前**调用，否则锁已经按默认目录取过了。
+  // ==========================================================================
+  if (process.env['userDataFolder']) {
+    try {
+      const isolatedUserData = path.resolve(String(process.env['userDataFolder']));
+      fs.mkdirSync(isolatedUserData, { recursive: true });
+      app.setPath('userData', isolatedUserData);
+      app.setPath('sessionData', isolatedUserData);
+      process.env.userDataFolder = isolatedUserData;
+      Logger.info(`[startup] isolated userData -> ${isolatedUserData}`);
+    } catch (e) {
+      Logger.warn('[startup] setPath(userData) failed, fallback to default', e && e.message);
+    }
+  }
 } catch (err) {
   // Docker/无界面模式：未安装 electron，仅运行后端服务
   Logger.info('Clientless service mode (Docker / no Electron)');

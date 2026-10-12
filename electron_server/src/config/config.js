@@ -529,7 +529,12 @@ const config = {
     level: process.env.LOG_LEVEL || 'info',
     file: {
       enabled: true, //是否启用文件输出
-      path: path.join(getRootPath(), 'logs'),
+      // ⭐ 2026-10-12：隔离模式下（设了 userDataFolder）日志也落到该目录，
+      //    否则两个实例会写同一份 combined.log 互相覆盖/交错。
+      //    普通用户不设 userDataFolder ⇒ 仍是原来的 <app>/logs，行为不变。
+      path: process.env['userDataFolder']
+        ? path.join(getUserDataPath(), 'logs')
+        : path.join(getRootPath(), 'logs'),
     },
   },
 
