@@ -13,7 +13,7 @@ WaterNasOS is a cross-platform NAS software that lets you remotely manage your p
 
 ## What This Version Changes
 
-Everything changed relative to upstream is listed below: features first, project-wide housekeeping second.
+Everything changed relative to upstream is listed below: the earlier feature work comes first, followed by **Recent Updates** with the newest additions, and project-wide housekeeping last.
 
 ### Features
 
@@ -23,6 +23,24 @@ Everything changed relative to upstream is listed below: features first, project
 - **Standalone Photos / Music clients**: `photo_client` and `music_client` build `NasCabPhoto.exe` / `NasCabMusic.exe`. They depend on the main client by path and add **zero duplicated business code** — `main.dart` is three lines that set a launch mode (`AppLaunchMode.photo` / `.music`), so each app boots straight into Photos or Music with its own icon and title.
 - **Theme system**: 26 named color schemes selectable at runtime (Settings → Theme), plus a design-token layer (`app_tokens.dart`) that centralizes spacing / corner-radius / control sizes previously scattered as hard-coded numbers.
 - **Content-level dedup for photo backup**: backup now compares size **and content MD5** against the NAS, so re-uploading an unchanged file is skipped instead of transferred again.
+
+### Recent Updates
+
+- **Browsing experience for photo / mixed media libraries**:
+  - A new **sort menu** (Name / Taken / Viewed / Added, defaulting to name ascending), shared by photo and mixed libraries and **remembered per library**.
+  - Name sorting now uses **natural order**: `(1) < (2) < (10) < (11)` instead of the textual `1, 10, 11, 2`. This adds a `natural_name` column (with index) to `image_index` / `video_index`, so sorting is served by a covering index.
+  - Two interchangeable views — a **masonry waterfall** (hand-written with zero dependencies, laid out by each photo's real aspect ratio) and a **regular grid** — plus three library-level toggles: **folder hierarchy / flat library**, **cover art / thumbnail**, and **show file names**. All are persisted per library.
+  - Full-screen viewer: previous/next buttons and keyboard arrow keys **wrap around**; in a mixed library, tapping a video goes **straight to the player**.
+  - Thumbnails are **generated on demand** by a resident background worker rather than pre-generated in bulk.
+- **Player and transcoding**:
+  - **Selectable playback quality** (original / 4K / 1080p / 720p / 480p at several bitrates), with a per-library default.
+  - **Audio loudness normalization** (per-library switch): optionally measure loudness during scanning and apply two-pass linear `loudnorm` at transcode time for more consistent output volume.
+  - **Audio downmix** switch (off by default, preserving the source channel layout); videos with unsupported audio are now **audio-only transcoded** (`-c:v copy`) to avoid needless quality loss.
+  - Media info cards show **4K / HDR10+ / Dolby Vision / Dolby Atmos** badges, read directly from ffprobe metadata without rescanning the library.
+- **Per-user photo isolation**: a new `uid` owner dimension means **each user only sees their own photos and albums** (timeline, faces, places, albums, collections, trash and AI search all share one visibility check); the underlying indexes (thumbnails / faces / places / similar photos) remain global, with isolation applied only at the read layer.
+- **AI and recognition**: the face-recognition model was switched to **EdgeFace**; photo search was enhanced; GPU paths for the footprint map and face processing were optimized.
+- **TV clients**: a new playback-settings guide and persisted playback parameters.
+- **UI**: app icon and home-screen icon assets refreshed across all clients.
 
 ### Project-wide
 
@@ -41,8 +59,8 @@ main shell. The default app list is served by the backend (`defaultApps` in
 | App | key | Description |
 | --- | --- | --- |
 | Files | `folder` | Browse, upload/download and share files |
-| Photos | `photo` | Timeline, albums, smart albums, collections, face & scene recognition, similar-photo grouping, GPS geotagging, footprint map, "On this day", trash |
-| Movies | `movie` | Movies and TV shows, common video formats, multiple libraries (movie / TV / photo / mixed) |
+| Photos | `photo` | Timeline, albums, smart albums, collections, face & scene recognition, similar-photo grouping, GPS geotagging, footprint map, "On this day", trash; **isolated per user**, each user sees only their own photos |
+| Movies | `movie` | Movies and TV shows, common video formats, multiple libraries (movie / TV / photo / mixed); photo and mixed libraries support sorting (natural order), waterfall/grid views and folder hierarchy |
 | Books | `book` | E-book reader supporting EPUB / MOBI / AZW3 / PDF / TXT |
 | Music | `music` | Songs, albums, artists, playlists, collections and favorites, with a built-in full-screen player (dynamic lyrics, disc animation, background playback) |
 | Notes | `note` | Rich-text notes |
