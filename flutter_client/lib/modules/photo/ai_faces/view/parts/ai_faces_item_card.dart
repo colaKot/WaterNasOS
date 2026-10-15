@@ -48,8 +48,9 @@ class _AiFacesItemCardState extends State<AiFacesItemCard> {
           (DeviceUtils.isWeb && DeviceUtils.isDesktopLayout(context));
       final showCheckbox =
           !DeviceUtils.isMobile && enableHover && (_hovered || inSelectionMode);
-      final showMobileMenu =
-          DeviceUtils.isMobile && !inSelectionMode && isAdmin;
+      // ⭐ 2026-10-13：命名是「给自己看的标签」，所有登录用户都能命名/打开卡片菜单
+      // （服务端 /face/name/update 也已去掉 requireAdmin）；隐藏、合并等仍限管理员。
+      final showMobileMenu = DeviceUtils.isMobile && !inSelectionMode;
 
       final card = Material(
         color: Colors.transparent,
@@ -242,7 +243,7 @@ class _AiFacesItemCardState extends State<AiFacesItemCard> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   )
-                else if (isAdmin)
+                else
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
                     onTap: () async {
@@ -275,17 +276,9 @@ class _AiFacesItemCardState extends State<AiFacesItemCard> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  )
-                else
-                  Text(
-                    'face_unnamed'.tr,
-                    style: theme.textTheme.titleSmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                if (isAdmin) const SizedBox(height: 2),
-                if (isAdmin)
-                  Text(
+                const SizedBox(height: 2),
+                Text(
                     'total_count'.trParams({
                       'count': face.faceCount.toString(),
                     }),
@@ -319,30 +312,32 @@ class _AiFacesItemCardState extends State<AiFacesItemCard> {
           value: 'download',
           onSelected: (_) => ctrl.downloadFaces([face.faceId]),
         ),
-        if (isAdmin) ...[
+        // ⭐ 命名对所有登录用户开放（只是给自己看的标签，不影响聚类）
+        const MenuDivider(),
+        CustomContextMenuItem.create(
+          label: Text('rename'.tr),
+          icon: const Icon(Icons.edit_outlined, size: 18),
+          value: 'rename',
+          onSelected: (_) async {
+            final name = await DialogUtil.showInputDialog(
+              title: 'face_name_dialog_title'.tr,
+              content: 'face_name_dialog_hint'.tr,
+              initialValue: (face.name ?? '').trim(),
+              confirmText: 'ok'.tr,
+              cancelText: 'cancel'.tr,
+              validator: (v) {
+                final t = (v ?? '').trim();
+                if (t.isEmpty) return 'name_cannot_be_empty'.tr;
+                if (t.length > 30) return 'face_name_too_long'.tr;
+                return null;
+              },
+            );
+            if (name == null || name.trim().isEmpty) return;
+            await ctrl.renameFace(face, name.trim());
+          },
+        ),
+        ...[
           const MenuDivider(),
-          CustomContextMenuItem.create(
-            label: Text('rename'.tr),
-            icon: const Icon(Icons.edit_outlined, size: 18),
-            value: 'rename',
-            onSelected: (_) async {
-              final name = await DialogUtil.showInputDialog(
-                title: 'face_name_dialog_title'.tr,
-                content: 'face_name_dialog_hint'.tr,
-                initialValue: (face.name ?? '').trim(),
-                confirmText: 'ok'.tr,
-                cancelText: 'cancel'.tr,
-                validator: (v) {
-                  final t = (v ?? '').trim();
-                  if (t.isEmpty) return 'name_cannot_be_empty'.tr;
-                  if (t.length > 30) return 'face_name_too_long'.tr;
-                  return null;
-                },
-              );
-              if (name == null || name.trim().isEmpty) return;
-              await ctrl.renameFace(face, name.trim());
-            },
-          ),
           if (face.isHide)
             CustomContextMenuItem.create(
               label: Text('face_action_show'.tr),

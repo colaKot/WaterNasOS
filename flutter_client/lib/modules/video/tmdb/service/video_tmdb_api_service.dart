@@ -14,6 +14,13 @@ class VideoTmdbSearchItem {
   final List<String> actors;
   final List<String> genres;
 
+  /// ⭐ 结果来源（2026-10-12）。'jav' 表示这是「日本片优先」搜出来的番号结果，
+  /// 此时 [id] 为 0，要用 [dvdId] 去应用；其余情况为空串（普通 TMDB 结果）。
+  final String source;
+
+  /// 日本片番号（source == 'jav' 时才有值）
+  final String dvdId;
+
   const VideoTmdbSearchItem({
     required this.id,
     required this.mediaType,
@@ -26,7 +33,12 @@ class VideoTmdbSearchItem {
     required this.voteAverage,
     required this.actors,
     required this.genres,
+    this.source = '',
+    this.dvdId = '',
   });
+
+  /// 是否日本片（番号）结果
+  bool get isJav => source == 'jav';
 
   factory VideoTmdbSearchItem.fromJson(Map<String, dynamic> json) {
     final actors = json['actors'];
@@ -41,6 +53,8 @@ class VideoTmdbSearchItem {
       posterUrl: (json['poster_url']?.toString() ?? '').trim(),
       backdropUrl: (json['backdrop_url']?.toString() ?? '').trim(),
       voteAverage: (json['vote_average'] as num?)?.toDouble() ?? 0,
+      source: (json['source']?.toString() ?? '').trim(),
+      dvdId: (json['dvd_id']?.toString() ?? '').trim(),
       actors: actors is List
           ? actors
                 .map((e) => e?.toString() ?? '')
@@ -99,6 +113,7 @@ class VideoTmdbApiService extends BaseApiService {
     required String searchMode,
     String query = '',
     String tmdbId = '',
+    int indexId = 0,
     int page = 1,
     bool showLoading = false,
   }) async {
@@ -109,6 +124,9 @@ class VideoTmdbApiService extends BaseApiService {
         'search_mode': searchMode,
         if (query.trim().isNotEmpty) 'query': query.trim(),
         if (tmdbId.trim().isNotEmpty) 'tmdb_id': tmdbId.trim(),
+        // ⭐ 带上索引 id：服务端据此判断该条目是否属于「日本电影库」，
+        //    是的话优先按番号去日文站点搜（与自动刮削一致）。
+        if (indexId > 0) 'index_id': indexId,
         'page': page,
       },
       showLoading: showLoading,

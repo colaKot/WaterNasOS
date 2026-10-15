@@ -3,7 +3,7 @@
 电脑 ↔ NAS 目录同步的**独立小程序**。不依赖整套 WaterNasOS 客户端，装完就一个托盘图标，
 关窗不退出，后台按需 / 定时把指定的电脑目录与 NAS 目录保持一致。
 
-产物：`NasCabSync.exe`
+产物：`WaterNasSync.exe`
 
 ---
 
@@ -44,9 +44,6 @@ sync_client/
 
 ## 构建
 
-> ⚠️ 本目录由脚本生成，**未在装有 Flutter SDK 的机器上编译验证过**，
-> 首次构建请预留调试时间。
-
 ```bash
 cd sync_client
 
@@ -61,11 +58,17 @@ flutter build windows --release
 产物路径：
 
 ```
-build/windows/x64/runner/Release/NasCabSync.exe
+build/windows/x64/runner/Release/WaterNasSync.exe
 ```
 
 **分发时要把整个 `Release` 目录打包**，不能只拷 exe —— 还需要同级的
 `flutter_windows.dll`、`data/` 目录（含 Dart AOT 快照与资产）以及各插件的 dll。
+仓库里提供了打包脚本：
+
+```bash
+python tool/_pack_sync_zip.py            # 产物 zip 落到 G:\work\_dist
+python tool/_pack_sync_zip.py <输出目录>
+```
 
 调试运行：
 
@@ -73,11 +76,15 @@ build/windows/x64/runner/Release/NasCabSync.exe
 flutter run -d windows
 ```
 
+> ✅ **已编译验证**（2026-10-12）：`flutter build windows --release` 通过，
+> `√ Built build\windows\x64\runner\Release\WaterNasSync.exe`（74.5s），
+> 产物可直接双击启动（Impeller/OpenGL 后端正常初始化）。
+
 ---
 
 ## 首次使用
 
-1. 启动 `NasCabSync.exe`
+1. 启动 `WaterNasSync.exe`
 2. 填服务器地址（如 `http://192.168.1.100:8080`）、账号、密码，登录
 3. 点右下角「新建同步任务」
    - 选电脑目录（可以用「编辑」按钮挑），NAS 目录手工输入服务端路径（如 `/volume1/backup/docs`）
@@ -122,12 +129,12 @@ flutter run -d windows
 
 | 位置 | 改动 | 原因 |
 |---|---|---|
-| `windows/CMakeLists.txt` | `project` / `BINARY_NAME` → `NasCabSync` | 产物名区分 |
-| `windows/runner/utils.cpp` | 单实例 mutex → `Global\NasCabSync_SingleInstance` | **关键**：与主客户端同名会互斥，两者只能开一个 |
+| `windows/CMakeLists.txt` | `project` / `BINARY_NAME` → `WaterNasSync` | 产物名区分 |
+| `windows/runner/utils.cpp` | 单实例 mutex → `Global\WaterNasSync_SingleInstance` | **关键**：与主客户端同名会互斥，两者只能开一个 |
 | `windows/runner/utils.cpp` | 窗口类名 → `NASACB_SYNC_WIN32_WINDOW` | 避免单实例激活时误找主客户端窗口 |
-| `windows/runner/utils.cpp` | 单实例消息名 → `NasCabSync_ShowExistingInstance` | 同上 |
-| `windows/runner/main.cpp` | 窗口标题 `NasCabSync`，尺寸 1000×720 | |
-| `windows/runner/Runner.rc` | 产品名 / 文件名 → WaterNasOS Sync | 任务管理器、属性页显示 |
+| `windows/runner/utils.cpp` | 单实例消息名 → `WaterNasSync_ShowExistingInstance` | 同上 |
+| `windows/runner/main.cpp` | 窗口标题 `WaterNasSync`，尺寸 1000×720 | |
+| `windows/runner/Runner.rc` | 产品名 / 文件名 → `WaterNasSync` | 任务管理器、属性页显示 |
 | `windows/runner/resources/app_icon.ico` | 换成同步专属图标 | |
 
 ---
@@ -138,7 +145,6 @@ flutter run -d windows
   做一个选择器，体验对齐主客户端的 `showFolderPickerBottomSheet`
 - **只内置简体中文**，`core/i18n.dart` 已按多语言结构组织，加语言只需扩 map
 - **未做过安装包**（Inno Setup / MSIX），当前是绿色目录分发
-- **未编译验证**：本机无 Flutter SDK，仅做过静态校验（import 路径、文案 key、
-  括号平衡、依赖声明）
+- 编译已通过（见「构建」），但**首次登录/同步的端到端流程仍需在真实服务端上跑一遍
 - 普通用户能否同步某个 NAS 目录，取决于服务端权限模型；当前 `/api/sync/*` 只校验登录态，
   没有按路径鉴权（与主客户端现状一致）

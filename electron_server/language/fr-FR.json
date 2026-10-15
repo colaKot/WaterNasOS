@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "Les plugins requis pour cette fonctionnalité sont encore en cours de téléchargement. Veuillez réessayer plus tard."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "Identifiant d'appareil manquant. Veuillez mettre à jour le client et réessayer.",
+      "DEVICE_ID_INVALID": "Identifiant d'appareil invalide"
     }
   },
   "places365": {

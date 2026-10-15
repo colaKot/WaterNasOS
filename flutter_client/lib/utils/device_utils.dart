@@ -76,6 +76,11 @@ class DeviceUtils {
         defaultTargetPlatform == TargetPlatform.iOS;
   }
 
+  /// 原生手机 App（非 web、非桌面）。
+  /// 相册备份等「仅手机端可用」的能力用这个判断 —— 桌面/web 不注册备份控制器，
+  /// 入口露出来点进去也是空白。
+  static bool get isNativeMobile => !kIsWeb && isMobile;
+
   /// 检测当前是否为Web平台
   static bool get isWeb => kIsWeb;
 
@@ -98,6 +103,28 @@ class DeviceUtils {
 
   static bool get isFuchsia =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.fuchsia;
+
+  /// 服务端「按端隔离配置」用的客户端类型键（2026-10-12）。
+  ///
+  /// ⚠️ 必须与 `electron_server/src/api/modules/video/config/videoConfigController.js`
+  /// 里的 `CLIENT_TYPE_KEYS` = ['web','android','ios','desktop'] 一字不差，
+  /// 否则服务端会把请求归一成空串，退化成「所有端共用一份配置」。
+  /// 用途：播放默认画质 / 音频降混这类「每端各自一份」的用户偏好。
+  static String get clientTypeKey {
+    if (kIsWeb) return 'web';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'android';
+      case TargetPlatform.iOS:
+        return 'ios';
+      case TargetPlatform.windows:
+      case TargetPlatform.macOS:
+      case TargetPlatform.linux:
+        return 'desktop';
+      default:
+        return 'desktop';
+    }
+  }
 
   /// 获取设备平台名称
   static String get platformName {

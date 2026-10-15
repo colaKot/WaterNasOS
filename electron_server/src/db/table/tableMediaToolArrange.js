@@ -26,6 +26,7 @@ class tableMediaToolArrange {
     if (!tableExists) {
       await knex.schema.createTable(this.tableName, table => {
         table.increments('id').primary();
+        table.integer('uid').notNullable().defaultTo(0); // 任务归属用户（0=旧版未归属，仅管理员可见）
         table.text('source_path').notNullable();
         table.text('target_path').notNullable();
         table
@@ -70,6 +71,10 @@ class tableMediaToolArrange {
       } catch (_) {}
     };
 
+    if (!colNames.has('uid')) {
+      await addColumn('uid', 'INTEGER NOT NULL DEFAULT 0');
+    }
+
     if (!colNames.has('same_name_policy')) {
       await addColumn('same_name_policy', `TEXT NOT NULL DEFAULT '${tableMediaToolArrange.SAME_NAME_POLICY_RENAME}'`);
     }
@@ -82,6 +87,7 @@ class tableMediaToolArrange {
     const indexNames = rows.map(row => row.name);
 
     const targetIndexes = [
+      { columns: ['uid'], name: 'idx_media_tool_arrange_uid', unique: false },
       { columns: ['status'], name: 'idx_media_tool_arrange_status', unique: false },
       { columns: ['create_time'], name: 'idx_media_tool_arrange_create_time', unique: false },
       { columns: ['update_time'], name: 'idx_media_tool_arrange_update_time', unique: false },

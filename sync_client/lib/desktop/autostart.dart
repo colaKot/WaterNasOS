@@ -3,11 +3,11 @@ import 'dart:io';
 /// 开机自启：写 HKCU 下的 Run 项。
 ///
 /// 不引第三方包，直接用 `reg` 命令，行为透明、便于排查。
-/// 注册表项：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `NasCabSync`
+/// 注册表项：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `WaterNasSync`
 class AutoStart {
   AutoStart._();
 
-  static const String _valueName = 'NasCabSync';
+  static const String _valueName = 'WaterNasSync';
   static const String _runKey =
       r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
 

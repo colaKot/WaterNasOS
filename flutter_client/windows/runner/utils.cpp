@@ -9,11 +9,11 @@
 
 namespace {
 
-constexpr wchar_t kSingleInstanceMutexName[] = L"Global\\NasCabOS_SingleInstance";
+constexpr wchar_t kSingleInstanceMutexName[] = L"Global\\WaterNasClient_SingleInstance";
 constexpr wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
-constexpr wchar_t kExecutableName[] = L"NasCabOS.exe";
+constexpr wchar_t kExecutableName[] = L"WaterNasClient.exe";
 constexpr wchar_t kShowExistingInstanceMessageName[] =
-    L"NasCabOS_ShowExistingInstance";
+    L"WaterNasClient_ShowExistingInstance";
 
 UINT GetShowExistingInstanceMessageId() {
   static const UINT message_id =
@@ -65,7 +65,7 @@ BOOL CALLBACK FindMainWindowProc(HWND hwnd, LPARAM lparam) {
   return TRUE;
 }
 
-HWND FindExistingNasCabOSWindow() {
+HWND FindExistingWaterNasClientWindow() {
   FindMainWindowData data;
   EnumWindows(FindMainWindowProc, reinterpret_cast<LPARAM>(&data));
   return data.found_hwnd;
@@ -158,7 +158,7 @@ bool TryActivateExistingInstance(void** out_mutex) {
     if (mutex) {
       CloseHandle(mutex);
     }
-    NotifyExistingInstance(FindExistingNasCabOSWindow());
+    NotifyExistingInstance(FindExistingWaterNasClientWindow());
     return true;
   }
 

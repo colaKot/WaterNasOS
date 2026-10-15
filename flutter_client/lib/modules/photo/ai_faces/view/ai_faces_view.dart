@@ -114,24 +114,33 @@ class AiFacesView extends StatelessWidget {
                   onPressed: ctrl.refreshFaces,
                   icon: const Icon(Icons.refresh),
                 ),
-                if (isAdmin)
-                  PopupMenuButton<String>(
-                    onSelected: (v) {
-                      if (v == 'settings') {
-                        ctrl.openAutoHideSettings();
-                      } else if (v == 'reset') {
-                        ctrl.confirmAndResetFaces();
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'settings',
-                        child: Text('setting'.tr),
-                      ),
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'rescan') {
+                      ctrl.confirmAndRescanFaces();
+                    } else if (v == 'settings') {
+                      ctrl.openAutoHideSettings();
+                    } else if (v == 'reset') {
+                      ctrl.confirmAndResetFaces();
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    // 重扫我的相册：所有登录用户
+                    PopupMenuItem(
+                      value: 'rescan',
+                      child: Text('face_rescan_mine'.tr),
+                    ),
+                    // 自动隐藏设置：只影响自己可见的人脸列表
+                    PopupMenuItem(
+                      value: 'settings',
+                      child: Text('setting'.tr),
+                    ),
+                    // 全库重置：会清掉所有人的人脸，限管理员
+                    if (isAdmin)
                       PopupMenuItem(value: 'reset', child: Text('reset'.tr)),
-                    ],
-                    icon: const Icon(Icons.more_vert),
-                  ),
+                  ],
+                  icon: const Icon(Icons.more_vert),
+                ),
               ],
             ),
             body: Stack(

@@ -1,6 +1,8 @@
 import 'package:WaterNasOS/core/routes/app_routes.dart';
+import 'package:WaterNasOS/core/bootstrap/app_launch.dart';
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
 import 'package:WaterNasOS/core/user/current_user_controller.dart';
+import 'package:WaterNasOS/modules/transfer/views/download/download_center/app_download_center_view.dart';
 import 'package:WaterNasOS/modules/music/album_artist_list/controller/album_artist_list_controller.dart';
 import 'package:WaterNasOS/modules/music/album_artist_list/view/album_artist_list_page.dart';
 import 'package:WaterNasOS/modules/base/components/custom_bordered_icon_button.dart';
@@ -42,6 +44,10 @@ class _AppMusicMainViewState extends State<AppMusicMainView>
     AppRoutes.toHome();
   }
 
+  /// 独立音乐 App（music_client）模式：本文件的音乐端专属改动只在此模式下生效，
+  /// 主客户端（AppLaunchMode.full）行为一字不变。
+  bool get _isMusicApp => AppLaunch.mode == AppLaunchMode.music;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -77,11 +83,14 @@ class _AppMusicMainViewState extends State<AppMusicMainView>
                   child: Row(
                     children: [
                       SizedBox(width: 12),
-                      CustomBorderedIconButton(
-                        tooltip: 'app_files_back_home'.tr,
-                        onTap: _openHome,
-                        icon: Icons.home_outlined,
-                      ),
+                      // 独立音乐端没有「主菜单/桌面」可回：删掉回主菜单按钮，
+                      // 曲库/收藏等 tab 随之整体左移（主客户端保持不变）
+                      if (!_isMusicApp)
+                        CustomBorderedIconButton(
+                          tooltip: 'app_files_back_home'.tr,
+                          onTap: _openHome,
+                          icon: Icons.home_outlined,
+                        ),
                       Expanded(
                         child: TabBar(
                           controller: _tabController,
@@ -107,6 +116,15 @@ class _AppMusicMainViewState extends State<AppMusicMainView>
                           ],
                         ),
                       ),
+                      // 独立音乐端：设置按钮左边加下载按钮（向下箭头），直达下载中心；
+                      // 下载中心返回即回到本歌曲首页，不回桌面
+                      if (_isMusicApp)
+                        CustomBorderedIconButton(
+                          icon: Icons.arrow_downward,
+                          tooltip: 'home_download_center'.tr,
+                          onTap: () =>
+                              Get.to(() => const AppDownloadCenterView()),
+                        ),
                       if (CurrentUserController.instance.isAdmin)
                         CustomBorderedIconButton(
                           tooltip: 'setting'.tr,

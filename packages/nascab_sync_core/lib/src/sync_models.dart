@@ -178,8 +178,8 @@ class SyncConfig {
   bool deleteExtra;
 
   SyncConfig({
-    this.realtime = true,
-    this.intervalMinutes = 30,
+    this.realtime = false,
+    this.intervalMinutes = 1,
     this.conflictStrategy = 'prefer_newer',
     this.deleteExtra = false,
   });
@@ -188,8 +188,9 @@ class SyncConfig {
     final map = raw is Map ? raw : const <String, dynamic>{};
     final strategy = map['conflictStrategy']?.toString() ?? '';
     return SyncConfig(
-      realtime: map['realtime'] != false,
-      intervalMinutes: int.tryParse(map['intervalMinutes']?.toString() ?? '') ?? 30,
+      realtime: map['realtime'] == true,
+      intervalMinutes:
+          int.tryParse(map['intervalMinutes']?.toString() ?? '') ?? 1,
       conflictStrategy:
           ['prefer_newer', 'prefer_local', 'prefer_remote'].contains(strategy)
               ? strategy
@@ -292,10 +293,24 @@ class SyncFileItem {
     this.reason = '',
   });
 
+  /// 服务端的时间戳来自 Node 的 `fs.stat().mtimeMs`，是**带小数**的 Number
+  /// （NTFS 100ns 精度，序列化后形如 `1772382172000.5`）。
+  /// `int.tryParse` 不接受小数点、直接返回 null；一旦被当成 0，下载完成后就
+  /// 不会回写本地修改时间，本地 mtime 恒等于「写入时刻」，下一轮比对仍判
+  /// 「远端更新」⇒ 同一批文件每轮重新下载，永远不收敛。必须按 num 解析。
+  static int _toMs(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    final s = v.toString().trim();
+    if (s.isEmpty) return 0;
+    return int.tryParse(s) ?? num.tryParse(s)?.toInt() ?? 0;
+  }
+
   factory SyncFileItem.fromMap(Map<String, dynamic> map) => SyncFileItem(
         relPath: map['relPath']?.toString() ?? '',
-        size: int.tryParse(map['size']?.toString() ?? '') ?? 0,
-        mtimeMs: int.tryParse(map['mtimeMs']?.toString() ?? '') ?? 0,
+        size: _toMs(map['size']),
+        mtimeMs: _toMs(map['mtimeMs']),
         reason: map['reason']?.toString() ?? '',
       );
 }

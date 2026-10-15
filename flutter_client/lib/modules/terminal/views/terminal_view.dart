@@ -779,7 +779,7 @@ class _TerminalSettingsSheetState extends State<_TerminalSettingsSheet> {
                       ),
                       const SizedBox(height: 16),
                       SwitchListTile(
-                        activeColor: theme.colorScheme.primary,
+                        activeThumbColor: theme.colorScheme.onPrimary,
                         contentPadding: EdgeInsets.zero,
                         title: Text('terminal_cursor_blink'.tr),
                         value: _cfg.cursorBlink,

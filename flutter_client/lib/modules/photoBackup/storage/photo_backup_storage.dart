@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -29,7 +31,7 @@ class PhotoBackupStorage {
     _db = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE IF NOT EXISTS photo_backup_task ('
@@ -40,11 +42,20 @@ class PhotoBackupStorage {
             'source_type TEXT NOT NULL,'
             'source_id TEXT NOT NULL,'
             'source_name TEXT NOT NULL,'
+            'source_ids TEXT NOT NULL DEFAULT "",'
+            'source_names TEXT NOT NULL DEFAULT "",'
             'target_dir TEXT NOT NULL,'
             'name_strategy TEXT NOT NULL DEFAULT "skip",'
             'save_type TEXT NOT NULL DEFAULT "",'
             'upload_live_photo_video INTEGER NOT NULL DEFAULT 0,'
             'auto_start_on_launch INTEGER NOT NULL DEFAULT 0,'
+            'enabled INTEGER NOT NULL DEFAULT 0,'
+            'only_photos INTEGER NOT NULL DEFAULT 0,'
+            'rename_by_date INTEGER NOT NULL DEFAULT 0,'
+            'use_cellular INTEGER NOT NULL DEFAULT 0,'
+            'saving_mode INTEGER NOT NULL DEFAULT 1,'
+            'keep_screen_on INTEGER NOT NULL DEFAULT 1,'
+            'device_name TEXT NOT NULL DEFAULT "",'
             'created_at_ms INTEGER NOT NULL,'
             'updated_at_ms INTEGER NOT NULL'
             ')',
@@ -142,6 +153,22 @@ class PhotoBackupStorage {
               ')',
             );
           }
+          if (oldVersion < 4) {
+            const cols = <String>[
+              'source_ids TEXT NOT NULL DEFAULT ""',
+              'source_names TEXT NOT NULL DEFAULT ""',
+              'enabled INTEGER NOT NULL DEFAULT 0',
+              'only_photos INTEGER NOT NULL DEFAULT 0',
+              'rename_by_date INTEGER NOT NULL DEFAULT 0',
+              'use_cellular INTEGER NOT NULL DEFAULT 0',
+              'saving_mode INTEGER NOT NULL DEFAULT 1',
+              'keep_screen_on INTEGER NOT NULL DEFAULT 1',
+              'device_name TEXT NOT NULL DEFAULT ""',
+            ];
+            for (final col in cols) {
+              await db.execute('ALTER TABLE photo_backup_task ADD COLUMN $col');
+            }
+          }
         },
         onOpen: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
@@ -165,6 +192,25 @@ class PhotoBackupStorage {
     return rows.map((e) => PhotoBackupTask.fromMap(e)).toList();
   }
 
+  /// 读取当前 (server, user) 下的**唯一**任务。
+  /// 历史版本可能留下多条（每个相册一条），这里取最早创建的一条作为配置载体，
+  /// 其余任务保留在库里不动（不删用户数据），但不再参与任何流程。
+  Future<PhotoBackupTask?> getSingleTask({
+    required String serverId,
+    required int userId,
+  }) async {
+    final db = await _openDb();
+    final rows = await db.query(
+      'photo_backup_task',
+      where: 'server_id = ? AND user_id = ?',
+      whereArgs: [serverId.trim(), userId],
+      orderBy: 'id ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PhotoBackupTask.fromMap(rows.first);
+  }
+
   Future<int> upsertTask({
     int? id,
     required String serverId,
@@ -178,46 +224,96 @@ class PhotoBackupStorage {
     required String saveType,
     required bool uploadLivePhotoVideo,
     required bool autoStartOnLaunch,
+    List<String> sourceIds = const <String>[],
+    List<String> sourceNames = const <String>[],
+    bool enabled = false,
+    bool onlyPhotos = false,
+    bool renameByDate = false,
+    bool useCellular = false,
+    bool savingMode = true,
+    bool keepScreenOn = false,
+    String deviceName = '',
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final db = await _openDb();
-    if (id != null && id > 0) {
-      await db.update(
-        'photo_backup_task',
-        {
-          'server_id': serverId,
-          'user_id': userId,
-          'name': name,
-          'source_type': sourceType,
-          'source_id': sourceId,
-          'source_name': sourceName,
-          'target_dir': targetDir,
-          'name_strategy': nameStrategy,
-          'save_type': saveType,
-          'upload_live_photo_video': uploadLivePhotoVideo ? 1 : 0,
-          'auto_start_on_launch': autoStartOnLaunch ? 1 : 0,
-          'updated_at_ms': now,
-        },
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      return id;
-    }
-    return await db.insert('photo_backup_task', {
+    final values = <String, Object?>{
       'server_id': serverId,
       'user_id': userId,
       'name': name,
       'source_type': sourceType,
       'source_id': sourceId,
       'source_name': sourceName,
+      'source_ids': jsonEncode(sourceIds),
+      'source_names': jsonEncode(sourceNames),
       'target_dir': targetDir,
       'name_strategy': nameStrategy,
       'save_type': saveType,
       'upload_live_photo_video': uploadLivePhotoVideo ? 1 : 0,
       'auto_start_on_launch': autoStartOnLaunch ? 1 : 0,
-      'created_at_ms': now,
+      'enabled': enabled ? 1 : 0,
+      'only_photos': onlyPhotos ? 1 : 0,
+      'rename_by_date': renameByDate ? 1 : 0,
+      'use_cellular': useCellular ? 1 : 0,
+      'saving_mode': savingMode ? 1 : 0,
+      'keep_screen_on': keepScreenOn ? 1 : 0,
+      'device_name': deviceName,
       'updated_at_ms': now,
-    });
+    };
+    if (id != null && id > 0) {
+      await db.update(
+        'photo_backup_task',
+        values,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return id;
+    }
+    values['created_at_ms'] = now;
+    return await db.insert('photo_backup_task', values);
+  }
+
+  /// 该任务下**已成功上传**过的素材 id 集合（用于每轮快速跳过，避免重复比对）。
+  Future<Set<String>> listHandledUniqueIds(int taskId) async {
+    final db = await _openDb();
+    final rows = await db.query(
+      'photo_backup_file_record',
+      columns: ['source_unique_id'],
+      where: "task_id = ? AND status = 'success'",
+      whereArgs: [taskId],
+      distinct: true,
+    );
+    return rows
+        .map((e) => (e['source_unique_id']?.toString() ?? '').trim())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+  }
+
+  /// 统计该任务累计成功上传（status = 'success'）的文件数。
+  Future<int> countSuccessFiles(int taskId) async {
+    final db = await _openDb();
+    final rows = await db.rawQuery(
+      "SELECT COUNT(*) AS c FROM photo_backup_file_record WHERE task_id = ? AND status = 'success'",
+      [taskId],
+    );
+    if (rows.isEmpty) return 0;
+    final v = rows.first['c'];
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  /// 最近一次运行记录（无则 null）。
+  Future<PhotoBackupRunRecord?> latestRun(int taskId) async {
+    final db = await _openDb();
+    final rows = await db.query(
+      'photo_backup_run_record',
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      orderBy: 'started_at_ms DESC, id DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PhotoBackupRunRecord.fromMap(rows.first);
   }
 
   Future<void> deleteTask(int taskId) async {

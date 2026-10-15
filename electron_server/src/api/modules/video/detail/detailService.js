@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../../../../config/config');
 const tableConfig = require('../../../../db/table/tableConfig');
 const dbUtil = require('../../../../db/dbUtil');
@@ -435,6 +436,41 @@ function _sanitizeTmdbIdForPath(tmdbId) {
   if (!id) return '';
   if (!/^\d+$/.test(id)) return '';
   return id;
+}
+
+/**
+ * 演员头像缓存键。与刮削时预下载（`javNfoFallback.downloadActorAvatarToCache`）
+ * 使用同一套规则，否则「刮削下载好的头像」在详情页会因键不一致而重下或取不到：
+ *   - 有 TMDB 数字 id（普通影视剧演员）→ 直接用 id，沿用历史缓存文件；
+ *   - 没有 id（日本片演员）→ 用 thumb URL 的 md5 前 16 位，前缀 `u` 避免与数字 id 撞名。
+ */
+function _computePersonKey(tmdbId, thumbUrl) {
+  const id = String(tmdbId || '').trim();
+  if (/^\d+$/.test(id)) return id;
+  const thumb = String(thumbUrl || '').trim();
+  if (!thumb) return '';
+  return `u${crypto.createHash('md5').update(thumb).digest('hex').slice(0, 16)}`;
+}
+
+const _IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif']);
+
+/**
+ * 判断 thumb 是不是「本机已存在的图片文件路径」。
+ *
+ * 用户库里不少日本片的 NFO 是 Jellyfin 生成的，`<thumb>` 存的是
+ * `G:\soft\jellyfin\data\metadata\People\…\folder.jpg` 这种本机绝对路径，
+ * 之前客户端因为拿不到 tmdbId 直接不显示头像 —— 这里把这类路径捞出来直接回传。
+ * 只接受图片扩展名且真实存在的文件，避免把任意文件当图片发出去。
+ */
+function _resolveLocalPersonImage(thumb) {
+  const raw = String(thumb || '').trim();
+  if (!raw || /^https?:\/\//i.test(raw)) return '';
+  if (!_IMAGE_EXTS.has(path.extname(raw).toLowerCase())) return '';
+  try {
+    const resolved = path.resolve(raw);
+    if (fs.statSync(resolved).isFile()) return resolved;
+  } catch (_) {}
+  return '';
 }
 
 let _tmdbClientPromise = null;
@@ -1063,7 +1099,15 @@ class VideoDetailService {
   }
 
   async getOrDownloadPersonJpeg({ tmdbId, size = 240, thumbUrl = '' }) {
-    const id = _sanitizeTmdbIdForPath(tmdbId);
+    const thumb = String(thumbUrl || '').trim();
+
+    const localPath = _resolveLocalPersonImage(thumb);
+    if (localPath) {
+      const buf = await fs.promises.readFile(localPath);
+      return { filePath: localPath, buffer: buf };
+    }
+
+    const id = _computePersonKey(tmdbId, thumb);
     if (!id) return null;
 
     const safeSize = _pickTmdbProfileSize(size);
@@ -1080,7 +1124,6 @@ class VideoDetailService {
     } catch (_) {}
 
     let url = '';
-    const thumb = String(thumbUrl || '').trim();
     if (thumb) {
       url = _maybeConvertTmdbImageUrlToSize(thumb, safeSize) || thumb;
     } else {
@@ -1110,7 +1153,14 @@ class VideoDetailService {
   }
 
   async getPersonJpegCacheInfo({ tmdbId, size = 240, thumbUrl = '' }) {
-    const id = _sanitizeTmdbIdForPath(tmdbId);
+    const thumb = String(thumbUrl || '').trim();
+
+    // ⭐ 本地已存在的头像文件（Jellyfin 生成的 `<thumb>` 绝对路径）直接回传，
+    //    不进头像缓存目录，也不依赖 tmdbId。
+    const localPath = _resolveLocalPersonImage(thumb);
+    if (localPath) return { filePath: localPath, exists: true, url: '', localPath };
+
+    const id = _computePersonKey(tmdbId, thumb);
     if (!id) return null;
 
     const safeSize = _pickTmdbProfileSize(size);
@@ -1125,7 +1175,6 @@ class VideoDetailService {
     } catch (_) {}
 
     let url = '';
-    const thumb = String(thumbUrl || '').trim();
     if (thumb) {
       url = _maybeConvertTmdbImageUrlToSize(thumb, safeSize) || thumb;
     } else {
@@ -1138,6 +1187,42 @@ class VideoDetailService {
     }
 
     return { filePath, exists, url };
+  }
+
+  /**
+   * 从索引里的 NFO 演员表按名字找 thumb / tmdbId。
+   *
+   * 客户端详情页只传 `index_id + 演员名`，thumb 由服务端从数据库查出来，
+   * 请求方无法借此读取任意本地文件（比让客户端直接传路径安全）。
+   */
+  async findPersonMetaInIndex({ indexId, name }) {
+    const id = Number(indexId || 0) || 0;
+    const target = String(name || '').trim();
+    if (!id || !target) return null;
+
+    const row = await this.knexVideo('video_index')
+      .where({ id })
+      .first('nfo_actor_json', 'nfo_director_json')
+      .catch(() => null);
+    if (!row) return null;
+
+    for (const raw of [row.nfo_actor_json, row.nfo_director_json]) {
+      let list = [];
+      try {
+        list = JSON.parse(String(raw || '[]'));
+      } catch (_) {
+        list = [];
+      }
+      if (!Array.isArray(list)) continue;
+      const hit = list.find(p => p && String(p.name || '').trim() === target);
+      if (hit) {
+        return {
+          thumb: String(hit.thumb || '').trim(),
+          tmdbId: String(hit.tmdbId || '').trim(),
+        };
+      }
+    }
+    return null;
   }
 
   async getPosterJpegCacheInfo({ tmdbId, mediaType, size = 342, thumbUrl = '' }) {

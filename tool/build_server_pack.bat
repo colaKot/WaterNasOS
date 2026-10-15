@@ -21,9 +21,11 @@ if /I not "%~2"=="nokill" taskkill /F /IM WaterNasOSServer.exe >nul 2>&1
 echo ==== pack start %DATE% %TIME% out=%OUT% ==== > "%LOG%"
 "C:\Program Files\nodejs\node.exe" node_modules\electron-builder\out\cli\cli.js --win --x64 --dir -c.win.signAndEditExecutable=false -c.npmRebuild=false -c.electronDist=node_modules\electron\dist -c.directories.output=%OUT% >> "%LOG%" 2>&1
 set RC=%ERRORLEVEL%
-rem --- 图标：上面的 signAndEditExecutable=false 会让 electron-builder 跳过 rcedit，
-rem     于是打包出的 exe 保留 electron 出厂默认图标（文件图标 / 任务栏图标都是它）。
-rem     这里在构建成功后用 rcedit 把 libs\logo.ico 补写进 win-unpacked 下的主 exe。
+rem --- 图标 + 版本资源：上面的 signAndEditExecutable=false 会让 electron-builder 跳过 rcedit，
+rem     于是打包出的 exe 保留 electron 出厂默认图标（文件图标 / 任务栏图标都是它），
+rem     且 exe 的版本资源还是 electron 出厂值（FileDescription=Electron），
+rem     导致 Windows 任务管理器「进程」页显示的应用名是 Electron 而不是 WaterNasOSServer。
+rem     这里在构建成功后用 rcedit 把 libs\logo.ico 和版本字符串补写进 win-unpacked 下的主 exe。
 if "%RC%"=="0" call :set_icon
 echo ==== EXITCODE=%RC% %DATE% %TIME% ==== >> "%LOG%"
 rem ⚠️ 必须 exit /b 带出真实退出码（见 build_web.bat 同处注释）。
@@ -38,5 +40,9 @@ if not exist "%RCEDIT%" (
 for %%F in ("%OUT%\win-unpacked\*.exe") do (
   echo [icon] set-icon %%~nxF ^<- libs\logo.ico >> "%LOG%"
   "%RCEDIT%" "%%~fF" --set-icon "libs\logo.ico" >> "%LOG%" 2>&1
+  rem Task Manager (processes page) shows the exe FileDescription; without these
+  rem strings it stays "Electron". PRODUCT=package.json build.productName.
+  echo [ver] set-version-string %%~nxF >> "%LOG%"
+  "%RCEDIT%" "%%~fF" --set-version-string CompanyName "NasCab" --set-version-string FileDescription "WaterNasOSServer" --set-version-string ProductName "WaterNasOSServer" --set-version-string InternalName "WaterNasOSServer" --set-version-string OriginalFilename "%%~nxF" --set-version-string LegalCopyright "Copyright (C) NasCab. GPL-3.0." >> "%LOG%" 2>&1
 )
 goto :eof

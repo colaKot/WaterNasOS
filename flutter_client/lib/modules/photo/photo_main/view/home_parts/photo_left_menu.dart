@@ -20,6 +20,7 @@ class PhotoLeftMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isAdmin = CurrentUserController.instance.isAdmin;
+    final isSuperAdmin = CurrentUserController.instance.isSuperAdmin;
     final groups = <SideMenuTwoLevelGroup>[
       SideMenuTwoLevelGroup(
         title: 'photo_menu_all'.tr,
@@ -114,18 +115,23 @@ class PhotoLeftMenu extends StatelessWidget {
         icon: Icons.settings_outlined,
         expanded: controller.isSettingsExpanded,
         items: [
-          if (isAdmin)
-            TwoLevelSideMenuItem(
-              title: 'settings_source'.tr,
-              key: 'settings.source',
-              icon: Icons.folder_special_outlined,
-            ),
+          // ⭐ 2026-10-13：「来源设置」对所有登录用户开放（每个用户管理自己的图片来源，
+          //    服务端 photo_source 按 uid 隔离）；只有「AI 设置」限超级管理员。
+          TwoLevelSideMenuItem(
+            title: 'settings_source'.tr,
+            key: 'settings.source',
+            icon: Icons.folder_special_outlined,
+          ),
+          // ⭐ 2026-10-13：桌面/web 端相册不放「相册备份」入口 —— 备份控制器只在
+          // 原生手机端注册（main.dart: !isWeb && isMobile），露出来点进去也是空白。
+          // 相册备份只保留：手机主客户端（首页监控卡）+ 相册独立 App（底部「备份」tab）。
           TwoLevelSideMenuItem(
             title: 'photo_menu_settings_preview'.tr,
             key: 'settings.preview',
             icon: Icons.photo_size_select_large_outlined,
           ),
-          if (isAdmin)
+          // ⭐ 2026-10-12：「AI 设置」大栏目只给超级管理员（用户要求，其他人不需要）
+          if (isSuperAdmin)
             TwoLevelSideMenuItem(
               title: 'photo_ai_settings_title'.tr,
               key: 'settings.ai',

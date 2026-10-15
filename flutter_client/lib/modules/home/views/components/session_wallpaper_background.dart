@@ -10,12 +10,19 @@ import '../../../base/components/custom_extended_image.dart';
 ///
 /// 壁纸接口仅校验 Authorization Bearer，不使用 URL 中的 aes 参数；
 /// 因此这里使用 [ApiController.getWallpaperResolvedUrl] 并在请求时附带当前 token。
+///
+/// ⭐ 2026-10-13：用户没设壁纸时不再留空（以前是纯色/「未设置壁纸」文字，
+/// 进桌面一片白很难看），改用内置默认壁纸 [defaultAsset] 兜底。
 class SessionWallpaperBackground extends StatelessWidget {
   const SessionWallpaperBackground({
     super.key,
     this.fit = BoxFit.cover,
     this.placeholder,
   });
+
+  /// 内置默认壁纸（pubspec 已声明 `assets/home/`，新增文件无需改配置）
+  static const String defaultAsset =
+      'assets/home/default_wallpaper.jpg';
 
   final BoxFit fit;
   final Widget? placeholder;
@@ -44,7 +51,8 @@ class SessionWallpaperBackground extends StatelessWidget {
 
       final url = api.getWallpaperResolvedUrl();
       if (url == null || url.isEmpty) {
-        return placeholder ?? const SizedBox.shrink();
+        // 没有自定义壁纸 ⇒ 用内置默认壁纸，避免落地就是一片空白
+        return _DefaultWallpaper(fit: fit, placeholder: placeholder);
       }
 
       return _SessionWallpaperImage(
@@ -55,6 +63,27 @@ class SessionWallpaperBackground extends StatelessWidget {
         placeholder: placeholder,
       );
     });
+  }
+}
+
+/// 内置默认壁纸：资源缺失时退回 [placeholder]（正常打包不会走到）。
+class _DefaultWallpaper extends StatelessWidget {
+  const _DefaultWallpaper({required this.fit, this.placeholder});
+
+  final BoxFit fit;
+  final Widget? placeholder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      SessionWallpaperBackground.defaultAsset,
+      fit: fit,
+      width: double.infinity,
+      height: double.infinity,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.low,
+      errorBuilder: (_, __, ___) => placeholder ?? const SizedBox.shrink(),
+    );
   }
 }
 
@@ -191,13 +220,14 @@ class _WallpaperImageState extends State<_WallpaperImage> {
     throw lastError ?? Exception('wallpaper_load_failed');
   }
 
-  /// 优先展示缓存字节（上次成功加载的壁纸），其次展示 placeholder
+  /// 优先展示缓存字节（上次成功加载的壁纸）；都没有时回退**内置默认壁纸**，
+  /// 避免自定义壁纸加载失败（P2P 通道未就绪 / 404 / 鉴权时序）时整屏空白。
   Widget _buildFallback() {
     final cached = widget.cachedBytes;
     if (cached != null && cached.isNotEmpty) {
       return _buildImage(cached);
     }
-    return widget.placeholder ?? const SizedBox.shrink();
+    return _DefaultWallpaper(fit: widget.fit, placeholder: widget.placeholder);
   }
 
   @override

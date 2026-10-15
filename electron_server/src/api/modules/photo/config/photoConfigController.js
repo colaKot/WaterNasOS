@@ -78,6 +78,7 @@ async function getAiProgress(knexPhoto) {
       total: 0,
       face: buildProgress(0, 0),
       place: buildProgress(0, 0),
+      activity: buildProgress(0, 0),
       ocr: buildProgress(0, 0),
     };
   }
@@ -98,10 +99,27 @@ async function getAiProgress(knexPhoto) {
   const placeDone = parseCount(row && row.place_done);
   const ocrDone = parseCount(row && row.ocr_done);
 
+  // ⭐ 活动维度进度（2026-10-15）。
+  // ⚠️ 必须**单独查 + 降级**：`gen_activity` 是新增列，若某台机器上列迁移还没跑到
+  //    （或迁移失败），把它并进上面那条 SQL 会让**整个 AI 进度接口**报错。
+  //    这里失败就当 0，绝不影响既有四项。
+  let activityDone = 0;
+  try {
+    const arow = await knexPhoto('photo_index')
+      .where('is_file', 1)
+      .andWhere('in_trash', 0)
+      .select(knexPhoto.raw('SUM(CASE WHEN gen_activity = 1 THEN 1 ELSE 0 END) as activity_done'))
+      .first();
+    activityDone = parseCount(arow && arow.activity_done);
+  } catch (_) {
+    activityDone = 0;
+  }
+
   return {
     total,
     face: buildProgress(faceDone, total),
     place: buildProgress(placeDone, total),
+    activity: buildProgress(activityDone, total),
     ocr: buildProgress(ocrDone, total),
   };
 }

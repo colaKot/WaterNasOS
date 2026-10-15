@@ -15,6 +15,14 @@ class SyncController extends GetxController {
   final RxBool loading = false.obs;
   final RxString errorText = ''.obs;
 
+  /// 本账号下「旧版未绑定主机」的同步任务数量（>0 时提示认领到本机）。
+  final RxInt legacyPendingCount = 0.obs;
+
+  /// 本机展示名（主机名；用户改名仅本地生效）。
+  final RxString deviceNameRx = ''.obs;
+  String get deviceLabel =>
+      deviceNameRx.value.isNotEmpty ? deviceNameRx.value : '本机';
+
   /// 全局暂停自动同步（托盘菜单可切换）
   final RxBool autoPaused = false.obs;
 
@@ -28,6 +36,10 @@ class SyncController extends GetxController {
       try {
         autoPaused.value = await AppPrefs.getAutoSyncPaused();
         if (autoPaused.value) SyncScheduler.instance.pause();
+      } catch (_) {}
+      try {
+        final name = await AppPrefs.getDeviceName();
+        if (name.trim().isNotEmpty) deviceNameRx.value = name.trim();
       } catch (_) {}
       // 未登录时不去请求，避免无意义的失败（登录成功后由界面触发刷新）
       if (SessionController.instance.loggedIn.value) {
@@ -58,18 +70,40 @@ class SyncController extends GetxController {
     if (showLoading) loading.value = true;
     errorText.value = '';
     try {
-      final res = await SyncApiService.instance.list(page: 1, pageSize: 200);
-      if (!res.success) {
-        errorText.value = res.message ?? 'operation_failed'.tr;
-        return;
+      // 服务端 sync/list 校验 pageSize ∈ [1,100]（validation.LIMIT_INVALID），
+      // 这里按 100 分页拉全，避免任务数超过一页时漏掉。
+      const int pageSize = 100;
+      final all = <SyncTask>[];
+      // 旧版（未绑定主机）任务数：>0 时界面提示「归属到本机」。每页响应都带，取最后一页即可。
+      var legacyPending = 0;
+      var page = 1;
+      while (true) {
+        final res = await SyncApiService.instance
+            .list(page: page, pageSize: pageSize);
+        if (!res.success) {
+          errorText.value = res.message ?? 'operation_failed'.tr;
+          return;
+        }
+        final data = res.data ?? const <String, dynamic>{};
+        final items = data['items'];
+        final batch = (items is List ? items : const [])
+            .whereType<Map>()
+            .map((e) => SyncTask.fromMap(Map<String, dynamic>.from(e)))
+            .toList();
+        all.addAll(batch);
+        final totalNum = int.tryParse('${data['total']}') ?? all.length;
+        final rawPending = data['legacy_pending_count'];
+        legacyPending = rawPending is int
+            ? rawPending
+            : int.tryParse('${rawPending ?? ''}') ?? 0;
+        if (batch.length < pageSize || all.length >= totalNum || page >= 100) {
+          break;
+        }
+        page++;
       }
-      final items = (res.data ?? const <String, dynamic>{})['items'];
-      final list = (items is List ? items : const [])
-          .whereType<Map>()
-          .map((e) => SyncTask.fromMap(Map<String, dynamic>.from(e)))
-          .toList();
-      tasks.assignAll(list);
-      SyncScheduler.instance.syncTasks(list);
+      tasks.assignAll(all);
+      SyncScheduler.instance.syncTasks(all);
+      legacyPendingCount.value = legacyPending;
     } catch (e) {
       errorText.value = 'operation_failed'.tr;
     } finally {
@@ -133,8 +167,10 @@ class SyncController extends GetxController {
     required SyncFilterConfig filterConfig,
     required SyncConfig syncConfig,
   }) async {
-    final deviceId = await AppPrefs.getDeviceId();
-    final deviceName = await AppPrefs.getDeviceName();
+    // device_id 由 API 服务按本机机器标识自动带上（SyncDeviceId）——
+    // 同一台机器上的独立同步客户端与主客户端因此归属同一设备、任务互通。
+    // device_name 统一上报主机名，避免两个客户端互相改来改去。
+    final deviceName = await SyncDeviceId.resolveName();
 
     final res = await SyncApiService.instance.upsert(
       id: id,
@@ -144,13 +180,27 @@ class SyncController extends GetxController {
       remoteDir: remoteDir,
       filterConfig: filterConfig,
       syncConfig: syncConfig,
-      deviceId: deviceId,
       deviceName: deviceName,
     );
 
     if (!res.success) return res.message ?? 'operation_failed'.tr;
     await refreshTasks();
     return null;
+  }
+
+  /// 认领旧版任务：把本账号下「未绑定主机」的任务全部划到本机名下。
+  ///
+  /// 升级到设备隔离版本后，以前「同账号共享」的旧任务没有机器归属，
+  /// 在**应该拥有它们的那台机器**上点一次「归属到本机」即可收编；
+  /// 已被其它机器认领走的不会被抢走。
+  Future<bool> claimLegacyTasks() async {
+    final res = await SyncApiService.instance.claimLegacy();
+    if (!res.success) {
+      errorText.value = res.message ?? 'operation_failed'.tr;
+      return false;
+    }
+    await refreshTasks();
+    return true;
   }
 
   Future<String?> removeTask(int id) async {

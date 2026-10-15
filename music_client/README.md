@@ -32,7 +32,7 @@ Future<void> main() =>
 
 | 项 | 主客户端 | 本程序 |
 |---|---|---|
-| exe 名 | `NasCabOS.exe` | **`NasCabMusic.exe`** |
+| exe 名 | `WaterNasClient.exe` | **`NasCabMusic.exe`** |
 | exe 图标 | 蓝色箭头（WaterNasOS） | **红色音符（音乐）** |
 | 窗口标题 | `WaterNasOS` | **`WaterNasOS 音乐`** |
 | 单实例 mutex | `Global\NasCabOS_SingleInstance` | **`Global\NasCabMusic_SingleInstance`** |

@@ -138,21 +138,42 @@ class FaceService {
       minShowCount = 0;
     }
 
-    let totalQuery = this.knex('photo_faces').where('face_count', '>=', minShowCount).whereNull('belong_face_id');
-    let rowsQuery = this.knex('photo_faces')
-      .select('face_id', 'face_count', 'belong_face_id', 'is_hide', 'name', 'create_time', 'update_time')
-      .where('face_count', '>=', minShowCount)
-      .whereNull('belong_face_id');
-
-    if (validPaths.length > 0) {
-      const allowedFaceIdsQuery = this.knex('photo_face2filehash as f2')
+    // ⭐ 2026-10-13 计数口径（用户报「列表显示 3300+ 张，点进去只有几十张」）：
+    // 原来列表用的是 photo_faces.face_count（**全库**计数，不区分用户的相册源），
+    // 而点进去的时间线按可见性过滤（只算该用户 photo_source 范围内的照片）⇒ 两个数字对不上。
+    // 现在有 validPaths 时一律用「可见范围内实际去重照片数」作为计数/排序/最小显示数口径，
+    // 与点进去看到的完全一致；不限路径（内部调用）时才回退到 face_count。
+    const buildVisibleCountSub = () => {
+      const sub = this.knex('photo_face2filehash as f2')
         .join('photo_index as p', 'p.file_hash', 'f2.file_hash')
         .where('p.is_file', 1)
         .where('p.in_trash', 0)
-        .select('f2.face_id');
-      photoPathQueryUtil.applyPathPrefixFilter(allowedFaceIdsQuery, 'p.path', validPaths);
-      totalQuery = totalQuery.whereIn('face_id', allowedFaceIdsQuery);
-      rowsQuery = rowsQuery.whereIn('face_id', allowedFaceIdsQuery);
+        .whereRaw('f2.face_id = photo_faces.face_id')
+        .countDistinct({ cnt: 'f2.file_hash' });
+      photoPathQueryUtil.applyPathPrefixFilter(sub, 'p.path', validPaths);
+      return sub;
+    };
+    const visibleCountSub = validPaths.length > 0 ? buildVisibleCountSub() : null;
+    // 可见范围里至少要有 1 张才值得展示（minShowCount 为 0 时也要挡掉 0 张的"空相册"）
+    const minVisible = Math.max(1, minShowCount || 1);
+
+    // ⭐ 2026-10-13：belong_face_id 为 NULL **或 0** 都算根人脸
+    // （历史数据/部分迁移路径会写 0，只判 NULL 会漏掉整组）。
+    const isRoot = qb => {
+      qb.whereNull('belong_face_id').orWhere('belong_face_id', 0);
+    };
+    let totalQuery = this.knex('photo_faces').where(isRoot);
+    let rowsQuery = this.knex('photo_faces')
+      .select('face_id', 'face_count', 'belong_face_id', 'is_hide', 'name', 'create_time', 'update_time')
+      .where(isRoot);
+
+    if (visibleCountSub) {
+      totalQuery = totalQuery.whereRaw('(?) >= ?', [visibleCountSub, minVisible]);
+      rowsQuery = rowsQuery.whereRaw('(?) >= ?', [visibleCountSub, minVisible]);
+      rowsQuery = rowsQuery.select(this.knex.raw('(?) as visible_count', [buildVisibleCountSub()]));
+    } else {
+      totalQuery = totalQuery.where('face_count', '>=', minShowCount);
+      rowsQuery = rowsQuery.where('face_count', '>=', minShowCount);
     }
 
     if (status === 'visible' || status === 'visiable') {
@@ -174,8 +195,10 @@ class FaceService {
       .catch(() => ({ total: 0 }));
     const total = Number(totalRow && totalRow.total ? totalRow.total : 0) || 0;
 
-    const rows = await rowsQuery
-      .orderBy('face_count', 'desc')
+    const rowsQueryFinal = visibleCountSub
+      ? rowsQuery.orderByRaw('visible_count desc')
+      : rowsQuery.orderBy('face_count', 'desc');
+    const rows = await rowsQueryFinal
       .orderBy('face_id', 'desc')
       .limit(pageSize)
       .offset(offset)
@@ -193,6 +216,9 @@ class FaceService {
         .andWhere('p.in_trash', 0)
         .select('f2.face_id as face_id', 'f2.file_hash as file_hash', 'p.original_time as original_time', 'p.id as photo_id', 'f2.id as f2_id')
         .orderBy('f2.is_cover', 'desc')
+        // ⭐ 2026-10-13：本人脸框面积大的优先（主体更清晰、也顺带排除小框误检那张），
+        // 再按拍摄时间倒序。
+        .orderByRaw('(f2.box_width * f2.box_height) DESC')
         .orderBy('p.original_time', 'desc')
         .orderBy('p.id', 'desc')
         .orderBy('f2.id', 'desc');
@@ -215,8 +241,19 @@ class FaceService {
       const nameBuf = it && it.name ? it.name : null;
       const name = Buffer.isBuffer(nameBuf) && nameBuf.length > 0 ? nameBuf.toString('utf8') : typeof nameBuf === 'string' && nameBuf ? nameBuf : null;
       const isHide = Number(it && it.is_hide ? it.is_hide : 0) || 0;
-      const { name: _name, ...rest } = it || {};
-      return { ...rest, name, is_hide: isHide, cover_file_hash: coverByFaceId.get(fid) ?? null };
+      const { name: _name, visible_count: _visible, ...rest } = it || {};
+      // 有可见计数时用它覆盖 face_count，保证列表数字 = 点进去的张照片数
+      const visibleCount = Number(it && it.visible_count);
+      const faceCount = Number.isFinite(visibleCount)
+        ? visibleCount
+        : Number(it && it.face_count ? it.face_count : 0) || 0;
+      return {
+        ...rest,
+        face_count: faceCount,
+        name,
+        is_hide: isHide,
+        cover_file_hash: coverByFaceId.get(fid) ?? null,
+      };
     });
 
     return {
@@ -227,6 +264,193 @@ class FaceService {
         pageSize,
       },
     };
+  }
+
+  /**
+   * ⭐ 可见性校验（2026-10-13）：人脸写操作放开给所有登录用户后，
+   * 必须保证只能操作「自己相册源范围内」的人脸/照片 —— 沿用照片库的可见性口径，
+   * **不做 isAdmin 例外**（超管也只对自己的相册操作）。
+   * 没传 validPaths（内部调用/老调用方）时跳过校验，保持兼容。
+   */
+  async assertFaceVisible(faceId, validPaths) {
+    if (!Array.isArray(validPaths)) return;
+    if (validPaths.length === 0) {
+      const err = new Error('common.NOT_FOUND');
+      err.statusCode = 404;
+      throw err;
+    }
+    const q = this.knex('photo_face2filehash as f2')
+      .join('photo_index as p', 'p.file_hash', 'f2.file_hash')
+      .where('f2.face_id', Number(faceId) || 0)
+      .andWhere('p.is_file', 1)
+      .andWhere('p.in_trash', 0)
+      .first('f2.id');
+    photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+    const row = await q.catch(() => null);
+    if (!row) {
+      const err = new Error('common.NOT_FOUND');
+      err.statusCode = 404;
+      throw err;
+    }
+  }
+
+  /** 同上，但校验具体某张照片是否在可见范围内 */
+  async assertPhotoVisible(fileHash, validPaths) {
+    if (!Array.isArray(validPaths)) return;
+    if (validPaths.length === 0 || !fileHash) {
+      const err = new Error('common.NOT_FOUND');
+      err.statusCode = 404;
+      throw err;
+    }
+    const q = this.knex('photo_index as p')
+      .where('p.file_hash', String(fileHash))
+      .andWhere('p.is_file', 1)
+      .andWhere('p.in_trash', 0)
+      .first('p.id');
+    photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+    const row = await q.catch(() => null);
+    if (!row) {
+      const err = new Error('common.NOT_FOUND');
+      err.statusCode = 404;
+      throw err;
+    }
+  }
+
+  /**
+   * 清理历史误检人脸（2026-10-13）：按与检测端同一套阈值把已经入库的垃圾框删掉。
+   * 规则：①单图人脸数 > FACE_MAX_FACES_PER_IMAGE(20) ⇒ 整张丢弃
+   *      ②框宽 < 图宽 * FACE_MIN_BOX_WIDTH_RATIO(1.5%) ⇒ 丢弃该框
+   * 之后清理没有任何框的 photo_faces 空壳 + 其样本，并刷新受影响分组的 face_count。
+   * @returns {{removedBoxes:number, removedFaces:number, touchedPhotos:number}}
+   */
+  async purgeSuspiciousFaces(params = {}) {
+    const maxFaces = Math.max(0, Math.min(200, Number(params.maxFacesPerImage ?? 20)));
+    const minRatio = Math.max(0, Math.min(0.5, Number(params.minBoxWidthRatio ?? 0.015)));
+
+    const overCount = this.knex('photo_face2filehash as f2')
+      .whereIn('f2.file_hash', function () {
+        this.select('file_hash')
+          .from('photo_face2filehash')
+          .groupBy('file_hash')
+          .havingRaw('COUNT(1) > ?', [maxFaces]);
+      });
+    // ⚠️ 不能用 JOIN 式 DELETE（SQLite 不支持，knex 会静默失败），必须走 id 子查询
+    const tooSmall = this.knex('photo_face2filehash as f2')
+      .whereIn('f2.id', function () {
+        this.select('f2b.id')
+          .from('photo_face2filehash as f2b')
+          .join('photo_index as p', 'p.file_hash', 'f2b.file_hash')
+          .where('p.is_file', 1)
+          .andWhere('p.in_trash', 0)
+          .andWhere('p.width', '>', 0)
+          .whereRaw('(f2b.box_width * 1.0 / p.width) < ?', [minRatio]);
+      });
+
+    const affected = await this.knex('photo_face2filehash')
+      .whereIn('file_hash', function () {
+        this.select('file_hash')
+          .from('photo_face2filehash')
+          .groupBy('file_hash')
+          .havingRaw('COUNT(1) > ?', [maxFaces]);
+      })
+      .orWhereIn('id', function () {
+        this.select('f2.id')
+          .from('photo_face2filehash as f2')
+          .join('photo_index as p', 'p.file_hash', 'f2.file_hash')
+          .where('p.is_file', 1)
+          .andWhere('p.in_trash', 0)
+          .where('p.width', '>', 0)
+          .whereRaw('(f2.box_width * 1.0 / p.width) < ?', [minRatio]);
+      })
+      .select('face_id', 'file_hash')
+      .catch(() => []);
+
+    const faceIds = [...new Set((Array.isArray(affected) ? affected : []).map(r => Number(r.face_id) || 0).filter(Boolean))];
+    const photos = new Set((Array.isArray(affected) ? affected : []).map(r => String(r.file_hash || '')).filter(Boolean));
+
+    const removedBoxes = await overCount.del().catch(() => 0);
+    const removedBoxes2 = await tooSmall.del().catch(() => 0);
+
+    // 空壳分组 + 其样本
+    const removedFaces = await this.knex('photo_faces as pf')
+      .whereNotExists(function () {
+        this.select(1).from('photo_face2filehash as f2').whereRaw('f2.face_id = pf.face_id');
+      })
+      .del()
+      .catch(() => 0);
+    await this.knex('photo_face_samples as ps')
+      .whereNotExists(function () {
+        this.select(1).from('photo_faces as pf').whereRaw('pf.face_id = ps.face_id');
+      })
+      .del()
+      .catch(() => {});
+
+    // 刷新受影响分组的计数与封面
+    for (const fid of faceIds) {
+      const stillExists = await this.knex('photo_face2filehash').where({ face_id: fid }).first('face_id').catch(() => null);
+      if (!stillExists) continue;
+      await this.knex.transaction(async trx => {
+        await this.refreshFaceAggregateInTrx(trx, fid).catch(() => 0);
+      }).catch(() => 0);
+    }
+
+    return {
+      removedBoxes: Number(removedBoxes || 0) + Number(removedBoxes2 || 0),
+      removedFaces: Number(removedFaces || 0),
+      touchedPhotos: photos.size,
+    };
+  }
+
+  /**
+   * 只重建「调用者可见范围内」照片的人脸（2026-10-13）：
+   * 删掉这些照片的 photo_face2filehash 行 + 把 photo_index.gen_faces 置 0，
+   * 后台 worker 会自动重新检测并按当前聚类参数重新分组。
+   * 别人的相册不受影响（/face/reset 才是全库重建，限管理员）。
+   */
+  async rescanFaces(params = {}) {
+    const validPaths = (Array.isArray(params.validPaths) ? params.validPaths : []).filter(Boolean);
+    if (validPaths.length === 0) {
+      return { clearedHashes: 0, queuedPhotos: 0 };
+    }
+    const base = () => {
+      const q = this.knex('photo_index as p').where('p.is_file', 1).andWhere('p.in_trash', 0);
+      photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+      return q;
+    };
+    const hashRows = await base().clone().select('p.file_hash as file_hash').catch(() => []);
+    const hashes = (Array.isArray(hashRows) ? hashRows : []).map(r => String(r.file_hash || '')).filter(Boolean);
+    if (hashes.length === 0) {
+      return { clearedHashes: 0, queuedPhotos: 0 };
+    }
+    // 分块删除，避免 SQLite 变量上限
+    let cleared = 0;
+    const CHUNK = 400;
+    for (let i = 0; i < hashes.length; i += CHUNK) {
+      const slice = hashes.slice(i, i + CHUNK);
+      const del = await this.knex('photo_face2filehash')
+        .whereIn('file_hash', slice)
+        .del()
+        .catch(() => 0);
+      cleared += Number(del || 0);
+    }
+    const queued = await base()
+      .clone()
+      .update({ gen_faces: 0 })
+      .catch(() => 0);
+    // 没有任何人脸行残留的分组顺手清掉（连同样本），避免列表里堆空壳
+    await this.knex('photo_faces as pf')
+      .whereNotExists(function () {
+        this.select(1).from('photo_face2filehash as f2').whereRaw('f2.face_id = pf.face_id');
+      })
+      .del()
+      .catch(() => {});
+    await this.knex('photo_face_samples as ps')
+      .whereNotExists(function () {
+        this.select(1).from('photo_faces as pf').whereRaw('pf.face_id = ps.face_id');
+      })
+      .del()
+      .catch(() => {});
+    return { clearedHashes: cleared, queuedPhotos: Number(queued || 0) };
   }
 
   async setFaceCover(params = {}) {
@@ -269,10 +493,11 @@ class FaceService {
     }
     const faceId = await this.getRootFaceId(rawFaceId);
     const buf = Buffer.from(String(name), 'utf8');
+    // 2026-10-13：不再吞错 —— 以前写失败也返回 success，用户以为命名成功，
+    // 后续合并时名字"凭空消失"，表现为「合并后名字丢了/合并失败」。
     await this.knex('photo_faces')
       .where({ face_id: faceId })
-      .update({ name: buf, update_time: this.knex.fn.now() })
-      .catch(() => {});
+      .update({ name: buf, update_time: this.knex.fn.now() });
     return true;
   }
 
@@ -340,15 +565,27 @@ class FaceService {
     return nextCount;
   }
 
+  /**
+   * 把 fromFaceId 合并进 toFaceId（同一事务内调用）。
+   *
+   * ⭐ 2026-10-13 修复（用户报「一个有名字一个没名字就合并失败」「合并后没反应」）：
+   * 1. 关键 UPDATE 不再 `.catch(() => {})` 吞错 —— 以前任何一步静默失败，
+   *    事务照样提交，客户端收到 success 但数据半新半旧，看起来就是"合并失败/没反应"。
+   *    现在出错会抛穿事务回滚，客户端能拿到真实错误码。
+   * 2. photo_face_samples 跟着迁移（以前不迁 ⇒ 被合并掉的人脸样本变成"僵尸样本"，
+   *    维护任务会按样本把它重新养回来，用户看到人又"复活"分裂）。
+   * 3. proto_best_* 取两者较优者，避免合并后最佳样本信息丢旧方的。
+   * 4. 名字继承：目标没名字且来源有名字时继承（Buffer 原样透传，不重新编码）。
+   */
   async mergeTwoFacesInTrx(trx, fromFaceId, toFaceId) {
     const [fromRow, toRow] = await Promise.all([
       trx('photo_faces')
-        .select('face_id', 'face_count', 'name')
+        .select('face_id', 'face_count', 'name', 'proto_best_quality_score', 'proto_best_file_hash')
         .where({ face_id: fromFaceId })
         .first()
         .catch(() => null),
       trx('photo_faces')
-        .select('face_id', 'face_count', 'name')
+        .select('face_id', 'face_count', 'name', 'proto_best_quality_score', 'proto_best_file_hash')
         .where({ face_id: toFaceId })
         .first()
         .catch(() => null),
@@ -372,47 +609,75 @@ class FaceService {
       .catch(() => null);
     const keepCoverHash = (toCover && toCover.file_hash ? String(toCover.file_hash) : '') || (fromCover && fromCover.file_hash ? String(fromCover.file_hash) : '');
 
+    // 1) 照片映射迁移（UNIQUE(file_hash, face_id) 保证 OR IGNORE 幂等）
+    await trx.raw(
+      `INSERT OR IGNORE INTO photo_face2filehash (file_hash, face_id, box_left, box_top, box_width, box_height, is_cover, create_time)
+       SELECT file_hash, ?, box_left, box_top, box_width, box_height, 0 as is_cover, create_time FROM photo_face2filehash WHERE face_id = ?`,
+      [toFaceId, fromFaceId]
+    );
+    await trx('photo_face2filehash')
+      .where({ face_id: fromFaceId })
+      .del();
+
+    // 2) 样本迁移（photo_face_samples 无唯一索引，用 NOT EXISTS 防重复）
     await trx
       .raw(
-        `INSERT OR IGNORE INTO photo_face2filehash (file_hash, face_id, box_left, box_top, box_width, box_height, is_cover, create_time)
-       SELECT file_hash, ?, box_left, box_top, box_width, box_height, 0 as is_cover, create_time FROM photo_face2filehash WHERE face_id = ?`,
-        [toFaceId, fromFaceId]
+        `INSERT OR IGNORE INTO photo_face_samples (face_id, file_hash, feature, feature_dim, quality_score, create_time)
+         SELECT ?, file_hash, feature, feature_dim, quality_score, create_time FROM photo_face_samples WHERE face_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM photo_face_samples e WHERE e.face_id = ? AND e.file_hash = photo_face_samples.file_hash
+           )`,
+        [toFaceId, fromFaceId, toFaceId]
       )
       .catch(() => {});
-    await trx('photo_face2filehash')
+    await trx('photo_face_samples')
       .where({ face_id: fromFaceId })
       .del()
       .catch(() => {});
 
+    // 3) 封面重置（保留优先生效的封面）
     await trx('photo_face2filehash')
       .where({ face_id: toFaceId })
-      .update({ is_cover: 0 })
-      .catch(() => {});
+      .update({ is_cover: 0 });
     if (keepCoverHash) {
       await trx('photo_face2filehash')
         .where({ face_id: toFaceId, file_hash: keepCoverHash })
-        .update({ is_cover: 1 })
-        .catch(() => {});
+        .update({ is_cover: 1 });
     }
 
     const fromCount = Math.max(0, Number(fromRow && fromRow.face_count ? fromRow.face_count : 0) || 0);
     const toCount = Math.max(0, Number(toRow && toRow.face_count ? toRow.face_count : 0) || 0);
-    const updateTo = { face_count: toCount + fromCount, update_time: trx.fn.now() };
-    if (inheritName !== undefined) updateTo.name = inheritName;
-    await trx('photo_faces')
+    // 实际去重照片数（同一张照片同时含双方人脸时，INSERT OR IGNORE 会去重，
+    // 直接 toCount + fromCount 会多算；这里按合并后的真实行数重算）
+    const cntRow = await trx('photo_face2filehash')
       .where({ face_id: toFaceId })
-      .update(updateTo)
-      .catch(() => {});
+      .countDistinct({ total: 'file_hash' })
+      .first()
+      .catch(() => null);
+    const realCount = cntRow && Number.isFinite(Number(cntRow.total)) ? Math.max(0, Number(cntRow.total) || 0) : toCount + fromCount;
+    const bestFromQ = Math.max(0, Math.floor(Number(fromRow && fromRow.proto_best_quality_score ? fromRow.proto_best_quality_score : 0) || 0));
+    const bestToQ = Math.max(0, Math.floor(Number(toRow && toRow.proto_best_quality_score ? toRow.proto_best_quality_score : 0) || 0));
+    const bestFromHash = fromRow && fromRow.proto_best_file_hash ? String(fromRow.proto_best_file_hash) : '';
+    const bestToHash = toRow && toRow.proto_best_file_hash ? String(toRow.proto_best_file_hash) : '';
+    const mergedBestQ = bestFromQ > bestToQ ? bestFromQ : bestToQ;
+    const mergedBestHash = bestFromQ > bestToQ ? bestFromHash : bestToHash;
+
+    const updateTo = {
+      face_count: realCount,
+      proto_best_quality_score: mergedBestQ,
+      proto_best_file_hash: mergedBestHash || null,
+      update_time: trx.fn.now(),
+    };
+    if (inheritName !== undefined) updateTo.name = inheritName;
+    await trx('photo_faces').where({ face_id: toFaceId }).update(updateTo);
 
     await trx('photo_faces')
       .where({ face_id: fromFaceId })
-      .update({ belong_face_id: toFaceId, face_count: 0, update_time: trx.fn.now() })
-      .catch(() => {});
+      .update({ belong_face_id: toFaceId, face_count: 0, update_time: trx.fn.now() });
 
     await trx('photo_faces')
       .where({ belong_face_id: fromFaceId })
-      .update({ belong_face_id: toFaceId, update_time: trx.fn.now() })
-      .catch(() => {});
+      .update({ belong_face_id: toFaceId, update_time: trx.fn.now() });
 
     return true;
   }
@@ -465,6 +730,7 @@ class FaceService {
       if (fid) faceCountById.set(fid, c);
     }
 
+    // 合并目标 = 照片数最多的那个人脸；并列时取 face_count 大的，再并列取 id 大的（稳定）
     let toFaceId = rootIds[0];
     for (const id of rootIds) {
       const a = fileCountById.get(id) ?? 0;
@@ -484,17 +750,35 @@ class FaceService {
       if (id > toFaceId) toFaceId = id;
     }
 
-    await this.knex.transaction(async trx => {
-      for (const fromFaceId of rootIds) {
-        if (fromFaceId === toFaceId) continue;
-        await this.mergeTwoFacesInTrx(trx, fromFaceId, toFaceId);
-      }
-    });
+    try {
+      await this.knex.transaction(async trx => {
+        for (const fromFaceId of rootIds) {
+          if (fromFaceId === toFaceId) continue;
+          await this.mergeTwoFacesInTrx(trx, fromFaceId, toFaceId);
+        }
+      });
+    } catch (e) {
+      // 带上上下文再抛，控制器按 statusCode 映射；DB 锁竞争等瞬时错误走 500
+      const msg = e && e.message ? String(e.message) : 'common.ERROR';
+      if (msg === 'common.NOT_FOUND' || msg === 'common.PARAM_ERROR') throw e;
+      const err = new Error('face.MERGE_FAILED');
+      err.statusCode = 500;
+      err.cause = e;
+      throw err;
+    }
 
     return true;
   }
 
   async mergeFaces(params = {}) {
+    if (Array.isArray(params.validPaths)) {
+      const ids = Array.isArray(params.faceIds ?? params.face_ids)
+        ? params.faceIds ?? params.face_ids
+        : [params.fromFaceId ?? params.from_face_id, params.toFaceId ?? params.to_face_id];
+      for (const id of ids) {
+        await this.assertFaceVisible(Number(id) || 0, params.validPaths);
+      }
+    }
     const faceIds = params.faceIds ?? params.face_ids;
     if (Array.isArray(faceIds) && faceIds.length > 0) {
       return this.mergeFacesMultiple({ faceIds });
@@ -511,15 +795,25 @@ class FaceService {
     const toFaceId = await this.getRootFaceId(rawToId);
     if (!fromFaceId || !toFaceId || fromFaceId === toFaceId) return true;
 
-    await this.knex.transaction(async trx => {
-      await this.mergeTwoFacesInTrx(trx, fromFaceId, toFaceId);
-    });
+    try {
+      await this.knex.transaction(async trx => {
+        await this.mergeTwoFacesInTrx(trx, fromFaceId, toFaceId);
+      });
+    } catch (e) {
+      const msg = e && e.message ? String(e.message) : 'common.ERROR';
+      if (msg === 'common.NOT_FOUND' || msg === 'common.PARAM_ERROR') throw e;
+      const err = new Error('face.MERGE_FAILED');
+      err.statusCode = 500;
+      err.cause = e;
+      throw err;
+    }
 
     return true;
   }
 
   async updateFaceStatus(params = {}) {
     const rawFaceId = Number(params.faceId ?? params.face_id);
+    await this.assertFaceVisible(rawFaceId, params.validPaths);
     const rawStatus = params.status ?? params.state ?? params.is_hide ?? params.isHide;
     if (!Number.isFinite(rawFaceId) || rawFaceId <= 0) {
       const err = new Error('common.PARAM_ERROR');
@@ -600,6 +894,7 @@ class FaceService {
     const rawFaceId = Number(params.faceId ?? params.face_id);
     const fileHashRaw = params.fileHash ?? params.file_hash;
     const fileHash = fileHashRaw ? String(fileHashRaw).trim() : '';
+    if (fileHash) await this.assertPhotoVisible(fileHash, params.validPaths);
     if (!Number.isFinite(rawFaceId) || rawFaceId <= 0 || !fileHash) {
       const err = new Error('common.PARAM_ERROR');
       err.statusCode = 400;
@@ -652,6 +947,13 @@ class FaceService {
     const rawFromFaceId = Number(params.fromFaceId ?? params.from_face_id);
     const rawToFaceId = Number(params.toFaceId ?? params.to_face_id);
     const rawFileHashes = params.fileHashes ?? params.file_hashes ?? [];
+    if (Array.isArray(params.validPaths)) {
+      await this.assertFaceVisible(rawToFaceId, params.validPaths);
+      const list = Array.isArray(rawFileHashes) ? rawFileHashes : [rawFileHashes];
+      for (const h of list) {
+        if (h) await this.assertPhotoVisible(String(h), params.validPaths);
+      }
+    }
     if (
       !Number.isFinite(rawFromFaceId) ||
       rawFromFaceId <= 0 ||
@@ -793,6 +1095,8 @@ class FaceService {
     } else {
       query = query
         .orderBy('photo_face2filehash.is_cover', 'desc')
+        // ⭐ 2026-10-13：优先用「本人脸框面积大」的 photo（主体清晰、排除小框误检），再按时间倒序
+        .orderByRaw('(photo_face2filehash.box_width * photo_face2filehash.box_height) DESC')
         .orderByRaw(`CASE WHEN LOWER(COALESCE(photo_index.filename, '')) LIKE '%.jpg' OR LOWER(COALESCE(photo_index.filename, '')) LIKE '%.jpeg' THEN 1 ELSE 0 END DESC`)
         .orderBy('photo_index.original_time', 'desc')
         .orderBy('photo_index.id', 'desc');

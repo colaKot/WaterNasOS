@@ -1,4 +1,5 @@
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
+import 'package:WaterNasOS/core/user/current_user_controller.dart';
 import 'package:WaterNasOS/modules/video/library_setting/view/video_library_settings_view.dart';
 import 'package:WaterNasOS/modules/video/other_setting/view/video_other_settings_view.dart';
 import 'package:WaterNasOS/modules/video/source_setting/view/video_source_settings_view.dart';
@@ -12,6 +13,16 @@ class AppVideoSettingsView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final customColors = theme.extension<CustomColors>();
+
+    // ⭐ 2026-10-12 权限隔离：影视库管理 / 来源设置 / 转码 / 刮削 / 字幕提取
+    // 这些都只有管理员能碰（服务端那几个接口也挂了 requireAdmin）。
+    // 普通用户进来只给一个「播放设置」——那是他自己的偏好，且按端隔离。
+    if (!CurrentUserController.instance.isSuperAdmin) {
+      return ColoredBox(
+        color: customColors?.mainContentBgColor ?? theme.colorScheme.surface,
+        child: const VideoOtherSettingsView(onlyPlayback: true),
+      );
+    }
 
     return DefaultTabController(
       length: 3,

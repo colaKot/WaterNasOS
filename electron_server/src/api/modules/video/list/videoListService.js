@@ -625,7 +625,13 @@ class VideoListService {
   async _ensureLibraryExists(libraryId) {
     const id = Number(libraryId || 0) || 0;
     if (!id) return null;
-    const row = await this.knexVideo('video_library').where({ id }).first('id', 'name', 'lib_type').catch(() => null);
+    // ⭐ 必须带上 jp_movie（2026-10-12）：「日本电影」开关决定列表要不要回徽章 /
+    //    开放「无码·中文字幕」筛选组。少查这一列 ⇒ library.jp_movie 恒为 undefined
+    //    ⇒ 所有日本片条目被判为"未开开关"、徽章被统一清零（现象：图标永远不出现）。
+    const row = await this.knexVideo('video_library')
+      .where({ id })
+      .first('id', 'name', 'lib_type', 'jp_movie')
+      .catch(() => null);
     if (!row) {
       const err = new Error('video.VIDEO_LIBRARY_NOT_FOUND');
       err.statusCode = 404;
@@ -1522,6 +1528,8 @@ class VideoListService {
     const actors = _normalizeKeyList(params.actors ?? params.actor ?? params.nfo_actor ?? params.nfoActor);
     const directors = _normalizeKeyList(params.directors ?? params.director ?? params.nfo_director ?? params.nfoDirector);
     const years = _normalizeIntList(params.years ?? params.year);
+    // ⭐ 日本片标记筛选（2026-10-12）：取值 'uncensored'（无码）/ 'chinese_sub'（中文字幕）。
+    const jpTags = _normalizeKeyList(params.jp_tags ?? params.jpTags).map(v => v.toLowerCase());
     const listType = String(params.listType ?? params.list_type ?? '')
       .trim()
       .toLowerCase();
@@ -1537,6 +1545,9 @@ class VideoListService {
     const libraryId = Number(params && (params.library_id ?? params.libraryId)) || 0;
     let library = null;
     if (libraryId > 0) library = await this._ensureLibraryExists(libraryId);
+
+    // ⭐ 日本片标记（2026-10-12）：只有开了「日本电影」开关的库才回徽章 / 开放筛选组。
+    const jpMovieEnabled = Number(library && library.jp_movie) === 1;
 
     const validPaths = await this.getValidPaths(user, libraryId);
     let finalPaths = validPaths;
@@ -1699,6 +1710,20 @@ class VideoListService {
       baseQuery.andWhere(builder => builder.whereIn('v.nfo_year', years));
     }
 
+    // ⭐ 日本片标记筛选（2026-10-12）：'uncensored'=无码 / 'chinese_sub'=中文字幕。
+    //    库没开「日本电影」开关时忽略该参数，避免出现"筛选后有结果但库里没这个维度"。
+    if (jpMovieEnabled && jpTags.length > 0) {
+      baseQuery.andWhere(builder => {
+        for (const t of jpTags) {
+          if (t === 'uncensored' || t === '无码' || t === 'jp_uncensored') {
+            builder.orWhere('v.jp_uncensored', 1);
+          } else if (t === 'chinese_sub' || t === '中文字幕' || t === 'sub' || t === 'jp_chinese_sub') {
+            builder.orWhere('v.jp_chinese_sub', 1);
+          }
+        }
+      });
+    }
+
     const smartAlbumId = Number(params && (params.smart_album_id ?? params.smartAlbumId));
     if (Number.isFinite(smartAlbumId) && smartAlbumId > 0) {
       const smartAlbum = await this.knexVideo('video_smart_album').where({ id: smartAlbumId }).first();
@@ -1727,6 +1752,10 @@ class VideoListService {
     const total = Math.max(0, Number((countRow && (countRow.cnt ?? countRow['count(`v`.`id`)'] ?? countRow['count(*)'])) || 0) || 0);
 
     const filters = await this._getFilterOptions(baseQuery);
+    // ⭐ 日本片标记（2026-10-12）：只有开了「日本电影」开关的库才把「无码 / 中文字幕」
+    //    这组筛选暴露给前端；没开开关时给空数组 + enabled=false，前端据此隐藏整组。
+    filters.jp_tags_enabled = jpMovieEnabled;
+    filters.jp_tags = jpMovieEnabled ? ['uncensored', 'chinese_sub'] : [];
 
     const query = baseQuery
       .clone()
@@ -1750,7 +1779,11 @@ class VideoListService {
         'v.logo_path',
         'v.play_rel_path',
         'v.view_time',
-        'v.create_time'
+        'v.create_time',
+        // ⭐ 日本片标记（2026-10-12）：网格 / 瀑布流右上角徽章要用；
+        //    库里没开「日本电影」开关时下面会被统一清零。
+        'v.jp_uncensored',
+        'v.jp_chinese_sub'
       );
 
     if (sortBy === 'favorite_time' && isFavoriteList) {
@@ -1778,6 +1811,17 @@ class VideoListService {
     const items = (rows || []).map(r => _normalizeListRow(r));
     // 普通影视库同样兜底：视频没有封面 / 缩略图时用同目录同名图片顶上
     _fillSameNameImageFallback(items);
+    // ⭐ 日本片标记（2026-10-12）：只有开了「日本电影」开关的库才回给前端。
+    //    没开开关的库不该冒徽章 —— jpMovieEnabled 已在方法上方统一算出。
+    if (!jpMovieEnabled) {
+      for (const item of items) {
+        if (item && typeof item === 'object') {
+          item.jp_uncensored = 0;
+          item.jp_chinese_sub = 0;
+        }
+      }
+    }
+
     if (isFavoriteList) {
       for (const item of items) {
         if (item && typeof item === 'object') item.is_favorite = true;

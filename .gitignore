@@ -101,3 +101,12 @@ icon/
 # 也避免再次被误提交。本地副本保留，需要时可自行运行。
 /_*
 tool/_*
+# ========== 本地运行数据 / 本地素材 / 端内排查脚本（不提交） ==========
+# data/ 是服务端运行时缓存（nascabos_cache）；myicon/ 是本地图标素材（同上面的 icon/）；
+# 各端 <端>/tool/ 下是以下划线前缀命名的一次性排查脚本；*.bak_semsearch 是语义搜索
+# 改造前的备份文件。这些都是本机产物，不进仓库。
+/data/
+/myicon/
+electron_server/tool/
+flutter_client/tool/
+*.bak_semsearch

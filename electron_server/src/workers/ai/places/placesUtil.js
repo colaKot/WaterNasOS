@@ -17,7 +17,23 @@ try {
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
 
-const MODEL_PATH = () => path.resolve(remoteAssets.resolveOnnxModelsRoot(), 'places365', 'resnet50_places365.onnx');
+/**
+ * ⭐ 2026-10-13 场景模型路径：优先用更大的 ResNet152（准确率约 +2%），
+ * 没有就回退 ResNet50。与 faces/edgeface 的探测回退同一套路：
+ * 用户想换更大的模型时，只要把同名 onnx 丢进 places365 目录即可，无需改代码。
+ * 预处理两者完全一致（ImageNet 归一化 + 224 中心裁剪），换模型不用改参数。
+ */
+const PLACES365_MODEL_CANDIDATES = ['resnet152_places365.onnx', 'resnet50_places365.onnx'];
+const MODEL_PATH = () => {
+  const dir = remoteAssets.resolveOnnxModelsRoot();
+  for (const name of PLACES365_MODEL_CANDIDATES) {
+    const p = path.resolve(dir, 'places365', name);
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+  return path.resolve(dir, 'places365', 'resnet50_places365.onnx');
+};
 const LABELS_PATH = () => path.resolve(remoteAssets.resolveOnnxModelsRoot(), 'places365', 'categories_places365.txt');
 /**
  * 场景标签的中文映射（每行 `<英文标签>\t<中文>`）。
@@ -158,13 +174,15 @@ async function getPlacesSession() {
   if (_sessionPromise) return _sessionPromise;
   _sessionPromise = (async () => {
     await ensurePlaces365Ready();
+    const modelPath = MODEL_PATH();
+    Logger.info(`[placesUtil] scene model: ${path.basename(modelPath)}`);
     const sessionOptions = {
       executionProviders: getBestExecutionProviders(),
       enableCpuMemArena: false,
       enableMemPattern: false,
       graphOptimizationLevel: 'all',
     };
-    const sess = await ort.InferenceSession.create(MODEL_PATH(), sessionOptions);
+    const sess = await ort.InferenceSession.create(modelPath, sessionOptions);
     Logger.info(`[placesUtil] Selected providers: ${sessionOptions.executionProviders.join(', ')}`);
     Logger.info(`[placesUtil] Loaded backends: ${getLoadedBackends()}`);
     _inputName = Array.isArray(sess.inputNames) && sess.inputNames.length > 0 ? sess.inputNames[0] : null;
@@ -237,26 +255,51 @@ async function _preprocessToChwFloat32(imagePath, inputSize = 224, resizeShorter
   return out;
 }
 
-function _top1Softmax(logits) {
+function _topKSoftmax(logits, k = 2) {
   const arr = ArrayBuffer.isView(logits) ? logits : Float32Array.from(logits || []);
-  if (!arr || arr.length === 0) return { index: 0, prob: 0 };
-
+  if (!arr || arr.length === 0) return [];
   let max = -Infinity;
-  let maxIdx = 0;
   for (let i = 0; i < arr.length; i++) {
-    const v = arr[i];
-    if (v > max) {
-      max = v;
-      maxIdx = i;
-    }
+    if (arr[i] > max) max = arr[i];
   }
-
   let sum = 0;
+  const exps = new Array(arr.length);
   for (let i = 0; i < arr.length; i++) {
-    sum += Math.exp(arr[i] - max);
+    const e = Math.exp(arr[i] - max);
+    exps[i] = e;
+    sum += e;
   }
-  const prob = sum > 0 ? Math.exp(arr[maxIdx] - max) / sum : 0;
-  return { index: maxIdx, prob };
+  const idxs = [];
+  for (let i = 0; i < arr.length; i++) idxs.push(i);
+  idxs.sort((a, b) => exps[b] - exps[a]);
+  const out = [];
+  const n = Math.max(1, Math.min(k, idxs.length));
+  for (let i = 0; i < n; i++) {
+    const idx = idxs[i];
+    out.push({ index: idx, prob: sum > 0 ? exps[idx] / sum : 0 });
+  }
+  return out;
+}
+
+/**
+ * ⭐ 2026-10-14 场景识别 v2：暴露**完整 logits**（365 维），供决策层做类先验校正与融合。
+ * 旧的 predictPlace 只返回 top-2 概率，信息量不足以支撑融合 —— 类先验校正必须
+ * 拿到全量 logits 才能"按类"减均值。
+ * @returns {Promise<{logits:number[], labelsZh:string[]}>}
+ */
+async function predictPlaceFull(imagePath) {
+  const fullPath = String(imagePath || '');
+  if (!fullPath) throw new Error('Invalid image path');
+
+  await ensurePlaces365Ready();
+  const [sess, labels] = await Promise.all([getPlacesSession(), getPlaces365Labels()]);
+  const chw = await _preprocessToChwFloat32(fullPath);
+  const input = new ort.Tensor('float32', chw, [1, 3, 224, 224]);
+  const out = await sess.run({ [_inputName]: input });
+  const tensor = out[_outputName];
+  const logits = tensor && tensor.data ? Array.from(tensor.data) : [];
+  const labelsZh = labels && Array.isArray(labels.labelByIndex) ? labels.labelByIndex.slice() : [];
+  return { logits, labelsZh };
 }
 
 async function predictPlace(imagePath) {
@@ -270,15 +313,28 @@ async function predictPlace(imagePath) {
   const out = await sess.run({ [_inputName]: input });
   const logitsTensor = out[_outputName];
   const logits = logitsTensor && logitsTensor.data ? logitsTensor.data : null;
-  const { index: rawIndex, prob } = _top1Softmax(logits);
-  const label = labels && labels.labelByIndex ? labels.labelByIndex[rawIndex] || '' : '';
-  const canonicalId = labels && labels.canonicalIdByIndex ? labels.canonicalIdByIndex[rawIndex] : null;
-  const mappedIndex = Number.isFinite(Number(canonicalId)) ? Number(canonicalId) : rawIndex;
-  return { index: label ? mappedIndex : rawIndex, label, prob };
+  // ⭐ 2026-10-13 取 top-2：室内场景（病房/卧室/育婴室…）top-1 置信度虚高，
+  // 第二名往往更接近真实场景，存下来给搜索/相册第二次命中机会。
+  const top2 = _topKSoftmax(logits, 2);
+  if (top2.length === 0) return { index: 0, label: '', prob: 0, alt: null };
+  const first = top2[0];
+  const label = labels && labels.labelByIndex ? labels.labelByIndex[first.index] || '' : '';
+  const canonicalId = labels && labels.canonicalIdByIndex ? labels.canonicalIdByIndex[first.index] : null;
+  const mappedIndex = Number.isFinite(Number(canonicalId)) ? Number(canonicalId) : first.index;
+
+  let alt = null;
+  if (top2.length > 1 && top2[1].index !== first.index) {
+    const altLabel = labels && labels.labelByIndex ? labels.labelByIndex[top2[1].index] || '' : '';
+    if (altLabel && altLabel !== label) {
+      alt = { label: altLabel, prob: top2[1].prob };
+    }
+  }
+  return { index: label ? mappedIndex : first.index, label, prob: first.prob, alt };
 }
 
 module.exports = {
   predictPlace,
+  predictPlaceFull,
   getPlaces365Labels,
   getPlacesSession,
   ensurePlaces365Ready,

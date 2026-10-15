@@ -117,23 +117,30 @@ class _VideoDetailPageState extends State<VideoDetailPage> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          if (isPhone &&
-                              MediaFlagsBadgeRow.willRender(
-                                ctrl.mediaFlags,
-                                leadingLabel: resLabel,
-                              ))
-                            Flexible(
-                              child: MediaFlagsBadgeRow(
-                                flags: ctrl.mediaFlags,
-                                leadingLabel: resLabel,
-                                fontSize: 12,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 9,
-                                  vertical: 5,
-                                ),
-                              ),
+                          // 左侧徽章区用 tight 的 Expanded 占满关闭按钮左侧全部宽度，
+                          // 保证右上角关闭按钮恒贴右缘
+                          // （此前 Flexible(loose) + Spacer 会把关闭按钮推向水平中间）。
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child:
+                                  (isPhone &&
+                                      MediaFlagsBadgeRow.willRender(
+                                        ctrl.mediaFlags,
+                                        leadingLabel: resLabel,
+                                      ))
+                                  ? MediaFlagsBadgeRow(
+                                      flags: ctrl.mediaFlags,
+                                      leadingLabel: resLabel,
+                                      fontSize: 12,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 5,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
                             ),
-                          const Spacer(),
+                          ),
                           // ⭐ PC 虚拟窗口内，右上角的「返回」由窗口标题栏提供
                           // （二级页只显示一个返回按钮，2026-10-10）——
                           // 这里只在没有窗口标题栏的环境（手机端）保留关闭按钮。

@@ -150,6 +150,47 @@ class VideoLibrarySettingsController extends GetxController {
   ///
   /// ⚠️ 与 [setShowInHome] 同理，必须用 [RxList.refresh] 让 UI 重建。
   /// 开启后服务端会自动启动响度测量进程，为库中已有文件补齐测量值。
+  /// 切换「日本电影库」（2026-10-12）。
+  ///
+  /// 开了以后前端才显示「中 / 无码」徽章与那组筛选；服务端也会据此
+  /// 决定 list 接口要不要把 jp_* 字段回给前端。
+  Future<void> setJpMovie(VideoLibrary library, bool value) async {
+    final idx = libraries.indexWhere((e) => e.id == library.id);
+    if (idx < 0) return;
+
+    final before = libraries[idx];
+    if (before.jpMovie == value) return;
+
+    libraries[idx] = before.copyWith(jpMovie: value);
+    libraries.refresh();
+
+    try {
+      final res = await VideoLibraryApiService.instance.setJpMovie(
+        library.id,
+        value,
+        showLoading: false,
+      );
+      if (!res.success) {
+        _rollback(before, idx);
+        ToastUtil.show(res.message ?? 'operation_failed'.tr);
+        return;
+      }
+      final dynamic updated = res.data;
+      if (updated is Map) {
+        final map = updated.cast<String, dynamic>();
+        if (map.isNotEmpty) {
+          final parsed = VideoLibrary.fromJson(map);
+          if (parsed.id > 0) {
+            libraries[idx] = parsed;
+            libraries.refresh();
+          }
+        }
+      }
+    } catch (_) {
+      _rollback(before, idx);
+    }
+  }
+
   Future<void> setAudioNormalize(VideoLibrary library, bool value) async {
     final idx = libraries.indexWhere((e) => e.id == library.id);
     if (idx < 0) return;

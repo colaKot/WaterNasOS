@@ -69,7 +69,7 @@ class _SyncLeftMenu extends StatelessWidget {
             selected: ctrl.currentPageKey.value == 'sync.help',
             onTap: () {
               ctrl.selectPage('sync.help');
-              _showSyncError('sync_help_tooltip'.tr);
+              _showSyncHelp();
               ctrl.selectPage('sync.tasks');
             },
           ),

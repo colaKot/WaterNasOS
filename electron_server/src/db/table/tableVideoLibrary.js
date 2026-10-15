@@ -30,6 +30,9 @@ class tableVideoLibrary {
         table.integer('is_default').notNullable().defaultTo(0); // 1 = 内置，不可删除
         table.integer('show_in_home').notNullable().defaultTo(0); // 1 = 主页显示该库分类
         table.integer('audio_normalize').notNullable().defaultTo(0); // 1 = 扫描时测量该库音频响度并在转码时归一化
+        // ⭐ 日本电影库（2026-10-12）：1 = 列表页显示「中 / 无码」徽章，
+        //    并开放 分辨率 / 无码 / 中文字幕 这组筛选。只对 movie 类库有意义。
+        table.integer('jp_movie').notNullable().defaultTo(0);
         table.integer('sort').notNullable().defaultTo(0);
         table.timestamp('create_time').defaultTo(knex.fn.now());
       });
@@ -49,6 +52,11 @@ class tableVideoLibrary {
       if (!colNames.has('audio_normalize')) {
         await knex.raw(`ALTER TABLE ${this.tableName} ADD COLUMN audio_normalize INTEGER NOT NULL DEFAULT 0`).catch(() => {});
         Logger.info(`✅ Added audio_normalize column to table ${this.tableName}`);
+      }
+      // ⭐ 日本电影库开关（2026-10-12）：老库补列后默认 0，用户按需在库设置里开
+      if (!colNames.has('jp_movie')) {
+        await knex.raw(`ALTER TABLE ${this.tableName} ADD COLUMN jp_movie INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+        Logger.info(`✅ Added jp_movie column to table ${this.tableName}`);
       }
     }
 

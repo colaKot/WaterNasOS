@@ -372,6 +372,47 @@ extension PlayerTracks on PlayerController {
     _playId ??= const Uuid().v4();
   }
 
+  /// ⭐ 输出编码兼容性校验（2026-10-13）。
+  ///
+  /// 用户选了 H.265/AV1，但「服务端不支持」或「当前设备无法解码」时：
+  /// - 弹出**明确原因**的提示（区分服务端不兼容 / 当前设备不兼容）；
+  /// - 本次播放临时回退到 H.264，保证视频仍能看；
+  /// - **不回写**用户设置（下次播放仍按其选择重新校验）。
+  ///
+  /// 只在**会走转码**时校验：原画直推（rawFile）与「仅转音频」（视频 copy）都不涉及编码选择。
+  /// 返回 true 表示检测到不兼容并已回退。
+  bool guardOutputCodecCompatibility() {
+    final codec = _preferredOutputCodec;
+    if (!VideoCodec.needsSupportHint(codec)) return false;
+    final q = currentQuality.value;
+    if (q == PlayQuality.original || q == PlayQuality.originalAudio) {
+      return false;
+    }
+    if (_effectiveOutputCodecOverride != null) return false; // 已回退过，勿重复提示
+
+    final codecName = VideoCodec.label(codec);
+    String? message;
+    if (!serverSupportsCodec(codec)) {
+      message = 'video_codec_server_unsupported'.trParams({'codec': codecName});
+    } else if (!deviceCanDecodeCodec(codec)) {
+      message = 'video_codec_client_unsupported'.trParams({'codec': codecName});
+    }
+    if (message == null) return false;
+
+    _effectiveOutputCodecOverride = VideoCodec.h264;
+    _syncQualityOptionsForCodec();
+    _outputCodecIncompatibleMessage = message;
+    final msg = message;
+    final title = 'video_codec_incompatible_title'.tr;
+    Future.microtask(() {
+      if (isClosed) return;
+      try {
+        DialogUtil.showErrorDialog(message: msg, title: title);
+      } catch (_) {}
+    });
+    return true;
+  }
+
   /// 是否是无字幕
   bool isNoSubtitle(String trackLabel) {
     return trackLabel == 'player_no_subtitle'.tr;

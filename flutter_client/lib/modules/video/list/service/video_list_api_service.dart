@@ -51,6 +51,9 @@ class VideoListApiService extends BaseApiService {
     List<String>? actors,
     List<String>? directors,
     List<int>? years,
+    /// ⭐ 日本片标记筛选（2026-10-12）：'uncensored' = 无码 / 'chinese_sub' = 中文字幕。
+    /// 服务端只在库开了「日本电影」开关时才会应用；没开时传了也会被忽略。
+    List<String>? jpTags,
     List<String>? sourceList,
     String? sortBy,
     String? sortOrder,
@@ -84,6 +87,7 @@ class VideoListApiService extends BaseApiService {
         if (actors != null) 'actors': actors,
         if (directors != null) 'directors': directors,
         if (years != null) 'years': years,
+        if (jpTags != null && jpTags.isNotEmpty) 'jp_tags': jpTags,
         if (sourceList != null) 'sourceList': sourceList,
         if (sortBy != null) 'sort_by': sortBy,
         if (sortOrder != null) 'sort_order': sortOrder,
@@ -176,10 +180,18 @@ class VideoListFilterOptions {
   final List<String> regions;
   final List<int> years;
 
+  /// ⭐ 日本片标记筛选（2026-10-12）：仅当当前库开了「日本电影」开关时为 true。
+  final bool jpTagsEnabled;
+
+  /// 可用的日本片标记取值：'uncensored'（无码）/ 'chinese_sub'（中文字幕）。
+  final List<String> jpTags;
+
   const VideoListFilterOptions({
     required this.genres,
     required this.regions,
     required this.years,
+    this.jpTagsEnabled = false,
+    this.jpTags = const <String>[],
   });
 
   factory VideoListFilterOptions.fromJson(Map<String, dynamic> json) {
@@ -204,6 +216,10 @@ class VideoListFilterOptions {
       genres: parseStringList(json['genres']),
       regions: parseStringList(json['regions']),
       years: parseIntList(json['years']),
+      jpTagsEnabled: json['jp_tags_enabled'] == true ||
+          json['jp_tags_enabled'] == 1 ||
+          json['jp_tags_enabled'] == '1',
+      jpTags: parseStringList(json['jp_tags']),
     );
   }
 }

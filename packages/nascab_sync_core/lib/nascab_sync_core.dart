@@ -9,6 +9,7 @@
 /// 调度、删除传播、路径穿越防护）全部在这里共享。
 library nascab_sync_core;
 
+export 'src/sync_device_id.dart';
 export 'src/sync_engine.dart';
 export 'src/sync_host.dart';
 export 'src/sync_local_scanner.dart';

@@ -962,9 +962,23 @@ extension PlayerPlayback on PlayerController {
       startUrl += '&subtitlePath=${Uri.encodeComponent(subtitlePath)}';
     }
     if (burn) startUrl += '&subtitleBurn=true';
-    if (DeviceUtils.isWeb) startUrl += '&client=web';
+    // ⭐ 所有平台都要带 client（2026-10-12）：服务端的「音频降混」是按
+    // (用户, 客户端类型) 隔离存的，不带就只能读到旧的那份全量配置 ⇒ 端与端之间串味。
+    final clientKey = DeviceUtils.clientTypeKey;
+    if (clientKey.isNotEmpty) startUrl += '&client=$clientKey';
     // 仅转音频：视频原画直通（服务端 `-c:v copy`），只重编音轨
-    if (q == PlayQuality.originalAudio) startUrl += '&videoCopy=true';
+    if (q == PlayQuality.originalAudio) {
+      startUrl += '&videoCopy=true';
+    } else if (q != PlayQuality.original) {
+      // ⭐ 输出编码方式（2026-10-13）：**只有真正转码时**才把用户选的编码带给服务端。
+      //
+      // 语义红线：编码选择只影响转码，绝不影响原片播放。
+      // - 原画（original）由调用点走 rawFile 直链，根本不会进这个方法；
+      // - 仅转音频（videoCopy）视频流是 copy，编码参数不生效；
+      // 这里再显式排一次 original，保证将来有人改动调用点也不会把偏好泄漏到原片路径。
+      final codec = preferredOutputCodec;
+      if (codec.isNotEmpty) startUrl += '&codec=$codec';
+    }
 
     if (token != null) {
       startUrl += '&accessToken=$token';

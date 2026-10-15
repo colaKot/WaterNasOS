@@ -302,16 +302,23 @@ extension ApiControllerUrls on ApiController {
   }
 
   String getVideoPersonImageUrl({
-    required String tmdbId,
+    String tmdbId = '',
     int size = 240,
     String? thumb,
+    int indexId = 0,
+    String name = '',
   }) {
     final id = tmdbId.trim();
     final th = (thumb ?? '').trim();
+    final n = name.trim();
     final Map<String, dynamic> params = {};
-    params['tmdb_id'] = id;
     params['size'] = size.toString();
+    if (id.isNotEmpty) params['tmdb_id'] = id;
     if (th.isNotEmpty) params['thumb'] = th;
+    // ⭐ 日本片演员没有 tmdbId：带上所在影片与演员名，由服务端从索引里取头像
+    //    （服务端不接受客户端直接传本地路径，避免任意文件读取）。
+    if (indexId > 0) params['index_id'] = indexId.toString();
+    if (n.isNotEmpty) params['name'] = n;
     if (_state.accessToken != null) {
       params['accessToken'] = _state.accessToken!;
     }
@@ -320,9 +327,11 @@ extension ApiControllerUrls on ApiController {
       return '${_state.baseUrl}/api/video/person/image?aes=${Uri.encodeComponent(aesParam)}';
     }
     final qp = <String, String>{
-      'tmdb_id': id,
       'size': size.toString(),
+      if (id.isNotEmpty) 'tmdb_id': id,
       if (th.isNotEmpty) 'thumb': th,
+      if (indexId > 0) 'index_id': indexId.toString(),
+      if (n.isNotEmpty) 'name': n,
       if (_state.accessToken != null) 'accessToken': _state.accessToken!,
     };
     final uri = Uri.parse(
@@ -361,6 +370,30 @@ extension ApiControllerUrls on ApiController {
     };
     final uri = Uri.parse(
       '${_state.baseUrl}/api/video/poster/image',
+    ).replace(queryParameters: qp);
+    return uri.toString();
+  }
+
+  /// 日本片封面代理 URL（按番号取）。
+  ///
+  /// 日文站点的封面直链有防盗链，客户端裸连会 403，必须走服务端代理。
+  String getVideoJavCoverUrl({required String dvdId}) {
+    final id = dvdId.trim();
+    final Map<String, dynamic> params = {};
+    params['dvd_id'] = id;
+    if (_state.accessToken != null) {
+      params['accessToken'] = _state.accessToken!;
+    }
+    final aesParam = _encryptParams(params);
+    if (aesParam.isNotEmpty) {
+      return '${_state.baseUrl}/api/video/jav/cover?aes=${Uri.encodeComponent(aesParam)}';
+    }
+    final qp = <String, String>{
+      'dvd_id': id,
+      if (_state.accessToken != null) 'accessToken': _state.accessToken!,
+    };
+    final uri = Uri.parse(
+      '${_state.baseUrl}/api/video/jav/cover',
     ).replace(queryParameters: qp);
     return uri.toString();
   }

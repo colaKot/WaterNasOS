@@ -26,8 +26,19 @@ class VideoHomeItemBean {
   final int height;
   final int duration;
 
+  /// ⭐ 日本片标记（2026-10-12）。
+  ///
+  /// 服务端在写 `video_index` 时从**文件名后缀**解析：
+  /// `-U` = 无码、`-C` = 中文字幕、`-UC` = 两者都有。
+  /// 只有开了「日本电影」开关的库才在 UI 上显示对应徽章 / 筛选。
+  final bool jpUncensored;
+  final bool jpChineseSub;
+
   /// 图片条目：图片库与混合库里按图片渲染
   bool get isImage => mediaType == 'image';
+
+  /// 是否有任何日本片标记（两个徽章一个都不显示时可以整块跳过）
+  bool get hasJpTags => jpUncensored || jpChineseSub;
 
   const VideoHomeItemBean({
     required this.id,
@@ -54,6 +65,8 @@ class VideoHomeItemBean {
     this.width = 0,
     this.height = 0,
     this.duration = 0,
+    this.jpUncensored = false,
+    this.jpChineseSub = false,
   });
 
   VideoHomeItemBean copyWith({
@@ -102,6 +115,8 @@ class VideoHomeItemBean {
       width: width,
       height: height,
       duration: duration,
+      jpUncensored: jpUncensored,
+      jpChineseSub: jpChineseSub,
     );
   }
 
@@ -136,6 +151,12 @@ class VideoHomeItemBean {
       width: (json['width'] as num?)?.toInt() ?? 0,
       height: (json['height'] as num?)?.toInt() ?? 0,
       duration: (json['duration'] as num?)?.toInt() ?? 0,
+      jpUncensored: json['jp_uncensored'] == true ||
+          json['jp_uncensored'] == 1 ||
+          json['jp_uncensored'] == '1',
+      jpChineseSub: json['jp_chinese_sub'] == true ||
+          json['jp_chinese_sub'] == 1 ||
+          json['jp_chinese_sub'] == '1',
     );
   }
 }

@@ -194,6 +194,7 @@ async function _ensureHwAccelConfigKeys(report) {
     const baseProfile =
       (profiles && profiles.h264 && typeof profiles.h264 === 'object' ? profiles.h264 : null) ||
       (profiles && profiles.h265 && typeof profiles.h265 === 'object' ? profiles.h265 : null) ||
+      (profiles && profiles.av1 && typeof profiles.av1 === 'object' ? profiles.av1 : null) ||
       reportSelected;
     if (baseProfile) {
       const groupMeta = getHwAccelGroupMeta(baseProfile);
@@ -204,6 +205,7 @@ async function _ensureHwAccelConfigKeys(report) {
         nextSelected.profiles = {
           h264: profiles.h264 && typeof profiles.h264 === 'object' ? profiles.h264 : null,
           h265: profiles.h265 && typeof profiles.h265 === 'object' ? profiles.h265 : null,
+          av1: profiles.av1 && typeof profiles.av1 === 'object' ? profiles.av1 : null,
         };
       }
     }
@@ -262,6 +264,13 @@ async function detectAndSaveTranscodeHwAccel() {
       decodeArgs: ['-hwaccel', 'videotoolbox'],
       encoder: 'hevc_videotoolbox',
     });
+    // AV1 硬件编码（Apple Silicon M3+ / A17+ 才支持，老机器测试会失败自动跳过）
+    candidates.push({
+      name: 'videotoolbox_av1_full',
+      kind: hasAmd || hasNvidia ? 'discrete' : 'integrated',
+      decodeArgs: ['-hwaccel', 'videotoolbox'],
+      encoder: 'av1_videotoolbox',
+    });
   } else if (platform === 'win32') {
     // Windows：优先离散显卡（NVIDIA/AMD），其次集显（Intel QSV）
     if (hasNvidia) {
@@ -289,6 +298,13 @@ async function detectAndSaveTranscodeHwAccel() {
         decodeArgs: null,
         encoder: 'hevc_nvenc',
       });
+      // AV1 硬件编码（NVENC AV1 需 RTX 40 系及以上，老卡测试会失败自动跳过）
+      candidates.push({
+        name: 'nvidia_av1_nvenc_encode_only',
+        kind: 'discrete',
+        decodeArgs: null,
+        encoder: 'av1_nvenc',
+      });
     }
     if (hasAmd) {
       candidates.push({
@@ -314,6 +330,13 @@ async function detectAndSaveTranscodeHwAccel() {
         kind: 'discrete',
         decodeArgs: null,
         encoder: 'hevc_amf',
+      });
+      // AV1 硬件编码（AMF AV1 需 RDNA3 / RX 7000 系及以上）
+      candidates.push({
+        name: 'amd_av1_amf_encode_only',
+        kind: 'discrete',
+        decodeArgs: null,
+        encoder: 'av1_amf',
       });
     }
     if (hasIntel) {
@@ -341,6 +364,13 @@ async function detectAndSaveTranscodeHwAccel() {
         decodeArgs: null,
         encoder: 'hevc_qsv',
       });
+      // AV1 硬件编码（QSV AV1 需 Arc / 11 代+ 核显）
+      candidates.push({
+        name: 'intel_av1_qsv_encode_only',
+        kind: 'integrated',
+        decodeArgs: null,
+        encoder: 'av1_qsv',
+      });
     }
   } else {
     // Linux/Docker：
@@ -361,6 +391,14 @@ async function detectAndSaveTranscodeHwAccel() {
       kind: 'discrete',
       decodeArgs: null,
       encoder: 'hevc_nvenc',
+      hwType: 'nvenc',
+    });
+    // AV1 硬件编码（NVENC AV1 需 RTX 40 系及以上）
+    candidates.push({
+      name: 'nvidia_av1_nvenc_encode_only',
+      kind: 'discrete',
+      decodeArgs: null,
+      encoder: 'av1_nvenc',
       hwType: 'nvenc',
     });
 
@@ -385,6 +423,17 @@ async function detectAndSaveTranscodeHwAccel() {
         hwUploadFilter: 'format=nv12,hwupload',
         inputArgs: ['-vaapi_device', renderDevice],
       });
+      // AV1 VAAPI 编码（Intel Arc / AMD RDNA3 及以上）
+      candidates.push({
+        name: 'linux_vaapi_av1',
+        kind: 'integrated',
+        decodeArgs: null,
+        encoder: 'av1_vaapi',
+        hwType: 'vaapi',
+        device: renderDevice,
+        hwUploadFilter: 'format=nv12,hwupload',
+        inputArgs: ['-vaapi_device', renderDevice],
+      });
 
       candidates.push({
         name: 'linux_qsv_h264',
@@ -401,6 +450,17 @@ async function detectAndSaveTranscodeHwAccel() {
         kind: 'integrated',
         decodeArgs: null,
         encoder: 'hevc_qsv',
+        hwType: 'qsv',
+        device: renderDevice,
+        initDeviceArgs: ['-init_hw_device', `qsv=hw:${renderDevice}`, '-filter_hw_device', 'hw'],
+        hwUploadFilter: 'format=nv12,hwupload=extra_hw_frames=64',
+      });
+      // AV1 QSV 编码（Intel Arc / 11 代+ 核显）
+      candidates.push({
+        name: 'linux_qsv_av1',
+        kind: 'integrated',
+        decodeArgs: null,
+        encoder: 'av1_qsv',
         hwType: 'qsv',
         device: renderDevice,
         initDeviceArgs: ['-init_hw_device', `qsv=hw:${renderDevice}`, '-filter_hw_device', 'hw'],
@@ -444,7 +504,7 @@ async function detectAndSaveTranscodeHwAccel() {
   } catch (_) {}
 
   const attempts = [];
-  const selectedByCodec = { h264: null, h265: null };
+  const selectedByCodec = { h264: null, h265: null, av1: null };
 
   for (const cand of candidates) {
     let ok = false;
@@ -540,7 +600,11 @@ async function detectAndSaveTranscodeHwAccel() {
     attempts.push(record);
 
     if (ok) {
-      const codecKey = candEncoderLower.includes('hevc') || candEncoderLower.includes('265') ? 'h265' : 'h264';
+      const codecKey = candEncoderLower.includes('av1') || candEncoderLower.includes('svtav1')
+        ? 'av1'
+        : candEncoderLower.includes('hevc') || candEncoderLower.includes('265')
+          ? 'h265'
+          : 'h264';
       // 如果候选包含 decodeArgs（通常表示“硬件解码+硬件编码”），
       // 则必须在 file 测试通过，才允许作为最终默认方案。
       // 原因：lavfi 没有“文件解码”阶段，无法验证 decodeArgs 是否真的可用。
@@ -564,8 +628,9 @@ async function detectAndSaveTranscodeHwAccel() {
 
   const selectedH264 = selectedByCodec.h264;
   const selectedH265 = selectedByCodec.h265;
+  const selectedAv1 = selectedByCodec.av1;
   const available = buildAvailableHwAccelList(attempts);
-  const baseSelectedProfile = selectedH264 || selectedH265;
+  const baseSelectedProfile = selectedH264 || selectedH265 || selectedAv1;
   let selected = null;
   if (baseSelectedProfile) {
     const groupMeta = getHwAccelGroupMeta(baseSelectedProfile);
@@ -585,10 +650,10 @@ async function detectAndSaveTranscodeHwAccel() {
         hwUploadFilter: baseSelectedProfile.hwUploadFilter || null,
         inputArgs: baseSelectedProfile.inputArgs || null,
         initDeviceArgs: baseSelectedProfile.initDeviceArgs || null,
-        profiles: { h264: selectedH264 || null, h265: selectedH265 || null },
+        profiles: { h264: selectedH264 || null, h265: selectedH265 || null, av1: selectedAv1 || null },
       };
     } else {
-      selected.profiles = { h264: selectedH264 || null, h265: selectedH265 || null };
+      selected.profiles = { h264: selectedH264 || null, h265: selectedH265 || null, av1: selectedAv1 || null };
     }
   }
   const preferredRaw = await tableConfig.getConfigByKey('transcode_hwaccel_preferred');

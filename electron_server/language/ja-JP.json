@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "この機能に必要なプラグインはまだダウンロード中です。しばらくしてから再度お試しください。"
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "デバイスIDがありません。クライアントを更新して再試行してください。",
+      "DEVICE_ID_INVALID": "無効なデバイスID"
     }
   },
   "places365": {

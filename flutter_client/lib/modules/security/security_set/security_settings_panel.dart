@@ -49,7 +49,7 @@ class SecuritySettingsPanel extends StatelessWidget {
                   const SizedBox(height: 12),
                   Obx(() {
                     return SwitchListTile(
-                      activeColor: theme.colorScheme.primary,
+                      activeThumbColor: theme.colorScheme.onPrimary,
                       value: ctrl.banEnabled.value,
                       onChanged: (v) => ctrl.banEnabled.value = v,
                       title: Text('security.enable_ip_ban'.tr),
@@ -80,7 +80,7 @@ class SecuritySettingsPanel extends StatelessWidget {
                   const SizedBox(height: 12),
                   Obx(() {
                     return SwitchListTile(
-                      activeColor: theme.colorScheme.primary,
+                      activeThumbColor: theme.colorScheme.onPrimary,
                       value: ctrl.bypassLanAuth.value,
                       onChanged: (v) => ctrl.bypassLanAuth.value = v,
                       title: Text('security.bypass_lan_auth'.tr),

@@ -53,6 +53,21 @@ function _normalizeApiUrlString(apiUrlStr) {
   return `https://${raw}`;
 }
 
+/**
+ * TMDB 有两套鉴权凭据，长相完全不同，用户经常填错：
+ *   - v4「API Read Access Token」：JWT 形状的长串 ⇒ 走 `Authorization: Bearer`
+ *   - v3「API Key」：32 位十六进制 ⇒ 走 `?api_key=`
+ * 这里按长相自动判别，让用户**填哪个都能用**（不用记该填哪个框）。
+ * ⚠️ NasCab 内置的默认 token 是个短串、不是标准 JWT，一律按 Bearer 处理。
+ * @returns {'token'|'key'|''} 空串表示没填
+ */
+function _classifyTmdbCredential(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  if (/^[0-9a-fA-F]{32}$/.test(v)) return 'key';
+  return 'token';
+}
+
 function _createHttpsProxyAgent(proxyUrlStr) {
   const raw = _normalizeProxyUrlString(proxyUrlStr);
   if (!raw) {
@@ -78,51 +93,57 @@ function _createHttpsProxyAgent(proxyUrlStr) {
 
   const proxyAuth = _buildProxyAuthHeader(proxyUrl);
 
-  return new https.Agent({
-    keepAlive: true,
-    createConnection: (options, callback) => {
-      const targetHost = options.servername || options.host || options.hostname;
-      const targetPort = Number(options.port || 443) || 443;
-      const connectHeaders = {
-        Host: `${targetHost}:${targetPort}`,
-      };
-      if (proxyAuth) connectHeaders['Proxy-Authorization'] = proxyAuth;
+  const agent = new https.Agent({ keepAlive: true });
 
-      const connectOptions = {
-        host,
-        port,
-        method: 'CONNECT',
-        path: `${targetHost}:${targetPort}`,
-        headers: connectHeaders,
-      };
+  // ⛔⛔ 同 networkProxyUtil：Node 22 **不会**采纳构造参数里的 createConnection
+  //    （实例上没有这个自有属性，仍走 https.Agent.prototype.createConnection 直连），
+  //    必须构造之后赋到实例上，否则代理被静默绕过。
+  agent.createConnection = (options, callback) => {
+    const targetHost = options.servername || options.host || options.hostname;
+    const targetPort = Number(options.port || 443) || 443;
+    const connectHeaders = {
+      Host: `${targetHost}:${targetPort}`,
+    };
+    if (proxyAuth) connectHeaders['Proxy-Authorization'] = proxyAuth;
 
-      const req = (isHttpsProxy ? https : http).request(connectOptions);
-      req.once('connect', (res, socket) => {
-        if (!res || res.statusCode !== 200) {
-          try {
-            socket.destroy();
-          } catch (_) {}
-          const err = new Error(`Proxy CONNECT failed (${res ? res.statusCode : 'no_status'})`);
-          return callback(err);
-        }
-        const tlsSocket = tls.connect({
-          socket,
-          servername: targetHost,
-          rejectUnauthorized: options.rejectUnauthorized !== false,
-        });
-        tlsSocket.once('secureConnect', () => callback(null, tlsSocket));
-        tlsSocket.once('error', e => callback(e));
+    const connectOptions = {
+      host,
+      port,
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: connectHeaders,
+    };
+
+    const req = (isHttpsProxy ? https : http).request(connectOptions);
+    req.once('connect', (res, socket) => {
+      if (!res || res.statusCode !== 200) {
+        try {
+          socket.destroy();
+        } catch (_) {}
+        const err = new Error(`Proxy CONNECT failed (${res ? res.statusCode : 'no_status'})`);
+        return callback(err);
+      }
+      const tlsSocket = tls.connect({
+        socket,
+        servername: targetHost,
+        rejectUnauthorized: options.rejectUnauthorized !== false,
       });
-      req.once('error', e => callback(e));
-      req.end();
-    },
-  });
+      tlsSocket.once('secureConnect', () => callback(null, tlsSocket));
+      tlsSocket.once('error', e => callback(e));
+    });
+    req.once('error', e => callback(e));
+    req.end();
+  };
+
+  return agent;
 }
 
 class TmdbClient {
   constructor({ apiUrl, apiToken, proxyUrl, language }) {
     this.apiUrl = _normalizeApiUrlString(apiUrl);
     this.apiToken = String(apiToken || '').trim();
+    // ⭐ v4 Token（Bearer）还是 v3 API Key（api_key 参数）—— 按长相自动判别
+    this.authMode = _classifyTmdbCredential(this.apiToken);
     this.imageBaseUrl = 'https://image.tmdb.org/t/p/original';
     this.minRequestIntervalMs = 0;
     this._lastRequestAtMs = 0;
@@ -174,23 +195,25 @@ class TmdbClient {
         u.searchParams.set(k, s);
       }
     }
+    // v3 API Key 走查询参数（v4 Token 走 Authorization 头，见 requestJson）
+    if (this.authMode === 'key') u.searchParams.set('api_key', this.apiToken);
     return u;
   }
 
   async requestJson(pathname, query = null) {
-    if (!this.apiToken) throw new Error('TMDB token missing');
+    if (!this.authMode) throw new Error('TMDB credential missing');
     return await this.withRateLimit(async () => {
       const url = this.buildApiUrl(pathname, query);
-      console.log('[TmdbClient.requestJson] request url=', url.href, 'pathname=', pathname);
+      console.log('[TmdbClient.requestJson] url=', url.href, 'auth=', this.authMode);
       const body = await new Promise((resolve, reject) => {
         const req = https.request(
           url,
           {
             method: 'GET',
-            headers: {
-              Authorization: `Bearer ${this.apiToken}`,
-              Accept: 'application/json',
-            },
+            headers:
+              this.authMode === 'key'
+                ? { Accept: 'application/json' }
+                : { Authorization: `Bearer ${this.apiToken}`, Accept: 'application/json' },
             agent: this._proxyAgent || undefined,
           },
           async res => {

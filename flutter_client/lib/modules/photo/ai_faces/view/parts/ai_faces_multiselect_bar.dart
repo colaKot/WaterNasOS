@@ -41,7 +41,8 @@ class AiFacesMultiSelectBottomBar extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (isAdmin) ...[
+              // ⭐ 2026-10-13：人脸相册按归属隔离，隐藏/合并对所有登录用户开放
+              ...[
                 if (isAll) ...[
                   TextButton(
                     onPressed: () => controller.batchSetHidden(false),

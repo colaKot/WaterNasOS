@@ -17,6 +17,13 @@ class VideoLibrary {
 
   /// 音频响度归一化：开启后扫描/重扫该库时测量音频响度，播放转码时对齐音量
   final bool audioNormalize;
+
+  /// ⭐ 日本电影库（2026-10-12）。
+  ///
+  /// 开了以后：列表页封面右上角显示「中 / 无码」徽章，并开放
+  /// 分辨率 / 无码 / 中文字幕 那组筛选。标记来自扫描时解析的文件名后缀
+  /// （`-U` 无码 / `-C` 中文字幕 / `-UC` 两者）。
+  final bool jpMovie;
   final int sort;
   final int sourceCount;
   final int movieCount;
@@ -32,6 +39,7 @@ class VideoLibrary {
     required this.isDefault,
     required this.showInHome,
     required this.audioNormalize,
+    this.jpMovie = false,
     required this.sort,
     required this.sourceCount,
     required this.movieCount,
@@ -75,6 +83,7 @@ class VideoLibrary {
     bool? isDefault,
     bool? showInHome,
     bool? audioNormalize,
+    bool? jpMovie,
     int? sort,
     int? sourceCount,
     int? movieCount,
@@ -90,6 +99,7 @@ class VideoLibrary {
       isDefault: isDefault ?? this.isDefault,
       showInHome: showInHome ?? this.showInHome,
       audioNormalize: audioNormalize ?? this.audioNormalize,
+      jpMovie: jpMovie ?? this.jpMovie,
       sort: sort ?? this.sort,
       sourceCount: sourceCount ?? this.sourceCount,
       movieCount: movieCount ?? this.movieCount,
@@ -121,6 +131,10 @@ class VideoLibrary {
         audioNormalizeRaw == 1 ||
         audioNormalizeRaw == '1';
 
+    final jpMovieRaw = json['jp_movie'];
+    final jpMovie =
+        jpMovieRaw == true || jpMovieRaw == 1 || jpMovieRaw == '1';
+
     return VideoLibrary(
       id: asInt(json['id']),
       name: (json['name']?.toString() ?? '').trim(),
@@ -129,6 +143,7 @@ class VideoLibrary {
       isDefault: isDefault,
       showInHome: showInHome,
       audioNormalize: audioNormalize,
+      jpMovie: jpMovie,
       sort: asInt(json['sort']),
       sourceCount: asInt(json['source_count']),
       movieCount: asInt(counts['movie']),

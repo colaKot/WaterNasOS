@@ -41,6 +41,7 @@ class _SyncTaskListPanelState extends State<_SyncTaskListPanel> {
       child: Column(
         children: [
           if (widget.showHeader) _buildHeader(context),
+          _buildLegacyClaimBanner(context),
           Expanded(
             child: Obx(() {
               final ctrl = widget.ctrl;
@@ -106,6 +107,60 @@ class _SyncTaskListPanelState extends State<_SyncTaskListPanel> {
         ],
       ),
     );
+  }
+
+  /// 旧版任务认领横幅：账号下存在「未绑定主机」的旧同步任务时提示用户。
+  ///
+  /// 只提示不自动认领——任务该归哪台机器只有用户知道，自动抢会造成基线错位。
+  Widget _buildLegacyClaimBanner(BuildContext context) {
+    final ctrl = widget.ctrl;
+    return Obx(() {
+      final pending = ctrl.legacyPendingCount.value;
+      if (pending <= 0) return const SizedBox.shrink();
+      final theme = Theme.of(context);
+      final scheme = theme.colorScheme;
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.tertiaryContainer.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: scheme.tertiary.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.devices_outlined, size: 20, color: scheme.tertiary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'sync_legacy_banner'.trParams({
+                      'count': pending.toString(),
+                      'device': ctrl.deviceName,
+                    }),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'sync_legacy_banner_desc'.tr,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: ctrl.claimLegacyTasks,
+              child: Text('sync_legacy_claim_action'.tr),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   Widget _buildHeader(BuildContext context) {

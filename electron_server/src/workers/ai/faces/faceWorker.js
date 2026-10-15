@@ -2,12 +2,29 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const Logger = require('../../../utils/logger');
 const dbUtil = require('../../../db/dbUtil');
 const knexUtil = require('../../../db/knexUtil');
 const tableConfig = require('../../../db/table/tableConfig');
-const { getFaceEngine, bufferToFloat32, float32ToBuffer, normalizeL2 } = require('./faceUtil');
+const { getFaceEngine, bufferToFloat32, float32ToBuffer, normalizeL2, protoWeightFactor, pushTopRoot, decideFaceAssignment, selectMergePairs } = require('./faceUtil');
 const fileService = require('../../../api/modules/file/core/fileService');
+const remoteAssets = require('../../../utils/remoteAssetsManager');
+const { Worker: ThreadWorker, isMainThread, workerData: threadWorkerData } = require('worker_threads');
+
+// ⭐ 2026-10-13 识别多线程：
+// 实测单张「检测(960px E2E) ~300ms + 特征 ~6ms」，检测是绝对瓶颈，53,335 张待识别
+// 单线程要跑 ~4.5 小时。现在 coordinator 进程内起 N 个 worker_thread 并行做
+// 「检测+特征提取」，聚类与 DB 写入仍严格单线程顺序执行（原型 Map 不能并发改）。
+// 线程数优先级：环境变量 FACE_THREADS > DB 配置 ai_face_threads > 默认 3。
+const DEFAULT_FACE_THREADS = 3;
+const MAX_FACE_THREADS = 8;
+function clampThreadCount(n) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v) || v < 1) return 1;
+  return Math.min(MAX_FACE_THREADS, v);
+}
+let FACE_THREADS = clampThreadCount(process.env.FACE_THREADS || DEFAULT_FACE_THREADS);
 
 // 人脸聚类/维护相关超参数（均可通过环境变量覆盖）。
 // 说明约定：
@@ -15,10 +32,10 @@ const fileService = require('../../../api/modules/file/core/fileService');
 // - qualityScore 为 faceUtil 产出的综合质量分（0~100），会影响过滤、动态阈值、原型更新与维护策略。
 
 // 基础匹配阈值：在动态阈值计算的“基线”。越大越严格（更少错分，但更容易分裂）。
-const SIM_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SIM_THRESH ?? 0.45)));
+let SIM_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SIM_THRESH ?? 0.45)));
 
 // 入库最低质量：低于该值的人脸不会参与聚类/入库（避免模糊、侧脸、截断等噪声造成错分与原型污染）。
-const MIN_QUALITY = Math.max(0, Math.min(100, Number(process.env.FACE_MIN_QUALITY ?? 75)));
+let MIN_QUALITY = Math.max(0, Math.min(100, Number(process.env.FACE_MIN_QUALITY ?? 75)));
 
 // 原型更新最低质量：匹配到已有 face 后，只有质量 >= 该值的样本才允许更新原型向量（低质只计数不改原型）。
 const PROTO_UPDATE_MIN_QUALITY = Math.max(0, Math.min(100, Number(process.env.FACE_PROTO_UPDATE_MIN_QUALITY ?? 78)));
@@ -63,13 +80,20 @@ const SAMPLES_DELETE_BELOW_QUALITY = Math.max(0, Math.min(100, Number(process.en
 // 二次合并开关：维护时尝试把“实际同一人但被分裂成多个 face”的原型合并。
 const SECOND_MERGE_ENABLE = Number(process.env.FACE_SECOND_MERGE_ENABLE ?? 1) ? 1 : 0;
 // 二次合并阈值（原型-原型）：两个 face 原型相似度达到该值时可直接合并。越小越积极，错合风险越高。
-const SECOND_MERGE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SECOND_MERGE_THRESH ?? 0.45)));
+let SECOND_MERGE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SECOND_MERGE_THRESH ?? 0.45)));
 // 二次合并阈值（最佳样本-最佳样本）：用于修复“原型被历史噪声拉偏”但最佳高质样本仍很像的情况。
 const SECOND_MERGE_BEST_SAMPLE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SECOND_MERGE_BEST_SAMPLE_THRESH ?? 0.45)));
 // 单次维护最多合并多少对 face：避免一次维护做太多合并造成长事务/卡顿，也降低误合并的爆炸半径。
 const SECOND_MERGE_MAX = Math.max(0, Math.min(200, Number(process.env.FACE_SECOND_MERGE_MAX ?? 20)));
 // 参与二次合并的最小 face_count：低样本 face 往往更不稳定，限制参与可降低误合并。
 const SECOND_MERGE_MIN_FACE_COUNT = Math.max(1, Math.min(1000, Number(process.env.FACE_SECOND_MERGE_MIN_FACE_COUNT ?? 3)));
+
+// ⭐ 2026-10-14 防误合护栏（用户报「好多人的人脸混在了一起」）
+// 1) 认领裕度：最近原型必须比**第二名（另一个人）**明显更像，否则宁可新建人脸组。
+//    0.04 只影响「两个人脸组难分伯仲」的边角样本，对真正同一人的高相似度样本无影响。
+let ASSIGN_MARGIN = Math.max(0, Math.min(0.3, Number(process.env.FACE_ASSIGN_MARGIN ?? 0.04)));
+// 2) 二次合并要求「互为最近邻」：掐掉 A~B、B~C 把三个人串成一组的链式合并。
+const SECOND_MERGE_MUTUAL = Number(process.env.FACE_SECOND_MERGE_MUTUAL ?? 1) ? true : false;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -88,6 +112,47 @@ function dot(a, b) {
   return s;
 }
 
+/**
+ * 从 tableConfig 读取人脸聚类参数（AI 设置页可调，2026-10-13）。
+ * 优先级：DB 配置 > 环境变量 > 代码默认值。
+ * 只在这里改写模块级 let，调用点见 startLoop / maybeRunMaintenance。
+ */
+async function applyFaceTuning() {
+  const readNum = async (key, cur, lo, hi) => {
+    try {
+      const raw = await tableConfig.getConfigByKey(key);
+      if (raw === null || raw === undefined || raw === '') return cur;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return cur;
+      return Math.max(lo, Math.min(hi, n));
+    } catch (_) {
+      return cur;
+    }
+  };
+  const prev = { sim: SIM_THRESH, minQ: MIN_QUALITY, merge2: SECOND_MERGE_THRESH, margin: ASSIGN_MARGIN, threads: FACE_THREADS };
+  SIM_THRESH = await readNum('ai_face_sim_thresh', SIM_THRESH, 0.2, 0.9);
+  MIN_QUALITY = await readNum('ai_face_min_quality', MIN_QUALITY, 40, 95);
+  SECOND_MERGE_THRESH = await readNum('ai_face_second_merge_thresh', SECOND_MERGE_THRESH, 0.2, 0.9);
+  // 认领裕度：目前只有 DB / 环境变量可调（AI 设置页暂无控件）
+  ASSIGN_MARGIN = await readNum('ai_face_assign_margin', ASSIGN_MARGIN, 0, 0.3);
+  // 线程数只在启动时生效（运行中改不热切换，避免半批任务线程数抖动）；
+  // 环境变量显式给了则尊重环境变量。
+  if (process.env.FACE_THREADS === undefined) {
+    FACE_THREADS = clampThreadCount(await readNum('ai_face_threads', FACE_THREADS, 1, MAX_FACE_THREADS));
+  }
+  if (
+    Math.abs(prev.sim - SIM_THRESH) > 1e-9 ||
+    Math.abs(prev.minQ - MIN_QUALITY) > 1e-9 ||
+    Math.abs(prev.merge2 - SECOND_MERGE_THRESH) > 1e-9 ||
+    Math.abs(prev.margin - ASSIGN_MARGIN) > 1e-9 ||
+    prev.threads !== FACE_THREADS
+  ) {
+    Logger.info(
+      `[FaceTuning] 应用新参数 sim=${SIM_THRESH} minQuality=${MIN_QUALITY} secondMerge=${SECOND_MERGE_THRESH} assignMargin=${ASSIGN_MARGIN} threads=${FACE_THREADS}`
+    );
+  }
+}
+
 function computeDynamicMatchThresh(faceMeta) {
   const q = clampNumber(faceMeta && faceMeta.qualityScore, 0, 100);
   let req = SIM_THRESH + ((100 - q) / 100) * DYN_QUALITY_PENALTY;
@@ -103,6 +168,11 @@ function computeProtoUpdateWeight(qualityScore) {
   return PROTO_QUALITY_WEIGHT_BASE + (q / 100) * PROTO_QUALITY_WEIGHT_SCALE;
 }
 
+/**
+ * ⭐ 2026-10-14 修正方向（原来这里是「越不像权重越大」，等于主动把可疑样本拉进原型）：
+ * 与近期样本**越不像** ⇒ 越可能是另一个人被吸进来 ⇒ **压低**它对原型的拉扯。
+ * 纯函数在 faceUtil.protoWeightFactor（返回 [0.6, 1]，永不放大）。
+ */
 function computeRecentDiversityFactor(proto, emb) {
   const recent = proto && Array.isArray(proto.recentEmbs) ? proto.recentEmbs : null;
   if (!recent || recent.length === 0) return 1;
@@ -112,8 +182,7 @@ function computeRecentDiversityFactor(proto, emb) {
     const sim = dot(r, emb);
     if (sim > maxSim) maxSim = sim;
   }
-  const novelty = clampNumber((0.95 - maxSim) / 0.25, 0, 1);
-  return 0.6 + novelty * 0.8;
+  return protoWeightFactor(maxSim);
 }
 
 function pushRecentEmb(proto, emb) {
@@ -138,7 +207,7 @@ class FaceWorker {
   constructor() {
     this.isRunning = false;
     this.batchSize = Math.max(1, Math.min(50, Number(process.env.FACE_BATCH_SIZE ?? 5)));
-    this.faceEngine = null;
+    this.faceEngine = null; // 仅在线程全部不可用时的兜底（coordinator 自己推理）
     this.prototypes = new Map();
     this.rootCache = new Map();
     this.protoIds = [];
@@ -154,6 +223,11 @@ class FaceWorker {
     this.scanMarkStamp = 0;
     this.processedImages = 0;
     this.lastMaintenanceAt = Date.now();
+    // ⭐ 推理线程池（2026-10-13）
+    this.inferThreads = []; // { worker, busy, ready }
+    this.inferSeq = 0;
+    this.inferPending = new Map(); // seq -> { resolve, reject, thread }
+    this.threadsFailed = false; // 线程池整体不可用 ⇒ 回退 coordinator 内联推理
     this.init();
   }
 
@@ -166,16 +240,161 @@ class FaceWorker {
       if (enabled !== '1') {
         process.exit(0);
       }
-      Logger.info('[faceWorker] waiting for remote face model...');
-      this.faceEngine = await getFaceEngine();
-      Logger.info('[faceWorker] face model ready');
+      // 模型包确保就绪（线程内各自建会话，但包只在这里确保一次）
+      await remoteAssets.ensureBundle('onnx_models.faces').catch(err => {
+        Logger.warn(`[faceWorker] ensureBundle failed (threads will retry): ${err && err.message ? err.message : err}`);
+      });
+      await applyFaceTuning().catch(() => {});
+      Logger.info(`[faceWorker] starting with ${FACE_THREADS} infer thread(s), cpus=${os.cpus().length}`);
+      await this.ensureInferThreads();
       await this.loadPrototypes();
       this.isRunning = true;
+      // 批次至少覆盖线程数的 2 倍，减少调度空转
+      this.batchSize = Math.max(this.batchSize, FACE_THREADS * 2);
 
       await this.startLoop();
     } catch (err) {
       Logger.error('❌ Face Worker init failed:', err);
       process.kill(process.pid, 'SIGTERM');
+    }
+  }
+
+  /**
+   * 起 N 个推理线程（同一文件，role=infer）。
+   * 单个线程起失败不影响其他；全部失败则置 threadsFailed，回退内联推理。
+   */
+  async ensureInferThreads() {
+    if (this.threadsFailed) return;
+    const want = clampThreadCount(FACE_THREADS);
+    while (this.inferThreads.length < want) {
+      try {
+        const t = new ThreadWorker(__filename, {
+          workerData: { role: 'infer' },
+        });
+        const entry = { worker: t, busy: false, ready: false };
+        t.on('message', msg => this._onThreadMessage(entry, msg));
+        t.on('error', err => {
+          Logger.error(`❌ infer thread error: ${err && err.message ? err.message : err}`);
+          this._dropThread(entry);
+        });
+        t.on('exit', code => {
+          if (code !== 0) Logger.warn(`⚠️ infer thread exited code=${code}`);
+          this._dropThread(entry);
+        });
+        this.inferThreads.push(entry);
+        // 等 ready（引擎加载完）再继续，避免首批任务白等
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('infer thread ready timeout'));
+          }, 120000);
+          const onMsg = msg => {
+            if (msg && msg.type === 'ready') {
+              cleanup();
+              entry.ready = true;
+              resolve();
+            }
+          };
+          const cleanup = () => {
+            clearTimeout(timer);
+            t.off('message', onMsg);
+          };
+          t.on('message', onMsg);
+        }).catch(err => {
+          Logger.warn(`⚠️ infer thread not ready: ${err && err.message ? err.message : err}`);
+          this._dropThread(entry);
+        });
+      } catch (e) {
+        Logger.error(`❌ spawn infer thread failed: ${e && e.message ? e.message : e}`);
+        break;
+      }
+    }
+    if (this.inferThreads.length === 0) {
+      this.threadsFailed = true;
+      Logger.warn('[faceWorker] no infer thread available, fallback to inline inference');
+    }
+  }
+
+  _onThreadMessage(entry, msg) {
+    if (!msg || typeof msg.id !== 'number') return;
+    const pending = this.inferPending.get(msg.id);
+    if (!pending) return;
+    this.inferPending.delete(msg.id);
+    if (entry.worker && entry.busy) entry.busy = false;
+    if (msg.ok) {
+      pending.resolve(msg.faces || []);
+    } else {
+      pending.reject(new Error(msg.error || 'infer_failed'));
+    }
+  }
+
+  _dropThread(entry) {
+    const idx = this.inferThreads.indexOf(entry);
+    if (idx >= 0) this.inferThreads.splice(idx, 1);
+    entry.busy = false;
+    // 该线程上未完成的任务全部按失败处理（调用方会 markIndexDone 跳过这张）
+    for (const [seq, pending] of this.inferPending.entries()) {
+      if (pending.thread === entry) {
+        this.inferPending.delete(seq);
+        pending.reject(new Error('infer_thread_died'));
+      }
+    }
+    try {
+      entry.worker.terminate();
+    } catch (_) {}
+  }
+
+  /** 找空闲线程发任务；没有空闲就排队等最早空闲的（保持批次内并发≤线程数） */
+  _pickIdleThread() {
+    for (const t of this.inferThreads) {
+      if (!t.busy && t.ready) return t;
+    }
+    return null;
+  }
+
+  async inferViaThread(imagePath) {
+    if (this.threadsFailed || this.inferThreads.length === 0) {
+      // 兜底：coordinator 自己推理（慢但保底）
+      if (!this.faceEngine) this.faceEngine = await getFaceEngine();
+      return this.faceEngine.extractFaceFeatures(imagePath);
+    }
+    if (this.inferThreads.every(t => !t.ready)) {
+      await this.ensureInferThreads();
+      if (this.threadsFailed || this.inferThreads.length === 0) {
+        if (!this.faceEngine) this.faceEngine = await getFaceEngine();
+        return this.faceEngine.extractFaceFeatures(imagePath);
+      }
+    }
+    const seq = ++this.inferSeq;
+    return new Promise((resolve, reject) => {
+      const dispatch = () => {
+        const t = this._pickIdleThread();
+        if (!t) {
+          // 稍等再试（线程完成时 _onThreadMessage 会把 busy 置 false）
+          setTimeout(dispatch, 5);
+          return;
+        }
+        t.busy = true;
+        this.inferPending.set(seq, { resolve, reject, thread: t });
+        try {
+          t.worker.postMessage({ id: seq, imagePath });
+        } catch (e) {
+          this.inferPending.delete(seq);
+          t.busy = false;
+          reject(e);
+        }
+      };
+      dispatch();
+    });
+  }
+
+  async terminateInferThreads() {
+    const threads = this.inferThreads.slice();
+    this.inferThreads = [];
+    for (const t of threads) {
+      try {
+        t.worker.terminate();
+      } catch (_) {}
     }
   }
 
@@ -336,28 +555,130 @@ class FaceWorker {
   }
 
   async startLoop() {
+    // 启动时先读一次 AI 设置里的人脸聚类参数（DB > env > 默认）
+    await applyFaceTuning().catch(() => {});
     while (this.isRunning) {
       try {
         const rows = await this.getNextBatch();
         if (!rows || rows.length === 0) {
           await this.maybeRunMaintenance(true);
           Logger.info('✅ No pending face tasks, worker exiting');
+          await this.terminateInferThreads();
           try {
             if (this.knex && typeof this.knex.destroy === 'function') await this.knex.destroy();
           } catch {}
           process.exit(0);
         }
-        for (const row of rows) {
-          if (!this.isRunning) break;
-          await this.processOne(row);
-          this.processedImages += 1;
-        }
+        await this.processBatch(rows);
         await this.maybeRunMaintenance(false);
       } catch (err) {
         Logger.error('❌ Face Worker loop error:', err);
         await sleep(1000);
       }
     }
+  }
+
+  /**
+   * ⭐ 2026-10-13 两阶段批处理：
+   * Phase 1 并行推理（worker_threads 池，检测是瓶颈 ~300ms/张）；
+   * Phase 2 顺序入库（prototypes Map / 事务只能单线程改，避免计数与原型竞争）。
+   */
+  async processBatch(rows) {
+    const prepared = await Promise.all((rows || []).map(row => this.prepareInfer(row)));
+    for (const item of prepared) {
+      if (!this.isRunning) break;
+      if (item.skip) {
+        await this.markIndexDone(item.row.id);
+        continue;
+      }
+      if (item.error) {
+        Logger.error(`❌  face infer failed: ${item.imagePath || item.row.path}`, item.error);
+        await this.markIndexDone(item.row.id);
+        continue;
+      }
+      try {
+        await this.applyFacesToDb(item.row, item.faces);
+      } catch (err) {
+        Logger.error('❌  face DB write failed:', err);
+      }
+      this.processedImages += 1;
+    }
+  }
+
+  /** Phase 1：前置校验 + 缩略图 + 并行推理，返回 {row, faces} 或 {row, skip|error} */
+  async prepareInfer(row) {
+    const id = row && row.id ? Number(row.id) : 0;
+    if (!id) return { row, skip: true };
+
+    const fileHash = row.file_hash ? String(row.file_hash) : '';
+    if (!fileHash) {
+      return { row, skip: true };
+    }
+
+    const existed = await this.knex('photo_face2filehash')
+      .where({ file_hash: fileHash })
+      .first('id')
+      .catch(() => null);
+    if (existed && existed.id) {
+      return { row, skip: true };
+    }
+    const fullPath = path.join(String(row.path || ''), String(row.filename || ''));
+    if (!fullPath || !fs.existsSync(fullPath)) {
+      return { row, skip: true };
+    }
+
+    const type = row && row.type ? Number(row.type) : 0;
+    let imagePath = fullPath;
+    if (type === 2) {
+      try {
+        imagePath = await fileService.getTinyImgByPath(fullPath, undefined, { deferSlowIo: false, deferImages: false });
+      } catch (err) {
+        Logger.error(`❌  video thumbnail failed: ${fullPath}`, err);
+        return { row, skip: true };
+      }
+    }
+    if (!imagePath || !fs.existsSync(imagePath)) {
+      return { row, skip: true };
+    }
+    try {
+      const faces = await this.inferViaThread(imagePath);
+      return { row, faces: Array.isArray(faces) ? faces : [] };
+    } catch (err) {
+      return { row, error: err, imagePath };
+    }
+  }
+
+  /** Phase 2：聚类 + 写库（与原 processOne 的事务体一致） */
+  async applyFacesToDb(row, faces) {
+    const id = row && row.id ? Number(row.id) : 0;
+    if (!id) return;
+    const fileHash = row.file_hash ? String(row.file_hash) : '';
+    const list = Array.isArray(faces) ? faces : [];
+
+    await this.knex.transaction(async trx => {
+      const usedFaceIds = new Set();
+      for (const f of list) {
+        const emb = f && f.feature ? f.feature : null;
+        if (!emb || emb.length !== 512) continue;
+        const box = f && f.box ? f.box : null;
+        if (!box) continue;
+        const quality = Number(f.qualityScore) || 0;
+        if (quality < MIN_QUALITY) continue;
+        const faceMeta = { qualityScore: quality };
+        const match = this.findBestPrototype(emb, faceMeta, usedFaceIds);
+        const matchFaceId = match ? Number(match.faceId) || 0 : 0;
+        const rootMatchFaceId = matchFaceId ? await this.getRootFaceId(trx, matchFaceId) : 0;
+        const faceId = match ? await this.assignToFace(trx, rootMatchFaceId || matchFaceId, emb, { qualityScore: quality }) : await this.createNewFace(trx, emb, { fileHash, quality });
+        if (!faceId) continue;
+        const rootId = matchFaceId ? rootMatchFaceId : await this.getRootFaceId(trx, faceId);
+        if (usedFaceIds.has(rootId)) continue;
+        usedFaceIds.add(rootId);
+        await this.insertFaceMapping(trx, fileHash, rootId, box);
+        const sampleFaceId = matchFaceId || rootId;
+        await this.upsertSample(trx, fileHash, sampleFaceId, emb, quality);
+      }
+      await trx('photo_index').where({ id }).update({ gen_faces: 1 });
+    });
   }
 
   async getNextBatch() {
@@ -370,85 +691,10 @@ class FaceWorker {
       .catch(() => []);
   }
 
-  async processOne(row) {
-    const id = row && row.id ? Number(row.id) : 0;
-    if (!id) return;
-
-    const fileHash = row.file_hash ? String(row.file_hash) : '';
-    if (!fileHash) {
-      await this.markIndexDone(id);
-      return;
-    }
-
-    const existed = await this.knex('photo_face2filehash')
-      .where({ file_hash: fileHash })
-      .first('id')
-      .catch(() => null);
-    if (existed && existed.id) {
-      await this.markIndexDone(id);
-      return;
-    }
-    const fullPath = path.join(String(row.path || ''), String(row.filename || ''));
-    if (!fullPath || !fs.existsSync(fullPath)) {
-      await this.markIndexDone(id);
-      return;
-    }
-
-    const type = row && row.type ? Number(row.type) : 0;
-    let imagePath = fullPath;
-    if (type === 2) {
-      try {
-        imagePath = await fileService.getTinyImgByPath(fullPath, undefined, { deferSlowIo: false, deferImages: false });
-      } catch (err) {
-        Logger.error(`❌  video thumbnail failed: ${fullPath}`, err);
-        await this.markIndexDone(id);
-        return;
-      }
-    }
-    if (!imagePath || !fs.existsSync(imagePath)) {
-      await this.markIndexDone(id);
-      return;
-    }
-    let faces = [];
-    try {
-      faces = await this.faceEngine.extractFaceFeatures(imagePath);
-    } catch (err) {
-      Logger.error(`❌  face feature extract failed: ${imagePath}`, err);
-      await this.markIndexDone(id);
-      return;
-    }
-    try {
-      await this.knex.transaction(async trx => {
-        const usedFaceIds = new Set();
-        for (const f of faces) {
-          const emb = f && f.feature ? f.feature : null;
-          if (!emb || emb.length !== 512) continue;
-          const box = f && f.box ? f.box : null;
-          if (!box) continue;
-          const quality = Number(f.qualityScore) || 0;
-          if (quality < MIN_QUALITY) continue;
-          const faceMeta = { qualityScore: quality };
-          const match = this.findBestPrototype(emb, faceMeta, usedFaceIds);
-          const matchFaceId = match ? Number(match.faceId) || 0 : 0;
-          const rootMatchFaceId = matchFaceId ? await this.getRootFaceId(trx, matchFaceId) : 0;
-          const faceId = match ? await this.assignToFace(trx, rootMatchFaceId || matchFaceId, emb, { qualityScore: quality }) : await this.createNewFace(trx, emb, { fileHash, quality });
-          if (!faceId) continue;
-          const rootId = matchFaceId ? rootMatchFaceId : await this.getRootFaceId(trx, faceId);
-          if (usedFaceIds.has(rootId)) continue;
-          usedFaceIds.add(rootId);
-          await this.insertFaceMapping(trx, fileHash, rootId, box);
-          const sampleFaceId = matchFaceId || rootId;
-          await this.upsertSample(trx, fileHash, sampleFaceId, emb, quality);
-        }
-        await trx('photo_index').where({ id }).update({ gen_faces: 1 });
-      });
-    } catch (err) {
-      Logger.error('❌  face DB write failed:', err);
-    }
-  }
-
   async maybeRunMaintenance(force) {
     if (!this.isRunning) return;
+    // 每次维护前刷新参数：调完「聚类严格度」后，重聚类/维护即刻用新值
+    await applyFaceTuning().catch(() => {});
     const now = Date.now();
     const dueByCount = this.processedImages >= MAINTENANCE_EVERY_IMAGES;
     const dueByTime = now - this.lastMaintenanceAt >= MAINTENANCE_EVERY_MS;
@@ -614,73 +860,60 @@ class FaceWorker {
       }
     }
 
-    pairs.sort((x, y) => Math.max(y.simBest, y.sim) - Math.max(x.simBest, x.sim));
-    const dropped = new Set();
-    let mergedCount = 0;
-
     const timeWindowMs = 24 * 60 * 60 * 1000;
-    const stage1Max = Math.max(0, Math.min(SECOND_MERGE_MAX, Math.floor(SECOND_MERGE_MAX * 0.4)));
     const stage1ProtoThresh = Math.max(0, SECOND_MERGE_THRESH * 0.92);
     const stage1BestThresh = Math.max(0, SECOND_MERGE_BEST_SAMPLE_THRESH * 0.96);
 
-    for (const p of pairs) {
-      if (mergedCount >= stage1Max) break;
-      const protoA = this.prototypes.get(p.a);
-      const protoB = this.prototypes.get(p.b);
-      if (!protoA || !protoB) continue;
-      const countA = Number(protoA.count) || 0;
-      const countB = Number(protoB.count) || 0;
-      if (countA > 2 || countB > 2) continue;
+    // ⭐ 2026-10-14 防链式合并：
+    // 原来是「按相似度排序后贪心合并」，A~B、B~C 会把 A/B/C 三个人并成一组
+    // （用户看到的「好多人的人脸混在了一起」很大一部分就是这么来的）。
+    // 现在交给 faceUtil.selectMergePairs：要求互为最近邻 + 本轮一对一匹配，
+    // 同一人物的碎片会在后续维护轮次里逐轮收敛，不会一轮串成一大团。
+    const forSelect = pairs.map(p => {
+      const countA = Number(this.prototypes.get(p.a)?.count) || 0;
+      const countB = Number(this.prototypes.get(p.b)?.count) || 0;
       const tA = createMsById.get(p.a) || 0;
       const tB = createMsById.get(p.b) || 0;
-      if (tA && tB && Math.abs(tA - tB) > timeWindowMs) continue;
-      const pass = p.sim >= stage1ProtoThresh || p.simBest >= stage1BestThresh;
-      if (!pass) continue;
+      const timeOk = !(tA && tB && Math.abs(tA - tB) > timeWindowMs);
+      return { a: p.a, b: p.b, sim: p.sim, simBest: p.simBest, countA, countB, timeOk };
+    });
 
-      const keepId = countA >= countB ? p.a : p.b;
-      const dropId = keepId === p.a ? p.b : p.a;
-      if (dropped.has(dropId) || dropped.has(keepId)) continue;
-      await this.mergeFaceInto(trx, dropId, keepId);
-      dropped.add(dropId);
-      mergedCount += 1;
+    const chosen = selectMergePairs(forSelect, {
+      limit: SECOND_MERGE_MAX,
+      requireMutual: SECOND_MERGE_MUTUAL,
+      tiers: [
+        {
+          // 档 1：两边都是小分组（<=2 张）+ 时间接近，阈值略放宽
+          name: 'small',
+          match: p => p.countA <= 2 && p.countB <= 2 && p.timeOk
+            && (p.sim >= stage1ProtoThresh || p.simBest >= stage1BestThresh),
+        },
+        {
+          // 档 2：常规（要求两边样本数达标）
+          name: 'normal',
+          match: p => p.countA >= SECOND_MERGE_MIN_FACE_COUNT
+            && p.countB >= SECOND_MERGE_MIN_FACE_COUNT
+            && (p.sim >= SECOND_MERGE_THRESH || p.simBest >= SECOND_MERGE_BEST_SAMPLE_THRESH),
+        },
+        {
+          // 档 3：严格（两个指标都要过 + 加码）
+          name: 'strict',
+          match: p => p.countA >= SECOND_MERGE_MIN_FACE_COUNT
+            && p.countB >= SECOND_MERGE_MIN_FACE_COUNT
+            && p.sim >= SECOND_MERGE_THRESH + 0.03
+            && p.simBest >= SECOND_MERGE_BEST_SAMPLE_THRESH + 0.03,
+        },
+      ],
+    });
+
+    if (chosen.length < pairs.length) {
+      Logger.info(
+        `[faceCluster] 二次合并：候选 ${pairs.length} 对 → 实际合并 ${chosen.length} 对` +
+        `（互为最近邻=${SECOND_MERGE_MUTUAL ? '开' : '关'}，上限 ${SECOND_MERGE_MAX}）`
+      );
     }
-
-    for (const p of pairs) {
-      if (mergedCount >= SECOND_MERGE_MAX) break;
-      const protoA = this.prototypes.get(p.a);
-      const protoB = this.prototypes.get(p.b);
-      if (!protoA || !protoB) continue;
-      const countA = Number(protoA.count) || 0;
-      const countB = Number(protoB.count) || 0;
-      if (countA < SECOND_MERGE_MIN_FACE_COUNT || countB < SECOND_MERGE_MIN_FACE_COUNT) continue;
-      const pass = p.sim >= SECOND_MERGE_THRESH || p.simBest >= SECOND_MERGE_BEST_SAMPLE_THRESH;
-      if (!pass) continue;
-
-      const keepId = countA >= countB ? p.a : p.b;
-      const dropId = keepId === p.a ? p.b : p.a;
-      if (dropped.has(dropId) || dropped.has(keepId)) continue;
-      await this.mergeFaceInto(trx, dropId, keepId);
-      dropped.add(dropId);
-      mergedCount += 1;
-    }
-
-    for (const p of pairs) {
-      if (mergedCount >= SECOND_MERGE_MAX) break;
-      const protoA = this.prototypes.get(p.a);
-      const protoB = this.prototypes.get(p.b);
-      if (!protoA || !protoB) continue;
-      const countA = Number(protoA.count) || 0;
-      const countB = Number(protoB.count) || 0;
-      if (countA < SECOND_MERGE_MIN_FACE_COUNT || countB < SECOND_MERGE_MIN_FACE_COUNT) continue;
-      const pass = p.sim >= SECOND_MERGE_THRESH + 0.03 && p.simBest >= SECOND_MERGE_BEST_SAMPLE_THRESH + 0.03;
-      if (!pass) continue;
-
-      const keepId = countA >= countB ? p.a : p.b;
-      const dropId = keepId === p.a ? p.b : p.a;
-      if (dropped.has(dropId) || dropped.has(keepId)) continue;
-      await this.mergeFaceInto(trx, dropId, keepId);
-      dropped.add(dropId);
-      mergedCount += 1;
+    for (const c of chosen) {
+      await this.mergeFaceInto(trx, c.dropId, c.keepId);
     }
   }
 
@@ -749,6 +982,13 @@ class FaceWorker {
 
     const protoFrom = this.prototypes.get(fromFaceId);
     const protoTo = this.prototypes.get(toFaceId);
+    // 实际去重照片数（同照片含双方人脸时 INSERT OR IGNORE 会去重）
+    const cntRow = await trx('photo_face2filehash')
+      .where({ face_id: toFaceId })
+      .countDistinct({ total: 'file_hash' })
+      .first()
+      .catch(() => null);
+    const realCount = cntRow && Number.isFinite(Number(cntRow.total)) ? Math.max(0, Number(cntRow.total) || 0) : toCount + fromCount;
     if (protoFrom && protoTo && protoFrom.vec && protoTo.vec) {
       const mixed = new Float32Array(512);
       const a = Math.max(1, Number(protoTo.count) || toCount || 1);
@@ -767,7 +1007,7 @@ class FaceWorker {
       this.topCountDirty = true;
       const update = {
         feature: float32ToBuffer(newVec),
-        face_count: toCount + fromCount,
+        face_count: realCount,
         proto_best_quality_score: mergedBestQ,
         proto_best_file_hash: mergedBestHash || null,
         update_time: trx.fn.now(),
@@ -779,7 +1019,7 @@ class FaceWorker {
         .catch(() => {});
     } else {
       const update = {
-        face_count: toCount + fromCount,
+        face_count: realCount,
         proto_best_quality_score: mergedBestQ,
         proto_best_file_hash: mergedBestHash || null,
         update_time: trx.fn.now(),
@@ -871,14 +1111,21 @@ class FaceWorker {
     return Number(faceId) || 0;
   }
 
+  /**
+   * 找最可信的原型。
+   *
+   * ⭐ 2026-10-14 防误合改造（用户报「好多人的人脸混在了一起」）：
+   * 1) 只维护「按根人脸去重的前二名」（另一个人的最高分）；
+   * 2) 最近原型必须满足 best >= req **且** 与第二名拉开 ASSIGN_MARGIN，
+   *    否则宁可新建一个人脸组 —— 两个人的原型都过阈值时不做二选一赌博；
+   * 3) 去掉了原来的「提早返回」：提早返回只看了部分候选，第二名还没扫到就下结论，
+   *    正是误合的来源之一。代价是每张脸多一次全量扫描（512 维点积），
+   *    相对单张 ~300ms 的检测耗时可以忽略。
+   */
   findBestPrototype(emb, faceMeta = null, excludeRootFaceIds = null) {
     const req = computeDynamicMatchThresh(faceMeta);
     const total = this.protoIds && this.protoIds.length ? this.protoIds.length : this.prototypes.size;
     const usePrefilter = total >= 400 && this.protoBucketToIdxSet && this.protoBucketToIdxSet.size > 0;
-    const confidentMargin = 0.05;
-
-    let bestId = 0;
-    let bestSim = -1;
 
     const all = this.protoIds && this.protoIds.length ? this.protoIds.length : 0;
     if (!this.scanMarkArr || this.scanMarkArr.length !== all) {
@@ -895,6 +1142,9 @@ class FaceWorker {
     const stamp = this.scanMarkStamp;
     const scanMarkArr = this.scanMarkArr;
 
+    // 前二名（rootId 去重）
+    const topTwo = [];
+
     const scanIndices = (idxs, markVisited) => {
       for (const idx of idxs) {
         if (scanMarkArr && scanMarkArr[idx] === stamp) continue;
@@ -907,17 +1157,13 @@ class FaceWorker {
         if (!v) continue;
         let s = 0;
         for (let i = 0; i < 512; i++) s += emb[i] * v[i];
-        if (s > bestSim) {
-          bestSim = s;
-          bestId = id;
-        }
+        pushTopRoot(topTwo, rootId, s);
       }
     };
 
     if (this.topCountDirty) this.rebuildTopCountCache();
     if (this.topCountIdxs && this.topCountIdxs.length > 0) {
       scanIndices(this.topCountIdxs, true);
-      if (bestId && bestSim >= req + confidentMargin) return { faceId: bestId, sim: bestSim, req };
     }
 
     if (usePrefilter) {
@@ -940,8 +1186,8 @@ class FaceWorker {
       }
 
       if (candCount > 0 && candCount <= maxCand) {
+        // 只用来提前「登记」一批高分候选，【不再提早返回】
         for (const set of candSets) scanIndices(set, true);
-        if (bestId && bestSim >= req + 0.02) return { faceId: bestId, sim: bestSim, req };
       }
     }
 
@@ -956,10 +1202,7 @@ class FaceWorker {
         if (!v) continue;
         let s = 0;
         for (let i = 0; i < 512; i++) s += emb[i] * v[i];
-        if (s > bestSim) {
-          bestSim = s;
-          bestId = id;
-        }
+        pushTopRoot(topTwo, rootId, s);
       }
     } else {
       for (const [id, p] of this.prototypes.entries()) {
@@ -967,16 +1210,34 @@ class FaceWorker {
         const rootId = this.getRootFaceIdFromPrototypes(id);
         if (excludeRootFaceIds && excludeRootFaceIds.has(rootId)) continue;
         const sim = dot(emb, p.vec);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestId = id;
-        }
+        pushTopRoot(topTwo, rootId, sim);
       }
     }
 
-    // console.log('最低相似度要求', req, '原型数量', this.prototypes.size);
-    if (bestId && bestSim >= req) return { faceId: bestId, sim: bestSim, req };
-    return null;
+    const best = topTwo[0] || null;
+    if (!best) return null;
+    const second = topTwo[1] || null;
+    const decision = decideFaceAssignment({
+      bestSim: best.sim,
+      secondSim: second ? second.sim : null,
+      req,
+      margin: ASSIGN_MARGIN,
+    });
+    if (!decision.accepted) {
+      if (decision.ambiguous) {
+        this.assignAmbiguousCount = (this.assignAmbiguousCount || 0) + 1;
+        // 每 200 次打一行，避免刷屏；用于线上判断「是不是阈值太松/太严」
+        if (this.assignAmbiguousCount % 200 === 0) {
+          Logger.info(
+            `[faceCluster] 认领被拒 x${this.assignAmbiguousCount}（最近两个人脸组难分伯仲：` +
+            `best=${best.sim.toFixed(4)} second=${second ? second.sim.toFixed(4) : 'n/a'} ` +
+            `gap=${Number.isFinite(decision.gap) ? decision.gap.toFixed(4) : 'n/a'} < margin=${ASSIGN_MARGIN} req=${req.toFixed(4)}）`
+          );
+        }
+      }
+      return null;
+    }
+    return { faceId: best.rootId, sim: best.sim, req };
   }
 
   async createNewFace(trx, emb, meta = null) {
@@ -1121,20 +1382,65 @@ class FaceWorker {
   }
 }
 
-const worker = new FaceWorker();
+/**
+ * ⭐ 2026-10-13 推理线程入口（role=infer）：
+ * 同一文件被 worker_threads 加载时只做「检测+特征提取」，不碰 DB / 聚类。
+ * 每个线程有自己的人脸引擎实例（ONNX 会话不可跨线程共享）。
+ */
+async function startInferThread() {
+  const { parentPort } = require('worker_threads');
+  if (!parentPort) return;
+  let engine = null;
+  try {
+    engine = await getFaceEngine();
+  } catch (e) {
+    Logger.error('❌ infer thread engine init failed:', e);
+    try {
+      parentPort.postMessage({ type: 'ready', ok: false, error: String((e && e.message) || e) });
+    } catch (_) {}
+    process.exit(1);
+    return;
+  }
+  parentPort.on('message', async msg => {
+    if (!msg || typeof msg.id !== 'number') return;
+    try {
+      const faces = await engine.extractFaceFeatures(msg.imagePath);
+      const out = (faces || []).map(f => ({
+        box: f.box,
+        qualityScore: f.qualityScore,
+        feature: Array.from(f.feature), // 512 维 float32（普通数组走结构化克隆）
+      }));
+      parentPort.postMessage({ id: msg.id, ok: true, faces: out });
+    } catch (e) {
+      try {
+        parentPort.postMessage({ id: msg.id, ok: false, error: String((e && e.message) || e) });
+      } catch (_) {}
+    }
+  });
+  parentPort.postMessage({ type: 'ready', ok: true });
+}
 
-process.on('message', message => {
-  if (!message || !message.type) return;
-  if (message.type === 'stop') worker.stop();
-  if (message.type === 'maintenance') worker.maybeRunMaintenance(true);
-});
+if (!isMainThread && threadWorkerData && threadWorkerData.role === 'infer') {
+  startInferThread();
+} else {
+  const worker = new FaceWorker();
 
-process.on('uncaughtException', err => {
-  Logger.error('❌ face worker uncaughtException', err);
-  process.exit(0);
-});
+  process.on('message', message => {
+    if (!message || !message.type) return;
+    if (message.type === 'stop') {
+      worker.stop();
+      worker.terminateInferThreads();
+    }
+    if (message.type === 'maintenance') worker.maybeRunMaintenance(true);
+  });
 
-process.on('unhandledRejection', reason => {
-  Logger.error('❌ face worker unhandledRejection', reason);
-  process.exit(0);
-});
+  process.on('uncaughtException', err => {
+    Logger.error('❌ face worker uncaughtException', err);
+    process.exit(0);
+  });
+
+  process.on('unhandledRejection', reason => {
+    Logger.error('❌ face worker unhandledRejection', reason);
+    process.exit(0);
+  });
+}

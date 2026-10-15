@@ -107,6 +107,13 @@ class CurrentUserController extends GetxController {
       (_current.value?.type == 'super_admin' ||
       _current.value?.type == 'admin');
 
+  /// 超级管理员：**只有** `super_admin`（2026-10-12 新增）。
+  ///
+  /// 影视模块的设置类入口（影视库管理 / 来源设置 / 转码 / 刮削 / 字幕提取）
+  /// 用这个而不是 [isAdmin] —— 管理员角色也一并挡住，与服务端
+  /// `requireSuperAdmin` 保持同一口径。
+  bool get isSuperAdmin => _current.value?.type == 'super_admin';
+
   void setUser(CurrentUser user) {
     _current.value = user;
     CacheManager().setJson(CacheKeys.userInfo, {

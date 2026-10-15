@@ -165,7 +165,10 @@ class PhotoTimeLineService {
       query.join('photo_places2filehash as ppf', function () {
         this.on('photo_index.file_hash', '=', 'ppf.file_hash');
       });
-      query.where('ppf.place_name', placeName);
+      // ⭐ 2026-10-13 主场景或次场景命中都算（误判照片也有机会被翻出来）
+      query.where(function () {
+        this.where('ppf.place_name', placeName).orWhere('ppf.alt_place_name', placeName);
+      });
     }
 
     // 收藏筛选
@@ -237,7 +240,11 @@ class PhotoTimeLineService {
           // 用 LIKE 而非等值，让「海」能同时命中「海滩 / 海岸 / 海滨小屋」。
           // 场景识别未开启时 photo_places2filehash 为空 ⇒ 子查询自然返回空，不会误伤结果。
           if (aiPlaceEnable === '1') {
-            builder.orWhereRaw('photo_index.file_hash IN (SELECT file_hash FROM photo_places2filehash WHERE place_name LIKE ?)', [`%${search}%`]);
+            // ⭐ 2026-10-13 次可能场景（alt_place_name）也参与搜索
+            builder.orWhereRaw(
+              'photo_index.file_hash IN (SELECT file_hash FROM photo_places2filehash WHERE place_name LIKE ? OR alt_place_name LIKE ?)',
+              [`%${search}%`, `%${search}%`]
+            );
           }
         });
       }

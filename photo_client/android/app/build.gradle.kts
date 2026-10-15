@@ -37,6 +37,18 @@ android {
         versionName = flutter.versionName
     }
 
+    // 只留 arm64-v8a：flutter 侧只 AOT 编了 arm64（见 tool/build_photo_android.bat
+    // 的 --target-platform），其余 ABI 剩下的全是第三方预编译 .so（pdfium / ffmpeg），
+    // 装到对应设备上会因缺 libflutter.so 运行期崩，不如直接剔掉：既不误导安装，
+    // 又省掉约 100MB 未压缩体积。
+    // 实测 defaultConfig.ndk.abiFilters 对 flutter 工程无效，
+    // packaging.jniLibs.excludes 才真正作用在打包阶段。
+    packaging {
+        jniLibs {
+            excludes += listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**")
+        }
+    }
+
     signingConfigs {
         create("release") {
             keyAlias = keystoreProperties["keyAlias"] as String?

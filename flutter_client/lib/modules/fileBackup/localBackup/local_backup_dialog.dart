@@ -216,7 +216,7 @@ class _LocalBackupDialogState extends State<_LocalBackupDialog> {
                 ),
                 const SizedBox(height: 12),
                 SwitchListTile(
-                  activeColor: Theme.of(context).colorScheme.primary,
+                  activeThumbColor: Theme.of(context).colorScheme.onPrimary,
                   contentPadding: EdgeInsets.zero,
                   title: Text('local_backup_auto_backup'.tr),
                   value: _enabled,
@@ -229,7 +229,7 @@ class _LocalBackupDialogState extends State<_LocalBackupDialog> {
                 if (_enabled) ...[
                   const SizedBox(height: 12),
                   SwitchListTile(
-                    activeColor: Theme.of(context).colorScheme.primary,
+                    activeThumbColor: Theme.of(context).colorScheme.onPrimary,
                     contentPadding: EdgeInsets.zero,
                     title: Text('local_backup_realtime'.tr),
                     value: _realtime,

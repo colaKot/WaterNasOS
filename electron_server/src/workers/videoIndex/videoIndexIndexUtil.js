@@ -5,7 +5,7 @@ const path = require('path');
 const FileUtil = require('../../utils/fileUtil');
 const VideoFfprobeUtil = require('../../utils/videoFfprobeUtil');
 const { readAndParseNfo } = require('./nfoParser');
-const { getFirstLetter, getNaturalSortKey, isSeasonFolderName, parseEpisodeFromName, parseSeasonNumberFromName, normalizeNameForNfoGuess, isSeasonFolderOfShow } = require('./videoIndexUtil');
+const { getFirstLetter, getNaturalSortKey, isSeasonFolderName, parseEpisodeFromName, parseSeasonNumberFromName, normalizeNameForNfoGuess, isSeasonFolderOfShow, parseJpTagsFromName } = require('./videoIndexUtil');
 
 function _isImageExt(ext) {
   const e = String(ext || '').toLowerCase();
@@ -496,15 +496,115 @@ function _withNaturalName(row) {
   return row;
 }
 
+/**
+ * ⭐ 解析一行视频的日本片标记（文件名 + 所在目录名，取并集，2026-10-12）。
+ *
+ * 标记(`-UC`/`-U`/`-C`)可能写在文件名里（`SNOS-403-UC.mp4`），也可能**只写在目录名里**
+ * （`SOE-992-U/SOE-992.mkv`）—— 用户反馈「之前做的影片没有徽章」就是后者，
+ * 只解析文件名会漏掉（实测库里 10 条）。
+ *
+ * ⚠️ 目录名不能整串丢给 parseJpTagsFromName：它在**结尾**识别标记，而目录名
+ *    结尾常常是片名（`SNIS-493 渴望被痴汉侵犯的葵`）。这里只取**最后一段路径**
+ *    （即视频所在目录名）再解析，与文件名解析的语义保持一致。
+ */
+function _parseJpTagsForRow(dirPath, filename) {
+  const fileTags = parseJpTagsFromName(filename ? String(filename) : '');
+  const dir = String(dirPath || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+  const dirTags = dir ? parseJpTagsFromName(dir) : { uncensored: false, chineseSub: false };
+  return {
+    uncensored: fileTags.uncensored || dirTags.uncensored,
+    chineseSub: fileTags.chineseSub || dirTags.chineseSub,
+  };
+}
+
+/**
+ * ⭐ 补日本片标记（无码 / 中文字幕，2026-10-12）。
+ *
+ * 和 `_withNaturalName` 一样挂在这里：**所有视频写库都必经 upsertIndex**
+ * （8 处构造点、字段名不统一），单点收口就不会漏。
+ *
+ * 解析依据是**原始文件名 + 所在目录名**（不是 nfo_name）。
+ */
+function _withJpTags(row) {
+  if (!row || typeof row !== 'object') return row;
+  const filename = row.filename ? String(row.filename).trim() : '';
+  const dirPath = row.path ? String(row.path).trim() : '';
+  if (!filename && !dirPath) return row;
+  const tags = _parseJpTagsForRow(dirPath, filename);
+  row.jp_uncensored = tags.uncensored ? 1 : 0;
+  row.jp_chinese_sub = tags.chineseSub ? 1 : 0;
+  return row;
+}
+
 async function upsertIndex(knex, row) {
   if (!row || !row.path || !row.filename) return 0;
   _withNaturalName(row);
+  _withJpTags(row);
   await knex('video_index').insert(row).onConflict(['path', 'filename']).merge(row);
   const existed = await knex('video_index')
     .where({ path: row.path, filename: row.filename })
     .first('id')
     .catch(() => null);
   return existed && existed.id ? Number(existed.id || 0) || 0 : 0;
+}
+
+/**
+ * ⭐ 回填某影视库的日本片标记（2026-10-12）。
+ *
+ * 背景：`jp_uncensored` / `jp_chinese_sub` 是后加的两列，老库补列后整列都是 0；
+ * 且开关 `video_library.jp_movie` 只是"是否展示"，与是否解析无关。
+ * 所以用户打开「日本电影」开关时，需要用**已入库的文件名**把两列补齐，
+ * 否则必须整库重扫才出徽章（重扫几万条太慢）。
+ *
+ * 只读 `path`/`filename` 重算，不碰其它任何列；只更新值有变化的行，避免全表 fsync。
+ * @returns {Promise<number>} 实际更新的行数
+ */
+async function refreshJpTagsForLibrary(knex, libraryId) {
+  const libId = Number(libraryId || 0) || 0;
+  if (!libId) return 0;
+
+  const sources = await knex('video_source').where({ library_id: libId }).select('path').catch(() => []);
+  const roots = (sources || []).map(r => (r && r.path ? String(r.path).trim() : '')).filter(Boolean);
+  if (!roots.length) return 0;
+
+  let updated = 0;
+  for (const root of roots) {
+    const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+    // ⚠️ 纯 LIKE 前缀在路径含 `_`/`%` 时会**多匹配**（不会漏），
+    //    多扫到的行只是重算一次标记、值相同则跳过，无副作用 ⇒ 不额外做转义。
+    const rows = await knex('video_index')
+      .where(b => b.where('path', root).orWhere('path', 'like', `${prefix}%`))
+      .select('id', 'path', 'filename', 'jp_uncensored', 'jp_chinese_sub')
+      .catch(() => []);
+
+    // 按 (u,c) 四种组合归桶，每桶一条批量 UPDATE —— 比逐行 update 快两个数量级。
+    const buckets = { '0,0': [], '1,0': [], '0,1': [], '1,1': [] };
+    for (const r of rows || []) {
+      const tags = _parseJpTagsForRow(
+        r && r.path ? String(r.path) : '',
+        r && r.filename ? String(r.filename) : ''
+      );
+      const u = tags.uncensored ? 1 : 0;
+      const c = tags.chineseSub ? 1 : 0;
+      if (Number(r.jp_uncensored) === u && Number(r.jp_chinese_sub) === c) continue;
+      buckets[`${u},${c}`].push(Number(r.id) || 0);
+    }
+    for (const key of Object.keys(buckets)) {
+      const ids = buckets[key].filter(v => v > 0);
+      if (!ids.length) continue;
+      const [u, c] = key.split(',').map(Number);
+      // SQLite 变量上限：分片 500 个 id 一批提交。
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        await knex('video_index')
+          .whereIn('id', chunk)
+          .update({ jp_uncensored: u, jp_chinese_sub: c })
+          .catch(() => {});
+        updated += chunk.length;
+      }
+    }
+  }
+  return updated;
 }
 
 /* ============================================================================
@@ -1565,6 +1665,7 @@ module.exports = {
   indexEpisodeFile,
   indexMovieFile,
   indexImageFile,
+  refreshJpTagsForLibrary,
   buildImageIndexRow,
   upsertImageIndex,
   upsertImageIndexBatch,

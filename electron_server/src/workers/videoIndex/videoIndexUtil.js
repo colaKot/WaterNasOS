@@ -271,11 +271,68 @@ function parseEpisodeFromName(filename) {
   return null;
 }
 
+/* ============================================================================
+ * 日本片文件名标记（2026-10-12）
+ *
+ * 需求：`SNOS-403-UC` 这类文件名要能识别出
+ *   U  = 无码（uncensored）
+ *   C  = 中文字幕
+ *   UC = 两者都有
+ * 并且**刮削搜索时必须把标记剔掉** —— 用户反馈「SNOS-403-UC 没识别上来」，
+ * 根因就是整串连标记一起丢给 TMDB，自然匹配不到。
+ *
+ * ⚠️ 只在**结尾**识别，且要求标记前有分隔符（- _ . 空格 括号），
+ *    再多看一段就停，避免误伤片名中间的普通字母。
+ * ==========================================================================*/
+const _JP_SEP_SRC = '[\\s._\\-\\[\\]()（）【】]+';
+const _JP_UNCENSORED_TOKENS = new Set(['u', 'uc', 'uncensored', 'uncen', 'leak', 'leaked', '无码']);
+const _JP_CHINESE_SUB_TOKENS = new Set(['c', 'uc', 'ch', 'chs', 'cht', 'chi', 'sub', 'subs', '中字', '中文', '中文字幕']);
+
+/**
+ * 从文件名解析日本片标记。
+ * @returns {{uncensored: boolean, chineseSub: boolean}}
+ */
+function parseJpTagsFromName(input) {
+  const out = { uncensored: false, chineseSub: false };
+  const base = String(input || '').replace(/\.[^.]{1,6}$/, '').trim();
+  if (!base) return out;
+  const parts = base.split(new RegExp(_JP_SEP_SRC)).filter(Boolean);
+  const start = Math.max(0, parts.length - 3);
+  for (let i = parts.length - 1; i >= start; i -= 1) {
+    const t = parts[i].toLowerCase();
+    const isU = _JP_UNCENSORED_TOKENS.has(t);
+    const isC = _JP_CHINESE_SUB_TOKENS.has(t);
+    if (!isU && !isC) break;
+    if (isU) out.uncensored = true;
+    if (isC) out.chineseSub = true;
+  }
+  return out;
+}
+
+/** 剥掉结尾的日本片标记，返回干净片名（供刮削搜索用）。 */
+function stripJpTagsFromName(input) {
+  let out = String(input || '');
+  if (!out) return out;
+  const re = new RegExp(
+    `(?:${_JP_SEP_SRC})(?:u|uc|c|ch|chs|cht|chi|uncensored|uncen|leak|leaked|sub|subs|中字|中文|中文字幕)$`,
+    'i'
+  );
+  for (let i = 0; i < 3; i += 1) {
+    const m = out.match(re);
+    if (!m) break;
+    out = out.slice(0, out.length - m[0].length);
+  }
+  return out.trim();
+}
+
 function normalizeNameForNfoGuess(name) {
-  const s = String(name || '').trim();
-  if (!s) return '';
-  return s
-    .replace(/\.[^.]+$/, '')
+  let pre = String(name || '').trim();
+  if (!pre) return '';
+  pre = pre.replace(/\.[^.]+$/, '');
+  // ⭐ 先剔掉日本片标记后缀（-UC / -U / -C …）再进 TMDB 搜索，
+  //    否则 `SNOS-403-UC` 原样丢过去匹配不到任何条目。
+  pre = stripJpTagsFromName(pre);
+  return pre
     .replace(/S(\d{1,4})\s*E(\d{1,4})/gi, '')
     .replace(/\b(\d{1,4})x(\d{1,4})\b/gi, '')
     .replace(/第\s*\d{1,4}\s*[集话]/g, '')
@@ -602,6 +659,8 @@ module.exports = {
   parseSeasonNumberFromName,
   parseEpisodeFromName,
   normalizeNameForNfoGuess,
+  parseJpTagsFromName,
+  stripJpTagsFromName,
   stripSeasonPatternFromName: _stripSeasonPattern,
   isSpecialSeasonFolderName: _isSpecialSeasonFolderName,
   isSeasonFolderOfShow,

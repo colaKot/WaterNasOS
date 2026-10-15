@@ -420,7 +420,7 @@ class VideoItemContextMenuRegion extends StatelessWidget {
       );
     }
 
-    final isAdmin = CurrentUserController.instance.isAdmin;
+    final isAdmin = CurrentUserController.instance.isSuperAdmin;
     if (isAdmin) {
       entries.add(const MenuDivider());
       entries.addAll([

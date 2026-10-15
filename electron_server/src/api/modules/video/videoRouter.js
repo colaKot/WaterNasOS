@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateJWT, requireAdmin } = require('../../middleware/authMiddleware');
+const { authenticateJWT, requireAdmin, requireSuperAdmin } = require('../../middleware/authMiddleware');
 const videoSourceController = require('./source/videoSourceController');
 const videoLibraryController = require('./library/videoLibraryController');
 const videoHomeController = require('./home/videoHomeController');
@@ -24,35 +24,40 @@ function createFileViewHandler(sourceType, action) {
 
 // 影视库：列表所有登录用户可读（左侧栏需要），增删改仅管理员
 router.post('/library/list', authenticateJWT, videoLibraryController.listLibraries);
-router.post('/library/add', authenticateJWT, requireAdmin, videoLibraryController.addLibrary);
-router.post('/library/rename/:id', authenticateJWT, requireAdmin, videoLibraryController.renameLibrary);
-router.post('/library/show_in_home/:id', authenticateJWT, requireAdmin, videoLibraryController.setShowInHome);
-router.post('/library/audio_normalize/:id', authenticateJWT, requireAdmin, videoLibraryController.setAudioNormalize);
-router.post('/library/delete/:id', authenticateJWT, requireAdmin, videoLibraryController.deleteLibrary);
+router.post('/library/reorder', authenticateJWT, requireSuperAdmin, videoLibraryController.reorderLibraries);
+router.post('/library/add', authenticateJWT, requireSuperAdmin, videoLibraryController.addLibrary);
+router.post('/library/rename/:id', authenticateJWT, requireSuperAdmin, videoLibraryController.renameLibrary);
+router.post('/library/show_in_home/:id', authenticateJWT, requireSuperAdmin, videoLibraryController.setShowInHome);
+router.post('/library/audio_normalize/:id', authenticateJWT, requireSuperAdmin, videoLibraryController.setAudioNormalize);
+// ⭐ 日本电影库开关（2026-10-12）：开启后列表显示「中/无码」徽章并开放对应筛选
+router.post('/library/jp_movie/:id', authenticateJWT, requireSuperAdmin, videoLibraryController.setJpMovie);
+router.post('/library/delete/:id', authenticateJWT, requireSuperAdmin, videoLibraryController.deleteLibrary);
 
-router.post('/source/list', authenticateJWT, requireAdmin, videoSourceController.listSources);
-router.post('/source/add', authenticateJWT, requireAdmin, videoSourceController.addSource);
-router.post('/source/delete', authenticateJWT, requireAdmin, videoSourceController.deleteSource);
-router.post('/source/update/:id', authenticateJWT, requireAdmin, videoSourceController.updateSource);
+router.post('/source/list', authenticateJWT, requireSuperAdmin, videoSourceController.listSources);
+router.post('/source/add', authenticateJWT, requireSuperAdmin, videoSourceController.addSource);
+router.post('/source/delete', authenticateJWT, requireSuperAdmin, videoSourceController.deleteSource);
+router.post('/source/update/:id', authenticateJWT, requireSuperAdmin, videoSourceController.updateSource);
 // 注意：来源的影视库类型创建后不可修改，原 /source/media_type/:id 已移除
-router.post('/source/match_nfo/:id', authenticateJWT, requireAdmin, videoSourceController.updateMatchNfo);
-router.post('/source/relocate/:id', authenticateJWT, requireAdmin, videoSourceController.relocateSource);
-router.post('/source/scan', authenticateJWT, requireAdmin, videoSourceController.scanSource);
-router.post('/source/scan_index', authenticateJWT, requireAdmin, videoSourceController.scanIndex);
+router.post('/source/match_nfo/:id', authenticateJWT, requireSuperAdmin, videoSourceController.updateMatchNfo);
+router.post('/source/relocate/:id', authenticateJWT, requireSuperAdmin, videoSourceController.relocateSource);
+router.post('/source/scan', authenticateJWT, requireSuperAdmin, videoSourceController.scanSource);
+router.post('/source/scan_index', authenticateJWT, requireSuperAdmin, videoSourceController.scanIndex);
 
-router.post('/getTmdbConfig', authenticateJWT, requireAdmin, videoConfigController.getTmdbConfig);
-router.post('/setTmdbConfig', authenticateJWT, requireAdmin, videoConfigController.setTmdbConfig);
-router.post('/getTranscodeConfig', authenticateJWT, requireAdmin, videoConfigController.getTranscodeConfig);
-router.post('/setTranscodeConfig', authenticateJWT, requireAdmin, videoConfigController.setTranscodeConfig);
-router.post('/getSubtitleConfig', authenticateJWT, requireAdmin, videoConfigController.getSubtitleConfig);
-router.post('/setSubtitleConfig', authenticateJWT, requireAdmin, videoConfigController.setSubtitleConfig);
+router.post('/getTmdbConfig', authenticateJWT, requireSuperAdmin, videoConfigController.getTmdbConfig);
+router.post('/setTmdbConfig', authenticateJWT, requireSuperAdmin, videoConfigController.setTmdbConfig);
+router.post('/getTranscodeConfig', authenticateJWT, requireSuperAdmin, videoConfigController.getTranscodeConfig);
+router.post('/setTranscodeConfig', authenticateJWT, requireSuperAdmin, videoConfigController.setTranscodeConfig);
+router.post('/getSubtitleConfig', authenticateJWT, requireSuperAdmin, videoConfigController.getSubtitleConfig);
+router.post('/setSubtitleConfig', authenticateJWT, requireSuperAdmin, videoConfigController.setSubtitleConfig);
 // 默认播放画质：读取对所有登录用户开放（子账号的播放端也要遵守该默认值），写入仅管理员
 router.post('/getPlayQuality', authenticateJWT, videoConfigController.getPlayQuality);
-router.post('/setPlayQuality', authenticateJWT, requireAdmin, videoConfigController.setPlayQuality);
+// ⭐ 不加 requireAdmin（2026-10-12）：播放设置是**每个用户自己的**偏好，
+//    子账号也要能设自己的默认画质；管理员写入时落 uid=0，自动成为全局默认。
+router.post('/setPlayQuality', authenticateJWT, videoConfigController.setPlayQuality);
 
 router.post('/tmdb/search', authenticateJWT, videoTmdbController.search);
-router.post('/scrape/start', authenticateJWT, requireAdmin, videoScrapeController.start);
-router.post('/scrape/cleanup', authenticateJWT, requireAdmin, videoScrapeController.cleanup);
+router.post('/scrape/start', authenticateJWT, requireSuperAdmin, videoScrapeController.start);
+router.post('/scrape/cleanup', authenticateJWT, requireSuperAdmin, videoScrapeController.cleanup);
 
 router.post('/home/data', authenticateJWT, videoHomeController.getHomeData);
 
@@ -96,6 +101,9 @@ router.get('/discContents/thumb', authenticateJWT, videoDetailController.getDisc
 router.post('/detail/open_skip/set', authenticateJWT, requireAdmin, videoDetailController.setOpenSkip);
 router.get('/person/image', authenticateJWT, videoDetailController.getPersonImage);
 router.get('/poster/image', authenticateJWT, videoDetailController.getPosterImage);
+// ⭐ 日本片封面代理（2026-10-12）：日文站点图片有防盗链，客户端裸连 403，
+//    改由服务端按番号抓取 + 缓存后回吐（与 /poster/image 不同，这里没有 tmdb_id 可用）。
+router.get('/jav/cover', authenticateJWT, videoTmdbController.javCover);
 router.post('/file_view/list', authenticateJWT, createFileViewHandler('video', 'list'));
 router.post('/file_view/search', authenticateJWT, createFileViewHandler('video', 'globalSearch'));
 

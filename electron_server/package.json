@@ -1,6 +1,6 @@
 {
   "name": "nascab_os_server",
-  "version": "1.2.4",
+  "version": "1.0.0",
   "description": "WaterNasOSServer",
   "main": "src/main_nascab_os.js",
   "isDocker": false,

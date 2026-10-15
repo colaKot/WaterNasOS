@@ -26,14 +26,17 @@ class _WizardStepDevice extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        _deviceCard(
-          context,
-          icon: Icons.computer_outlined,
-          title: 'sync_current_device'.tr,
-          name: ctrl.deviceName,
-          subtitle: 'sync_current_device_desc'.tr,
-          color: scheme.primary,
-          badge: 'sync_ready'.tr,
+        // 主机名异步解析，包一层 Obx 让解析完成后自动刷新
+        Obx(
+          () => _deviceCard(
+            context,
+            icon: Icons.computer_outlined,
+            title: 'sync_current_device'.tr,
+            name: ctrl.deviceName,
+            subtitle: 'sync_current_device_desc'.tr,
+            color: scheme.primary,
+            badge: 'sync_ready'.tr,
+          ),
         ),
         const SizedBox(height: 12),
         _deviceCard(

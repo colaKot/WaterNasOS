@@ -180,6 +180,21 @@ class LoginView extends GetView<LoginController> {
                       final showOnlyPairCode =
                           controller.showPairCodeInput.value &&
                           controller.connectedHostName.value.isEmpty;
+                      // 自动登录中：显示转圈，不闪登录表单
+                      if (controller.autoLoginChecking.value) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 48),
+                          child: Center(
+                            child: SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.6,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -234,7 +249,50 @@ class LoginView extends GetView<LoginController> {
                               },
                             ),
                             const SizedBox(height: 12),
-                            if (!controller.isCompanySite.value)
+                            // web：「记住登录状态」开关（默认不勾选）+ 忘记密码；
+                            // 原生端维持原样（只显示忘记密码，右对齐）
+                            if (kIsWeb)
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: Checkbox(
+                                      value: controller.rememberLogin.value,
+                                      onChanged: (v) =>
+                                          controller.rememberLogin.value =
+                                              v ?? false,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  GestureDetector(
+                                    onTap: () =>
+                                        controller.rememberLogin.value =
+                                            !controller.rememberLogin.value,
+                                    child: Text(
+                                      'auth_remember_login'.tr,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.8),
+                                      ),
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (!controller.isCompanySite.value)
+                                    GestureDetector(
+                                      onTap: () => controller.goToRecover(),
+                                      child: Text(
+                                        'auth_forgot_password'.tr,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              )
+                            else if (!controller.isCompanySite.value)
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: GestureDetector(

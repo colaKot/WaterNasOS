@@ -10,6 +10,7 @@ import '../../utils/toast_util.dart';
 import '../../utils/user_agent_util.dart';
 import '../languages/language_service.dart';
 import '../routes/app_routes.dart';
+import '../../modules/auth/service/server_storage_service.dart';
 import 'api_controller.dart';
 import 'api_error_localizer.dart';
 import 'http_client_factory.dart'
@@ -35,8 +36,22 @@ abstract class BaseApiService {
   static const int _failCountDialogThreshold = 2;
   /// 网络异常对话框是否正在显示
   static bool _networkIssueDialogShowing = false;
+  /// 本次进程生命周期内是否已弹出过网络异常对话框（弹出过一次就不再弹）
+  static bool _networkIssueDialogEverShown = false;
   /// 用于取消已显示的对话框（当请求恢复时）
   static Completer<void>? _networkIssueDialogDismissCompleter;
+
+  /// 本地是否已添加过服务器。
+  ///
+  /// 没添加服务器时请求必然全部失败（服务器列表页 / 添加服务器页），
+  /// 这时候弹「网络连接异常」只会挡住用户操作，毫无意义。
+  static bool _hasAnySavedServer() {
+    try {
+      return ServerStorageService.loadServers().isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// 创建HTTP客户端，区分平台处理
   /// Web端使用标准http.Client，其他平台使用支持自签名证书的客户端
@@ -616,7 +631,13 @@ abstract class BaseApiService {
   // ── 网络异常弹窗逻辑 ──
 
   /// 请求最终失败时调用，累计失败计数并尝试弹出切换通道提示。
+  ///
+  /// 两条限制（2026-10-12 用户要求）：
+  ///   ① 本地没有添加任何服务器时不弹 —— 请求注定失败，弹窗只会挡住添加服务器；
+  ///   ② 每次进程运行最多只弹一次 —— 反复弹会让用户没法操作（尤其添加服务器时）。
   static void _onRequestFailed() {
+    if (!_hasAnySavedServer()) return;
+    if (_networkIssueDialogEverShown) return;
     _consecutiveFailCount++;
     if (_consecutiveFailCount >= _failCountDialogThreshold &&
         !_networkIssueDialogShowing) {
@@ -638,9 +659,10 @@ abstract class BaseApiService {
     }
   }
 
-  /// 显示「网络似乎出现问题」对话框（全局去重，仅允许一个实例）。
+  /// 显示「网络似乎出现问题」对话框（全局去重，仅允许一个实例，每次运行最多一次）。
   static void _showNetworkIssueDialog() {
     _networkIssueDialogShowing = true;
+    _networkIssueDialogEverShown = true;
     _networkIssueDialogDismissCompleter = Completer<void>();
 
     final dismissFuture = _networkIssueDialogDismissCompleter!.future;

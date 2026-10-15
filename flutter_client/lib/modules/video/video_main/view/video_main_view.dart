@@ -220,6 +220,10 @@ class VideoMainView extends StatelessWidget {
             if (key == 'settings.other') {
               return const VideoOtherSettingsView();
             }
+            // 普通用户的设置入口：只有播放设置（默认画质 / 音频降混）
+            if (key == 'settings.playback') {
+              return const VideoOtherSettingsView(onlyPlayback: true);
+            }
             return Center(child: Text('not_implemented_yet'.tr));
           }),
         );

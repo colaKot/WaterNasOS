@@ -27,6 +27,19 @@ class AiScenesController extends GetxController {
   final TextEditingController searchController = TextEditingController();
   Timer? _searchDebounce;
 
+  /// ---- 语义搜索状态（/api/photo/place/search）----
+  /// 服务端按相关度返回的相册原名顺序；本地列表按它重排，封面/隐藏状态沿用原条目。
+  final RxList<String> searchOrder = <String>[].obs;
+  /// 已识别的场景标签，用于给用户看「已识别：日落 · 海滩」
+  final RxList<String> searchTags = <String>[].obs;
+  /// 词表没覆盖到的片段，用于提示「没听懂：xxx」
+  final RxList<String> searchUnmatched = <String>[].obs;
+  /// 是否走了语义解析（false = 退回标签名子串）
+  final RxBool searchSemantic = false.obs;
+  final RxBool isSearching = false.obs;
+  /// 竞态保护：只接受最后一次请求的响应
+  int _searchSeq = 0;
+
   final ScrollController scrollController = ScrollController();
 
   @override
@@ -61,10 +74,25 @@ class AiScenesController extends GetxController {
         return;
       }
       allItems.assignAll(data.items);
-      _applyFilter();
+      final q = keyword.value.trim();
+      if (q.isEmpty) {
+        _applyFilter();
+      } else {
+        // 列表刷新后，命中顺序要重新算（相册集合可能变了）
+        await _runSearch(q);
+      }
     } finally {
       isLoading.value = false;
     }
+  }
+
+  void _clearSearchState() {
+    _searchSeq += 1;
+    searchOrder.clear();
+    searchTags.clear();
+    searchUnmatched.clear();
+    searchSemantic.value = false;
+    isSearching.value = false;
   }
 
   void _applyFilter() {
@@ -77,13 +105,69 @@ class AiScenesController extends GetxController {
       return !e.isHide;
     }
 
-    bool matchKeyword(AiSceneItem e) {
-      if (q.isEmpty) return true;
-      return e.placeName.toLowerCase().contains(q);
+    if (q.isEmpty) {
+      items.assignAll(allItems.where(matchStatus));
+      return;
     }
 
-    final next = allItems.where((e) => matchStatus(e) && matchKeyword(e));
-    items.assignAll(next);
+    // 服务端没给命中顺序（接口不可用 / 还没返回）时退回本地子串，
+    // 保证「搜不出东西」永远好过「搜错东西」。
+    if (searchOrder.isEmpty) {
+      items.assignAll(
+        allItems.where(
+          (e) => matchStatus(e) && e.placeName.toLowerCase().contains(q),
+        ),
+      );
+      return;
+    }
+
+    final rank = <String, int>{};
+    for (int i = 0; i < searchOrder.length; i++) {
+      rank.putIfAbsent(searchOrder[i], () => i);
+    }
+    final hit = <AiSceneItem>[];
+    for (final e in allItems) {
+      if (!matchStatus(e)) continue;
+      if (!rank.containsKey(e.placeNameRaw)) continue;
+      hit.add(e);
+    }
+    hit.sort(
+      (a, b) => (rank[a.placeNameRaw] ?? 0).compareTo(rank[b.placeNameRaw] ?? 0),
+    );
+    items.assignAll(hit);
+  }
+
+  /// 语义搜索：把关键词交给服务端解析，拿回「命中相册的顺序 + 已识别标签」
+  Future<void> _runSearch(String q) async {
+    final seq = ++_searchSeq;
+    isSearching.value = true;
+    try {
+      final res = await _api.searchScenes(query: q);
+      if (seq != _searchSeq || keyword.value.trim() != q) return; // 过期响应丢弃
+      if (!res.success || res.data == null) {
+        searchOrder.clear();
+        searchTags.clear();
+        searchUnmatched.clear();
+        searchSemantic.value = false;
+      } else {
+        final d = res.data!;
+        searchOrder.assignAll(d.rawNames);
+        searchTags.assignAll(d.tags);
+        searchUnmatched.assignAll(d.unmatched);
+        searchSemantic.value = d.semantic;
+      }
+    } catch (_) {
+      if (seq != _searchSeq) return;
+      searchOrder.clear();
+      searchTags.clear();
+      searchUnmatched.clear();
+      searchSemantic.value = false;
+    } finally {
+      if (seq == _searchSeq) isSearching.value = false;
+    }
+    if (seq != _searchSeq) return;
+    closeScene();
+    _applyFilter();
   }
 
   void setStatusFilter(String status) {
@@ -100,7 +184,12 @@ class AiScenesController extends GetxController {
       if (keyword.value == next) return;
       keyword.value = next;
       closeScene();
-      _applyFilter();
+      if (next.isEmpty) {
+        _clearSearchState();
+        _applyFilter();
+        return;
+      }
+      _runSearch(next);
     });
   }
 
@@ -108,6 +197,7 @@ class AiScenesController extends GetxController {
     searchController.clear();
     if (keyword.value.isEmpty) return;
     keyword.value = '';
+    _clearSearchState();
     closeScene();
     _applyFilter();
   }

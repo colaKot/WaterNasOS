@@ -30,6 +30,34 @@ class AiFaceItem {
   }
 }
 
+/// 人脸识别进度（服务端在 /face/list 一并返回，2026-10-13）
+class AiFaceProgress {
+  final int total;
+  final int done;
+  final int remain;
+  final int percent;
+
+  const AiFaceProgress({
+    this.total = 0,
+    this.done = 0,
+    this.remain = 0,
+    this.percent = 0,
+  });
+
+  bool get finished => total > 0 && remain <= 0;
+
+  factory AiFaceProgress.fromJson(dynamic raw) {
+    if (raw is! Map) return const AiFaceProgress();
+    int n(dynamic v) => (v as num?)?.toInt() ?? 0;
+    return AiFaceProgress(
+      total: n(raw['total']),
+      done: n(raw['done']),
+      remain: n(raw['remain']),
+      percent: n(raw['percent']),
+    );
+  }
+}
+
 class AiFaceListResult {
   final List<AiFaceItem> items;
   final int total;
@@ -37,12 +65,16 @@ class AiFaceListResult {
   final int pageSize;
   final bool faceEnable;
 
+  /// 识别进度：已识别 / 总数 / 剩余 / 百分比
+  final AiFaceProgress progress;
+
   AiFaceListResult({
     required this.items,
     required this.total,
     required this.page,
     required this.pageSize,
     required this.faceEnable,
+    this.progress = const AiFaceProgress(),
   });
 
   factory AiFaceListResult.fromJson(Map<String, dynamic> json) {
@@ -72,6 +104,9 @@ class AiFaceListResult {
       page: page,
       pageSize: pageSize,
       faceEnable: parseEnable(json['faceEnable'] ?? json['face_enable']),
+      progress: AiFaceProgress.fromJson(
+        json['faceProgress'] ?? json['face_progress'],
+      ),
     );
   }
 }

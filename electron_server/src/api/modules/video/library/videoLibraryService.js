@@ -1,6 +1,8 @@
 const path = require('path');
 const userUtil = require('../../../../utils/userUtil');
+const Logger = require('../../../../utils/logger');
 const VideoSourceService = require('../source/videoSourceService');
+const videoIndexIndexUtil = require('../../../../workers/videoIndex/videoIndexIndexUtil');
 const { applyVisibleIndexFilter, isPathVisibleTo, escapeLikeValue, LIKE_ESCAPE } = require('../videoVisibilityUtil');
 
 // 影视库类型（创建后不可修改）
@@ -45,6 +47,83 @@ class VideoLibraryService {
     return await this.knex(this.tableName).select('*').orderBy('sort', 'asc').orderBy('id', 'asc').catch(() => []);
   }
 
+  /**
+   * 切换「日本电影库」（2026-10-12）。
+   *
+   * 开启后：列表页对该库显示「中 / 无码」徽章，并开放
+   * 分辨率 / 无码 / 中文字幕 那组筛选。不做 lib_type 硬校验，
+   * 免得以后类型扩展时反被挡住（前端只在 movie 类库上给这个开关）。
+   */
+  async setJpMovie(rawId, payload = {}) {
+    const id = Number(rawId || 0) || 0;
+    if (!id) throw new Error('validation.VALIDATION_ERROR');
+
+    const lib = await this.getLibraryById(id);
+    if (!lib) throw new Error('common.NOT_FOUND');
+
+    const raw = payload.jp_movie ?? payload.jpMovie;
+    const value = raw === true || raw === 1 || raw === '1' || raw === 'true' ? 1 : 0;
+
+    const affected = await this.knex(this.tableName)
+      .where({ id })
+      .update({ jp_movie: value });
+    if (!Number(affected)) {
+      throw new Error('video.VIDEO_LIBRARY_UPDATE_FAILED');
+    }
+
+    // ⭐ 回填日本片标记（2026-10-12）：jp_uncensored / jp_chinese_sub 两列是后加的，
+    //    老库补列后整列都是 0；且这两列与「是否展示」的开关无关。所以每次调用这个
+    //    接口都用**已入库的文件名**重算一遍（开、关都跑）——
+    //    用户只要点一下开关就等于"强制刷新一次标记"，不必整库重扫。
+    //    异步后台执行，不阻塞本次响应；失败只记日志不影响开关状态。
+    Promise.resolve()
+      .then(() => videoIndexIndexUtil.refreshJpTagsForLibrary(this.knex, id))
+      .then(count => {
+        if (Number(count) > 0) {
+          Logger.info(`✅ Refresh jp tags for library ${id}: ${count} rows updated`);
+        }
+      })
+      .catch(err => {
+        Logger.error('❌ refresh jp tags failed:', err && err.message ? err.message : err);
+      });
+
+    return await this.getLibraryById(id);
+  }
+
+  /**
+   * 重排影视库顺序（2026-10-12）。
+   *
+   * `rawIds` 是用户在栏目条上拖出来的完整顺序。
+   * ⚠️ 必须**整体重写** sort，不能只交换被拖动那两条：相邻互换时如果原本就存在
+   * 重复的 sort 值，交换等于没动（列表顺序由 `orderBy sort, id` 决定，重复值会退化成按 id）。
+   * 没出现在列表里的库（客户端拿的是旧列表 / 期间新建的）按原 sort 顺延排到最后，
+   * 保证不会出现两库同 sort。
+   */
+  async reorderLibraries(rawIds) {
+    const ids = (Array.isArray(rawIds) ? rawIds : [])
+      .map(v => Number(v) || 0)
+      .filter(v => v > 0);
+    const unique = [...new Set(ids)];
+    if (!unique.length) throw new Error('validation.VALIDATION_ERROR');
+
+    const rest = await this.knex(this.tableName)
+      .whereNotIn('id', unique)
+      .orderBy('sort', 'asc')
+      .orderBy('id', 'asc')
+      .select('id')
+      .catch(() => []);
+    const ordered = unique.concat(
+      (rest || []).map(r => Number(r && r.id) || 0).filter(v => v > 0)
+    );
+
+    await this.knex.transaction(async trx => {
+      for (let i = 0; i < ordered.length; i++) {
+        await trx(this.tableName).where({ id: ordered[i] }).update({ sort: i + 1 });
+      }
+    });
+    return ordered;
+  }
+
   async getLibraryById(rawId) {
     const id = Number(rawId || 0) || 0;
     if (!id) return null;
@@ -78,6 +157,9 @@ class VideoLibraryService {
         lib_type: libType,
         is_default: 0,
         show_in_home: 0,
+        // ⭐ 日本电影库开关（2026-10-12）：创建时可带上，默认关
+        jp_movie: payload.jp_movie === 1 || payload.jp_movie === '1' || payload.jp_movie === true ||
+          payload.jpMovie === 1 || payload.jpMovie === '1' || payload.jpMovie === true ? 1 : 0,
         sort,
         create_time: new Date(),
       });
@@ -305,6 +387,7 @@ class VideoLibraryService {
         is_default: Number(lib.is_default || 0),
         show_in_home: Number(lib.show_in_home || 0),
         audio_normalize: Number(lib.audio_normalize || 0),
+        jp_movie: Number(lib.jp_movie || 0),
         sort: Number(lib.sort || 0),
         source_count: libPaths.length,
         counts,

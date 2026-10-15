@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:get/get.dart';
@@ -490,6 +491,12 @@ class _UserInfoDialogState extends State<UserInfoDialog> {
 
     Get.find<CurrentUserController>().clear();
     ApiController.instance.clearAuthInfo();
+    // 用户主动登出 ⇒ 关闭下次启动的自动登录，避免重启后被自动登回去
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (p) => p.setBool('auth_auto_login_disabled', true),
+      ),
+    );
     Get.back();
 
     if (kIsWeb) {

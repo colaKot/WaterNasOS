@@ -17,6 +17,42 @@ class VideoLibraryController {
   }
 
   /**
+   * 切换「日本电影库」（超级管理员）
+   * params: id
+   * body: { jp_movie: 0 | 1 }
+   * 开启后：列表页显示「中 / 无码」徽章，并开放对应筛选
+   */
+  async setJpMovie(req, res) {
+    try {
+      const service = new VideoLibraryService(req.dbVideo);
+      const id = req.params && req.params.id;
+      const row = await service.setJpMovie(id, req.body || {});
+      return ResponseUtil.success(req, res, row, 'video.VIDEO_LIBRARY_UPDATE_SUCCESS', 200);
+    } catch (err) {
+      const msgKey = err && err.message ? err.message : 'common.ERROR';
+      const statusCode = msgKey === 'common.NOT_FOUND' ? 404 : 400;
+      return ResponseUtil.error(req, res, msgKey, statusCode);
+    }
+  }
+
+  /**
+   * 重排影视库顺序（管理员）
+   * body: { ids: number[] } —— 客户端拖出来的完整顺序
+   */
+  async reorderLibraries(req, res) {
+    try {
+      const service = new VideoLibraryService(req.dbVideo);
+      const body = req.body || {};
+      const ids = body.ids ?? body.libraryIds ?? body.library_ids;
+      const ordered = await service.reorderLibraries(ids);
+      return ResponseUtil.success(req, res, { ids: ordered }, 'video.VIDEO_LIBRARY_UPDATE_SUCCESS', 200);
+    } catch (err) {
+      const msgKey = err && err.message ? err.message : 'common.ERROR';
+      return ResponseUtil.error(req, res, msgKey, 400);
+    }
+  }
+
+  /**
    * 新建影视库（管理员）
    * body: { name: string, lib_type: "movie" | "tv" | "image" | "mixed" }
    */

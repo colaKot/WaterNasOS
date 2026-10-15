@@ -5,6 +5,41 @@ function _isDateString(s) {
   return Number.isFinite(d.getTime());
 }
 
+function _escapeLike(s) {
+  return String(s).replace(/[\\%_]/g, m => `\\${m}`);
+}
+
+/**
+ * ⭐ 2026-10-13 人脸条件：value 为人名（如「铁柱」）或 `#<face_id>`（未命名人物）。
+ * 通过 whereExists 关联 photo_face2filehash + photo_faces（根人脸）：
+ *   - 人名匹配 ⇒ 之后新识别出的人物若被合并/命名到该名字，照片自动进入相册；
+ *   - #id 匹配 ⇒ 精确到某个人脸分组（未命名时使用）。
+ * 合并人脸时 f2 行会整体搬到目标根人脸，所以按人名匹配天然「跟随合并」。
+ */
+function _applyFaceCondition(qb, value, tableAlias) {
+  const v = value == null ? '' : String(value).trim();
+  if (!v) return;
+  const m = /^#(\d+)$/.exec(v);
+  const faceId = m ? Math.max(0, Number(m[1]) || 0) : 0;
+  qb.whereExists(function () {
+    this.select(1)
+      .from('photo_face2filehash as f2')
+      .join('photo_faces as pf', 'pf.face_id', 'f2.face_id')
+      .whereRaw(`f2.file_hash = ${tableAlias}.file_hash`)
+      .where(function () {
+        // 只认根人脸（belong_face_id 为 NULL 或 0）
+        this.whereNull('pf.belong_face_id').orWhere('pf.belong_face_id', 0);
+      })
+      .where(function () {
+        if (faceId > 0) {
+          this.where('pf.face_id', faceId);
+          return;
+        }
+        this.whereRaw("CAST(pf.name AS TEXT) LIKE ? ESCAPE '\\'", [`%${_escapeLike(v)}%`]);
+      });
+  });
+}
+
 function parseFilterContentText(text) {
   try {
     const parsed = JSON.parse(String(text || '{}'));
@@ -29,9 +64,19 @@ function _normalizeCondition(cond, tableAlias) {
     duration_min: { column: `${tableAlias}.duration`, type: 'number', scale: 60 },
     width: { column: `${tableAlias}.width`, type: 'number', scale: 1 },
     height: { column: `${tableAlias}.height`, type: 'number', scale: 1 },
+    // ⭐ 2026-10-13 人脸条件（人名 / #face_id）
+    face: { type: 'face' },
   };
   const meta = fieldMap[field];
   if (!meta) return null;
+
+  // 人脸条件：值是人名或 #id，走 whereExists
+  if (meta.type === 'face') {
+    if (operator !== 'contains') return null;
+    const v = value == null ? '' : String(value).trim();
+    if (!v) return null;
+    return { type: 'face', value: v };
+  }
 
   if (meta.type === 'text') {
     if (operator !== 'contains') return null;
@@ -46,7 +91,11 @@ function _normalizeCondition(cond, tableAlias) {
   return { column: meta.column, operator, value: n * meta.scale };
 }
 
-function _applySingleCondition(qb, condition) {
+function _applySingleCondition(qb, condition, tableAlias) {
+  if (condition.type === 'face') {
+    _applyFaceCondition(qb, condition.value, tableAlias);
+    return;
+  }
   if (condition.operator === 'contains') {
     qb.where(condition.column, 'like', `%${condition.value}%`);
     return;
@@ -73,14 +122,14 @@ function applyConditionFilter(query, filterContent, tableAlias) {
   if (logic === 'or') {
     query.where(builder => {
       for (const c of mapped) {
-        builder.orWhere(b => _applySingleCondition(b, c));
+        builder.orWhere(b => _applySingleCondition(b, c, tableAlias));
       }
     });
     return;
   }
 
   for (const c of mapped) {
-    _applySingleCondition(query, c);
+    _applySingleCondition(query, c, tableAlias);
   }
 }
 

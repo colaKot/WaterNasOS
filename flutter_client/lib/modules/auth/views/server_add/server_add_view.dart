@@ -146,11 +146,15 @@ class ServerAddView extends GetView<ServerAddController> {
                                   hintText: 'server_add_address_hint'.tr,
                                   prefixText: '${controller.protocol.value}://',
                                   validator: (value) {
-                                    if (value == null || value.isEmpty) {
+                                    if (value == null ||
+                                        value.trim().isEmpty) {
                                       return 'server_add_address_required'.tr;
                                     }
-                                    final pattern = r'^[a-zA-Z0-9.-]+(:\d+)?$';
-                                    if (!RegExp(pattern).hasMatch(value)) {
+                                    // ⭐ 先规范化再校验（2026-10-12）：
+                                    // 粘贴进来的 `host:port/`、`http://host:port/`
+                                    // 以前一律被判「地址无效」。
+                                    if (!ServerAddController
+                                        .isValidServerAddress(value)) {
                                       return 'server_add_address_invalid'.tr;
                                     }
                                     return null;

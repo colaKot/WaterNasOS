@@ -5,7 +5,6 @@ import 'core/i18n.dart';
 import 'ui/home_view.dart';
 import 'ui/login_view.dart';
 import 'ui/settings_view.dart';
-import 'ui/task_edit_view.dart';
 
 /// 应用根组件
 class SyncApp extends StatelessWidget {
@@ -16,7 +15,7 @@ class SyncApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'WaterNasOS 同步',
+      title: 'WaterNasSync',
       debugShowCheckedModeBanner: false,
       translations: SyncTranslations(),
       locale: const Locale('zh', 'CN'),
@@ -27,7 +26,6 @@ class SyncApp extends StatelessWidget {
         GetPage(name: '/login', page: () => const LoginView()),
         GetPage(name: '/home', page: () => const HomeView()),
         GetPage(name: '/settings', page: () => const SettingsView()),
-        GetPage(name: '/task_edit', page: () => const TaskEditView()),
       ],
     );
   }

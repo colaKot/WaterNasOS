@@ -106,10 +106,16 @@ class Logger {
     };
 
     if (error) {
-      logData.error = {
-        message: error.message,
-        stack: error.stack,
-      };
+      // ⚠️ error 可能是 Error，也可能是调用方顺手传进来的字符串或普通对象。
+      // 旧实现只取 .message/.stack：传字符串时两者都是 undefined，
+      // 落盘就变成 {"error":{}}，真实原因被彻底吞掉，排查时极易误判成「没有报错」。
+      if (error instanceof Error) {
+        logData.error = { message: error.message, stack: error.stack };
+      } else if (typeof error === 'object') {
+        logData.error = { message: String(error.message || ''), ...error };
+      } else {
+        logData.error = { message: String(error) };
+      }
     }
 
     loggerInstance.error(message, logData);

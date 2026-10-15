@@ -72,7 +72,7 @@ class VideoHomePageController extends GetxController {
     final p = _getSourcePath(first);
     final content = "source_invalid".trParams({'path': p});
 
-    if (CurrentUserController.instance.isAdmin) {
+    if (CurrentUserController.instance.isSuperAdmin) {
       DialogUtil.showConfirmDialog(
         title: 'tip'.tr,
         content: content,
@@ -116,7 +116,7 @@ class VideoHomePageController extends GetxController {
       _checkUnavailableSources(data.sourceList);
 
       // 仅当接口成功且未设置来源时提示，避免网络失败时误弹
-      if (data.sourceList.isEmpty && CurrentUserController.instance.isAdmin) {
+      if (data.sourceList.isEmpty && CurrentUserController.instance.isSuperAdmin) {
         if (alertWhenNoSourcePath && !_sourceEmptyDialogShown) {
           _sourceEmptyDialogShown = true;
           DialogUtil.showInfoDialog(

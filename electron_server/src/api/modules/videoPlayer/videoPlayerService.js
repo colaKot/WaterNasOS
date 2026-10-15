@@ -87,6 +87,44 @@ async function inspectTopLevelBoxes(filePath, maxBoxes = 8) {
   }
 }
 
+/** ⭐ 字幕语言识别（2026-10-15）：从字幕文件名/后缀推断规范语言码。
+ *  返回 '' | 'zh-CN' | 'zh-TW' | 'en' | 'ja' | 'ko'，供客户端按「默认字幕语言」自动匹配。
+ *  覆盖的常见标识：
+ *    简体：cn / chs / chi / sc / sg / gb / zh-cn / hans，中文 简体 简中 中字
+ *    繁体：tw / hk / cht / tc / big5 / zh-tw / zh-hk / hant，繁体 繁中 正体
+ *    英文：en / eng / english，日文：ja / jp / jpn，韩文：ko / kr / kor
+ *  注意：先判繁体再判简体 —— 'zh' 单独出现按简体处理，'chi' 亦按简体。
+ */
+function inferSubtitleLanguage(rawName) {
+  const raw = String(rawName === undefined || rawName === null ? '' : rawName).toLowerCase();
+  if (!raw) return '';
+  // 只剥离真正的字幕扩展名，保留 .chs / .eng 这类语言后缀
+  const base = raw.replace(/\.(srt|ass|ssa|vtt|sub|mks)$/, '');
+  const tokens = base.replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').split(' ').filter(Boolean);
+  const tok = new Set(tokens);
+
+  // 1) 繁体优先
+  if (base.includes('hant') || tok.has('cht') || tok.has('tc') || tok.has('big5') ||
+      tok.has('tw') || tok.has('hk') || /繁体|繁中|繁體|正体|正體/.test(base)) {
+    return 'zh-TW';
+  }
+  // 2) 简体
+  if (base.includes('hans') || tok.has('chs') || tok.has('chi') || tok.has('sc') ||
+      tok.has('cn') || tok.has('sg') || tok.has('gb') || tok.has('gbk') ||
+      /简体|简中|简体中文|中字|中文/.test(base)) {
+    return 'zh-CN';
+  }
+  // 3) 裸 zh / chinese（无法区分简繁，保守按简体）
+  if (tok.has('zh') || tok.has('zho') || tok.has('chinese')) return 'zh-CN';
+  // 4) 英文
+  if (tok.has('en') || tok.has('eng') || tok.has('english') || /英文|英语/.test(base)) return 'en';
+  // 5) 日文
+  if (tok.has('ja') || tok.has('jp') || tok.has('jpn') || tok.has('japanese') || /日文|日语|日本語/.test(base)) return 'ja';
+  // 6) 韩文
+  if (tok.has('ko') || tok.has('kr') || tok.has('kor') || tok.has('korean') || /韩文|韩语/.test(base)) return 'ko';
+  return '';
+}
+
 function _sortDiscFilesByNumericBasename(items) {
   return [...(items || [])].sort((a, b) => {
     const aName = path.basename(String((a && a.path) || '')).toLowerCase();
@@ -429,6 +467,9 @@ class VideoPlayerService {
                   path: subPath,
                   filename: file,
                   ext: fileExt,
+                  // 优先用「去掉视频名后的后缀」判断语言（如 .zh-CN / .chs / .简中），
+                  // 避免电影名自身含 en/ja 等片段造成误判
+                  language: inferSubtitleLanguage(suffix || file),
                 });
               }
             }
@@ -470,6 +511,7 @@ class VideoPlayerService {
               filename: name,
               ext,
               source: 'uploaded',
+              language: inferSubtitleLanguage(name),
             });
           }
           if (uploaded.length > 0) {

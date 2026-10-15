@@ -31,14 +31,17 @@ class AppLaunch {
   static AppLaunchMode mode = AppLaunchMode.full;
 
   /// 应用标题（窗口标题 / MaterialApp title）。
+  ///
+  /// 这里是**全名**；桌面图标／任务栏用的短名在各自平台的资源里
+  /// （Android `android:label` = `WNClient` / `WNPhoto` / `WNMusic`）。
   static String get appTitle {
     switch (mode) {
       case AppLaunchMode.full:
-        return 'WaterNasOS';
+        return 'WaterNasClient';
       case AppLaunchMode.photo:
-        return 'WaterNasOS 相册';
+        return 'WaterNasPhoto';
       case AppLaunchMode.music:
-        return 'WaterNasOS 音乐';
+        return 'WaterNasMusic';
     }
   }
 

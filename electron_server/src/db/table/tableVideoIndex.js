@@ -55,6 +55,10 @@ class tableVideoIndex {
         table.integer('gen_subtitle_vtt').notNullable().defaultTo(0);
         table.integer('gen_tiny').notNullable().defaultTo(0);
         table.integer('episod_num').notNullable().defaultTo(0);
+        // ⭐ 日本片标记（2026-10-12）：从文件名后缀解析 —— U/-UC = 无码，C/-UC = 中文字幕。
+        //    只对开了「日本电影」开关的库在前端展示/筛选，索引侧一律照常写。
+        table.integer('jp_uncensored').notNullable().defaultTo(0);
+        table.integer('jp_chinese_sub').notNullable().defaultTo(0);
         table.timestamp('create_time').defaultTo(knex.fn.now());
         table.timestamp('view_time');
       });
@@ -72,6 +76,9 @@ class tableVideoIndex {
       await addColumn('gen_subtitle_vtt', 'INTEGER NOT NULL DEFAULT 0');
       // ⭐ 自然排序键（2026-10-12）：老库补列后是空串，必须跑回填脚本
       await addColumn('natural_name', "TEXT DEFAULT ''");
+      // ⭐ 日本片标记（2026-10-12）：老库补列后全是 0，重扫该库即可回填
+      await addColumn('jp_uncensored', 'INTEGER NOT NULL DEFAULT 0');
+      await addColumn('jp_chinese_sub', 'INTEGER NOT NULL DEFAULT 0');
     }
 
     // 图片索引独立表（说明见本文件末尾 _ensureImageIndexTable）

@@ -250,6 +250,14 @@ class DbUtil {
         connection: this.getConnectPhotoDb(),
       },
       {
+        fileName: 'tablePhotoActivity', //照片活动表（独立于场景，见文件头说明）
+        connection: this.getConnectPhotoDb(),
+      },
+      {
+        fileName: 'tablePhotoActivity2Filehash', //照片活动-文件哈希表
+        connection: this.getConnectPhotoDb(),
+      },
+      {
         fileName: 'tablePhotoFaces', //照片人脸表
         connection: this.getConnectPhotoDb(),
       },

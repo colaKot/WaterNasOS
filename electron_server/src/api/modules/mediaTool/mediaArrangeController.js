@@ -1,5 +1,6 @@
 const ResponseUtil = require('../../apiUtils/responseUtil');
 const Logger = require('../../../utils/logger');
+const userUtil = require('../../../utils/userUtil');
 const { MediaArrangeService } = require('./mediaArrangeService');
 
 function waitForIpcResponse({ requestId, responseType, timeoutMs }) {
@@ -93,6 +94,8 @@ class MediaArrangeController {
         keyword,
         sortBy: sort_by,
         sortOrder: sort_order,
+        uid: req.user && req.user.id,
+        isAdmin: userUtil.isAdmin(req.user),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -111,6 +114,8 @@ class MediaArrangeController {
         targetPath: target_path,
         arrangeType: arrange_type,
         sameNamePolicy: same_name_policy,
+        uid: req.user && req.user.id,
+        isAdmin: userUtil.isAdmin(req.user),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -125,7 +130,7 @@ class MediaArrangeController {
     try {
       const service = new MediaArrangeService(req.dbMain);
       const { id } = req.body || {};
-      await service.remove({ id });
+      await service.remove({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       return ResponseUtil.success(req, res, { ok: true }, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('mediaArrange remove failed', e);
@@ -138,6 +143,9 @@ class MediaArrangeController {
   async start(req, res) {
     try {
       const { id } = req.body || {};
+      // 归属校验（2026-10-13）：不是自己的任务按 NOT_FOUND 处理，避免跨账号操作
+      const service = new MediaArrangeService(req.dbMain);
+      await service.getById({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       const data = await this._startByIpc({ id });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -151,6 +159,9 @@ class MediaArrangeController {
   async stop(req, res) {
     try {
       const { id } = req.body || {};
+      // 归属校验（2026-10-13）：不是自己的任务按 NOT_FOUND 处理，避免跨账号操作
+      const service = new MediaArrangeService(req.dbMain);
+      await service.getById({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       const data = await this._stopByIpc({ id });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {

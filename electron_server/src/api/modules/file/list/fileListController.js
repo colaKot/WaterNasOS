@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { Worker } = require('worker_threads');
 const tableFileRecent = require('../../../../db/table/tableFileRecent');
 const config = require('../../../../config/config');
+const Logger = require('../../../../utils/logger');
 const UserService = require('../../user/userService');
 const userUtil = require('../../../../utils/userUtil');
 const FileUtil = require('../../../../utils/fileUtil');
@@ -54,7 +55,8 @@ function resolveTargetRelativePath(targetDir, relativePath) {
   return { baseResolved, resolved, normalizedRel: parts.join(path.sep) };
 }
 
-async function runFileListWorkerTask(action, payload, timeoutMs = 20000) {
+/** 在 worker 线程里执行一次文件列表任务。 */
+async function runFileListWorkerOnce(action, payload, timeoutMs = 20000) {
   const worker = new Worker(fileListWorkerPath);
   let timeout = null;
   let settled = false;
@@ -124,6 +126,26 @@ async function runFileListWorkerTask(action, payload, timeoutMs = 20000) {
   } finally {
     if (timeout) clearTimeout(timeout);
     await terminateOnce();
+  }
+}
+
+/**
+ * 文件列表任务入口：优先 worker 线程，失败则回退主线程执行同一份实现。
+ *
+ * 为什么需要回退：worker_threads 从 asar 内加载脚本在打包环境下并不总是可靠
+ * （线程加载失败 / 超时会直接让整个「文件管理」「目录选择器」报 400 空白）。
+ * 列目录本身很轻（根目录就是几个盘符），主线程直接跑完全可接受，
+ * 换来的是功能不会因为线程问题整体不可用。
+ */
+async function runFileListWorkerTask(action, payload, timeoutMs = 20000) {
+  try {
+    return await runFileListWorkerOnce(action, payload, timeoutMs);
+  } catch (err) {
+    Logger.warn(
+      `[fileList] worker 执行失败(${action})：${err && err.message ? err.message : err}；回退主线程`
+    );
+    const impl = require('../../../../workers/fileList/listDirectoryWorker.js');
+    return await impl.runTask(action, payload);
   }
 }
 
@@ -481,7 +503,11 @@ async function list(req, res) {
     });
     return ResponseUtil.success(req, res, result, 'file.DIRECTORY_LIST_FETCH_SUCCESS', 200);
   } catch (err) {
-    console.log(err);
+    // 打包后 console.log 无处可见；把真实错误落进服务端日志文件便于定位
+    Logger.error(
+      `[fileList] 列目录失败 (uid=${req.user && req.user.id}, path=${(req.body && req.body.path) || ''}): ` +
+      `${err && err.stack ? err.stack : err}`
+    );
     return ResponseUtil.error(req, res, 'file.DIRECTORY_LIST_FETCH_FAILED', 400, {
       error: err.message,
     });

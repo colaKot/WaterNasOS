@@ -101,7 +101,7 @@ class _MusicCacheSettingsViewState extends State<MusicCacheSettingsView> {
                                 ),
                                 const SizedBox(height: 12),
                                 SwitchListTile(
-                                  activeColor: theme.colorScheme.primary,
+                                  activeThumbColor: theme.colorScheme.onPrimary,
                                   contentPadding: EdgeInsets.zero,
                                   value: enabled,
                                   onChanged: (v) => ctrl.toggleEnabled(v),

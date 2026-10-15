@@ -9,15 +9,15 @@
 
 namespace {
 
-// 下面这组名字必须与主客户端（NasCabOS）完全区分开：
+// 下面这组名字必须与主客户端（WaterNasClient）完全区分开：
 // mutex 同名会导致同步客户端与主客户端互相抢单实例锁，两者只能开一个；
 // 窗口类名 / 消息名同名会让单实例激活逻辑误找对方的窗口。
 constexpr wchar_t kSingleInstanceMutexName[] =
-    L"Global\\NasCabSync_SingleInstance";
+    L"Global\\WaterNasSync_SingleInstance";
 constexpr wchar_t kWindowClassName[] = L"NASACB_SYNC_WIN32_WINDOW";
-constexpr wchar_t kExecutableName[] = L"NasCabSync.exe";
+constexpr wchar_t kExecutableName[] = L"WaterNasSync.exe";
 constexpr wchar_t kShowExistingInstanceMessageName[] =
-    L"NasCabSync_ShowExistingInstance";
+    L"WaterNasSync_ShowExistingInstance";
 
 UINT GetShowExistingInstanceMessageId() {
   static const UINT message_id =

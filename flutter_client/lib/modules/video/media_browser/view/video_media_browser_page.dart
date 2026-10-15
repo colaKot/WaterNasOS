@@ -1,5 +1,7 @@
 import 'package:WaterNasOS/core/routes/app_routes.dart';
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
+import 'package:WaterNasOS/modules/base/components/custom_bordered_icon_button.dart';
+import 'package:WaterNasOS/modules/base/components/custom_expandable_search_bar.dart';
 import 'package:WaterNasOS/modules/base/components/custom_no_data.dart';
 import 'package:WaterNasOS/modules/base/components/custom_segmented_icon_toggle.dart';
 import 'package:WaterNasOS/modules/video/base/beans/video_item_bean.dart';
@@ -10,6 +12,7 @@ import 'package:WaterNasOS/modules/video/media_browser/view/parts/media_folder_g
 import 'package:WaterNasOS/modules/video/media_browser/view/parts/media_masonry_sliver.dart';
 import 'package:WaterNasOS/modules/video/media_browser/view/parts/video_media_grid.dart';
 import 'package:WaterNasOS/modules/video/media_browser/view/video_media_viewer_page.dart';
+import 'package:WaterNasOS/utils/device_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../home/views/pc_components/pc_app_window.dart';
@@ -267,7 +270,156 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     );
   }
 
+  /// 顶栏：手机端与桌面端**两套排布**。
+  ///
+  /// 手机端以前直接复用桌面端那一行（搜索框 + 面包屑 + 数量 + 4 个开关），
+  /// 在窄屏上整行溢出到屏幕外，且没有避让状态栏 / 刘海 / 灵动岛。
+  /// 现在按影视库 App 端（`AppVideoListPage`）的口径重排。
   Widget _buildTopBar(ThemeData theme, VideoListController ctrl) {
+    final isPhone = DeviceUtils.isMobile || DeviceUtils.isPhone(context);
+    return isPhone
+        ? _buildMobileTopBar(theme, ctrl)
+        : _buildDesktopTopBar(theme, ctrl);
+  }
+
+  /// 手机端顶栏（需求 2026-10-13）：
+  /// `[返回上一级]  [搜索栏]  [AZ 排序]  [瀑布流]  [显示名称]`
+  ///
+  /// * 不做排序文字、不显示媒体数量、不显示面包屑（窄屏放不下）
+  /// * 真实避让状态栏高度 `MediaQuery.padding.top`（外层 `SafeArea(top:false)`
+  ///   刻意关掉了顶部，所以必须在这里补，否则内容会顶进灵动岛 / 刘海）
+  Widget _buildMobileTopBar(ThemeData theme, VideoListController ctrl) {
+    final topPad = MediaQuery.of(context).padding.top;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(8, topPad + 6, 8, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 返回上一级：只在文件夹视图且确实有上一级时出现
+          Obx(() {
+            if (!ctrl.canGoUp) return const SizedBox.shrink();
+            return CustomBorderedIconButton(
+              icon: Icons.arrow_back,
+              tooltip: 'back'.tr,
+              onTap: () => _enterFolder(ctrl, ctrl.parentFolderPath.value),
+            );
+          }),
+          Obx(
+            () => SizedBox(width: ctrl.canGoUp ? 8 : 0),
+          ),
+          Expanded(
+            child: CustomExpandableSearchBar(
+              controller: _searchController,
+              hintText: 'search'.tr,
+              onChanged: ctrl.setSearchText,
+              onClear: ctrl.clearSearch,
+              defaultExpanded: true,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // 排序：**只给 AZ 图标**，点开走底部面板（与影视库 App 端一致）
+          Obx(
+            () => CustomBorderedIconButton(
+              icon: Icons.sort_by_alpha,
+              tooltip: 'sort'.tr,
+              active: ctrl.hasCustomSort,
+              onTap: () => _openSortSheet(ctrl),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // 瀑布流 / 网格：小图标，点一下就地切换
+          Obx(
+            () => _mobileToggle(
+              icon: ctrl.waterfallEnabled.value
+                  ? Icons.view_quilt_rounded
+                  : Icons.grid_view_rounded,
+              tooltip: ctrl.waterfallEnabled.value
+                  ? 'video_list_waterfall'.tr
+                  : 'video_list_grid'.tr,
+              active: ctrl.waterfallEnabled.value,
+              onTap: () => ctrl.setWaterfall(!ctrl.waterfallEnabled.value),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // 显示 / 隐藏名称：同一个小图标
+          Obx(
+            () => _mobileToggle(
+              icon: ctrl.showName.value
+                  ? Icons.title_rounded
+                  : Icons.hide_image_outlined,
+              tooltip: ctrl.showName.value
+                  ? 'video_list_show_name'.tr
+                  : 'video_list_hide_name'.tr,
+              active: ctrl.showName.value,
+              onTap: () => ctrl.setShowName(!ctrl.showName.value),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 手机端的小号切换按钮（比 [`CustomBorderedIconButton`] 的 App 默认尺寸小一档）
+  Widget _mobileToggle({
+    required IconData icon,
+    required String tooltip,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return CustomBorderedIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      active: active,
+      size: 30,
+      iconSize: 17,
+      borderRadius: 8,
+      onTap: onTap,
+    );
+  }
+
+  /// 手机端排序面板（底部弹出），条目与桌面端菜单**同一份数据源**
+  Future<void> _openSortSheet(VideoListController ctrl) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Material(
+          color: theme.colorScheme.surface,
+          child: Obx(() {
+            final entries = getVideoListSortEntries(ctrl);
+            return ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+              children: [
+                for (final e in entries) ...[
+                  if (e.divider)
+                    const Divider(height: 1)
+                  else
+                    ListTile(
+                      dense: true,
+                      leading: ctrl.sortBy.value == e.by &&
+                              ctrl.sortOrder.value == e.order
+                          ? Icon(Icons.check, color: theme.colorScheme.primary)
+                          : const SizedBox(width: 24),
+                      title: Text(e.labelKey!.tr),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        ctrl.setSort(e.by!, e.order!);
+                      },
+                    ),
+                ],
+              ],
+            );
+          }),
+        );
+      },
+    );
+  }
+
+  /// 桌面 / Web 顶栏
+  Widget _buildDesktopTopBar(ThemeData theme, VideoListController ctrl) {
     // ⭐ 右侧给窗口按钮组让位（2026-10-09）：搜索框被推到最右
     final ctrlW = PcWindowScope.of(context)?.titleBarControlsWidth ?? 0;
     return Padding(
@@ -305,13 +457,12 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
           //    `isMediaGridLibrary` 自动换成图片 / 混合库适用的排序项。
           VideoListSortMenu(controller: ctrl),
           const SizedBox(width: 6),
-          // ⭐ 两个开关（2026-10-10）：
-          //   [瀑布流 | 网格]   —— 布局，与「文件夹 / 整库平铺」正交
-          //   [封面图 | 缩略图] —— 视频条目用竖版封面还是横版缩略图
-          //                        （与影视列表同一个语义、同一套持久化 key 前缀）
+          // ⭐ 瀑布流 / 网格
+          //
+          // ⛔ 这里**没有**「封面图 / 缩略图」开关（2026-10-13，用户要求）：
+          //    本页只服务图片库与图片+视频混合库，封面图竖版海报对图片毫无意义，
+          //    混排时那两个按钮也只是噪音。混合库里的视频统一走默认海报形态。
           _buildLayoutToggle(ctrl),
-          const SizedBox(width: 6),
-          _buildImageModeToggle(ctrl),
           const SizedBox(width: 6),
           // ⭐ 名称显示开关（2026-10-11）：瀑布流压在图片内部最下方，
           //    网格写在图片下方（与影视列表卡片一致）
@@ -380,20 +531,6 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         // 组件语义：secondSelected = 选中后半（网格）
         secondSelected: !waterfall,
         onChanged: (second) => ctrl.setWaterfall(!second),
-      );
-    });
-  }
-
-  /// 封面图 ↔ 缩略图（只管视频条目，图片永远用自己）
-  Widget _buildImageModeToggle(VideoListController ctrl) {
-    return Obx(() {
-      return CustomSegmentedIconToggle(
-        firstIcon: Icons.crop_portrait,
-        secondIcon: Icons.crop_16_9,
-        firstTooltip: 'video_list_image_poster'.tr,
-        secondTooltip: 'video_list_image_fanart'.tr,
-        secondSelected: ctrl.showFanart.value,
-        onChanged: ctrl.setShowFanart,
       );
     });
   }

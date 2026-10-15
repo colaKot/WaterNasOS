@@ -35,6 +35,21 @@ extension PlayerStreamInfo on PlayerController {
     return bps == null ? null : PlayQuality.formatBitrate(bps);
   }
 
+  /// 当前是否走转码（HLS）链路。原画直链（rawFile）为 false。
+  bool get isTranscoding => currentQuality.value != PlayQuality.original;
+
+  /// 转码输出的视频编码文本。原画直出 / 仅转音频（视频 copy）时返回 null
+  /// —— 这两种情况视频沿用源文件编码，没有「转码编码」可言。
+  String? get transcodeCodecText {
+    final q = currentQuality.value;
+    if (q == PlayQuality.original || q == PlayQuality.originalAudio) return null;
+    return VideoCodec.label(preferredOutputCodec);
+  }
+
+  /// 转码状态文本键：转码中 / 原画直出。
+  String get transcodeStatusTextKey =>
+      isTranscoding ? 'player_info_transcode_on' : 'player_info_transcode_off';
+
   String currentSourcePathForInfo() {
     if (playlist.isEmpty ||
         currentIndex.value < 0 ||
@@ -257,9 +272,13 @@ extension PlayerStreamInfo on PlayerController {
       if (audioTracks.isNotEmpty) {
         currentAudioTrack.value = audioTracks.first;
       }
-      // 应用默认字幕轨道 为第一个字幕轨道 索引0是“无字幕”
+      // 应用默认字幕轨道：
+      //   配了「默认字幕语言」⇒ 按语言匹配（外挂看服务端推断的 language / 文件名，
+      //   内嵌看 ffprobe 的 tags.language）；
+      //   没配 / 匹配不到 ⇒ 沿用旧行为，取第一条字幕（索引 0 是「无字幕」）。
       if (subtitleTracks.isNotEmpty && subtitleTracks.length > 1) {
-        currentSubtitleTrack.value = subtitleTracks[1];
+        final preferred = _pickDefaultSubtitleLabel();
+        currentSubtitleTrack.value = preferred ?? subtitleTracks[1];
       }
       // 如果是web端 默认设置为“无字幕” 因为目前web端只有转码才支持字幕
       if (kIsWeb) {
@@ -273,9 +292,37 @@ extension PlayerStreamInfo on PlayerController {
       checkWebIfNeedTranscode();
       checkAndroidIfNeedTranscode();
       applyAndroidFvpEngineIfNeeded();
+      // ⭐ 编码兼容性校验（2026-10-13）：必须在自动转码判定**之后**，
+      // 因为只有确定会走转码时，输出编码选择才生效。
+      guardOutputCodecCompatibility();
     } catch (_) {
       return;
     }
+  }
+
+  /// 按「默认字幕语言」挑一条字幕的 label。
+  ///
+  /// 返回 null 表示不干预（调用方沿用旧行为：取第一条字幕）；
+  /// 用户配置「不加载字幕」时返回「无字幕」的 label。
+  String? _pickDefaultSubtitleLabel() {
+    final want = _defaultSubtitleLanguage;
+    if (want == SubtitleLanguage.none) return 'player_no_subtitle'.tr;
+    if (want == SubtitleLanguage.auto) return null;
+    for (final t in _rawSubtitleTracks) {
+      final label = t['label']?.toString();
+      if (label == null || label.isEmpty) continue;
+      // 语言来源优先级：服务端推断的 language > ffprobe tags.language > 文件名 / label
+      final langField = (t['language']?.toString() ?? '').trim();
+      final tagLang = (t['tags'] is Map)
+          ? ((t['tags'] as Map)['language']?.toString() ?? '').trim()
+          : '';
+      final fallback = t['filename']?.toString() ?? label;
+      final src = langField.isNotEmpty
+          ? langField
+          : (tagLang.isNotEmpty ? tagLang : fallback);
+      if (SubtitleLanguage.infer(src) == want) return label;
+    }
+    return null;
   }
 
 }

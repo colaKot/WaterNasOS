@@ -18,7 +18,7 @@ std::string Utf8FromUtf16(const wchar_t* utf16_string);
 // encoded in UTF-8. Returns an empty std::vector<std::string> on failure.
 std::vector<std::string> GetCommandLineArguments();
 
-// Returns true when another NasCabSync instance is already running and was
+// Returns true when another WaterNasSync instance is already running and was
 // brought to the foreground. When false, |out_mutex| holds the single-instance
 // mutex and must be released on application exit.
 bool TryActivateExistingInstance(void** out_mutex);

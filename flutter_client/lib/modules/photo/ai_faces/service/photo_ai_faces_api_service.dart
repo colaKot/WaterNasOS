@@ -90,6 +90,9 @@ class PhotoAiFacesApiService extends BaseApiService {
       '/api/photo/face/merge',
       body: {'face_ids': ids},
       showLoading: false,
+      // 2026-10-13：合并是单事务搬数千行 f2 + 样本，大图库下远超默认 10s；
+      // 超时会被用户当成「合并失败」（实际服务端还在跑甚至已成功）。
+      timeout: const Duration(seconds: 120),
     );
     if (!res.success) {
       return ApiResponse.failure(
@@ -133,6 +136,23 @@ class PhotoAiFacesApiService extends BaseApiService {
       code: res.code,
       rawResponse: res.rawResponse,
     );
+  }
+
+  /// 只重建「我可见范围内」照片的人脸（不碰别人的相册）
+  Future<ApiResponse<bool>> rescanFaces({bool showLoading = false}) async {
+    final res = await apiPost<dynamic>(
+      '/api/photo/face/rescan',
+      body: {},
+      showLoading: showLoading,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(true, message: res.message, rawResponse: res.rawResponse);
   }
 
   Future<ApiResponse<bool>> resetFaces() async {

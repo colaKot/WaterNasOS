@@ -6,6 +6,8 @@ import '../../../base/components/app_custom_search_dialog.dart';
 import '../../../base/components/custom_extended_image.dart';
 import '../../../base/components/custom_no_data.dart';
 import '../../../../utils/dialog_util.dart';
+import '../../../../utils/toast_util.dart';
+import '../../ai_faces/service/photo_ai_faces_api_service.dart';
 import '../../timeline/view/app_photo_album_timeline_page.dart';
 import '../controller/photo_smart_album_controller.dart';
 import '../models/photo_smart_album_model.dart';
@@ -1194,6 +1196,93 @@ Widget _buildConditionEditor({
   );
 }
 
+/// ⭐ 2026-10-13 人脸条件选择器：返回人名（优先，可跟随合并）或 `#face_id`（未命名人物）
+Future<String?> _pickFaceForCondition(BuildContext context) async {
+  final res = await PhotoAiFacesApiService().listFaces(
+    page: 1,
+    pageSize: 500,
+    status: 'all',
+    keyword: '',
+  );
+  if (!res.success || res.data == null) {
+    ToastUtil.show(res.message ?? 'operation_failed'.tr);
+    return null;
+  }
+  final faces = res.data!.items
+      .where((e) => e.faceId > 0)
+      .toList(growable: false);
+  if (faces.isEmpty) {
+    DialogUtil.showInfoDialog(
+      title: 'tip'.tr,
+      content: 'face_move_target_empty'.tr,
+    );
+    return null;
+  }
+  final ctx = Get.overlayContext ?? Get.context;
+  if (ctx == null || !ctx.mounted) return null;
+
+  String displayName(face) {
+    final name = (face.name ?? '').trim();
+    return name.isNotEmpty ? name : '#${face.faceId}';
+  }
+
+  return showDialog<String>(
+    context: ctx,
+    builder: (dialogCtx) {
+      return DialogUtil.createAlertDialog(
+        title: Text('smart_album_face_pick'.tr),
+        content: SizedBox(
+          width: 420,
+          height: 420,
+          child: ListView.separated(
+            itemCount: faces.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (_, index) {
+              final face = faces[index];
+              final token = (face.name ?? '').trim().isNotEmpty
+                  ? face.name!.trim()
+                  : '#${face.faceId}';
+              return ListTile(
+                leading: ClipOval(
+                  child: CustomExtendedImage(
+                    cache: false,
+                    imageUrl: ApiController.instance.getFaceImageUrl(
+                      faceId: face.faceId,
+                      size: 120,
+                      quality: 85,
+                    ),
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.cover,
+                    borderRadius: 18,
+                    showLoading: false,
+                  ),
+                ),
+                title: Text(
+                  displayName(face),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  'total_count'.trParams({'count': '${face.faceCount}'}),
+                  maxLines: 1,
+                ),
+                onTap: () => Navigator.of(dialogCtx).pop(token),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: Text('cancel'.tr),
+          ),
+        ],
+      );
+    },
+  );
+}
+
 Widget _buildConditionRow({
   required BuildContext context,
   required _SmartConditionItem item,
@@ -1204,6 +1293,8 @@ Widget _buildConditionRow({
       _conditionFieldMeta(item.field).type == _ConditionFieldType.text;
   final isNumber =
       _conditionFieldMeta(item.field).type == _ConditionFieldType.number;
+  final isFace =
+      _conditionFieldMeta(item.field).type == _ConditionFieldType.face;
 
   return Container(
     padding: const EdgeInsets.all(10),
@@ -1255,12 +1346,18 @@ Widget _buildConditionRow({
                       '${'smart_album_field_height'.tr}(${'smart_album_unit_px'.tr})',
                     ),
                   ),
+                  // ⭐ 2026-10-13 人脸条件
+                  DropdownMenuItem(
+                    value: 'face',
+                    child: Text('smart_album_field_face'.tr),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v == null) return;
                   item.field = v;
                   final meta = _conditionFieldMeta(v);
-                  if (meta.type == _ConditionFieldType.text) {
+                  if (meta.type == _ConditionFieldType.text ||
+                      meta.type == _ConditionFieldType.face) {
                     item.operator = 'contains';
                   } else {
                     item.operator =
@@ -1290,6 +1387,32 @@ Widget _buildConditionRow({
             decoration: InputDecoration(
               labelText: 'smart_album_operator_contains'.tr,
               border: const OutlineInputBorder(),
+            ),
+          ),
+        ],
+        if (isFace) ...[
+          // 人脸条件：点按钮弹人物选择（存人名或 #face_id）
+          OutlinedButton.icon(
+            onPressed: () async {
+              final picked = await _pickFaceForCondition(context);
+              if (picked == null || picked.isEmpty) return;
+              item.valueCtrl.text = picked;
+              onChanged();
+            },
+            icon: const Icon(Icons.face_outlined, size: 18),
+            label: Text(
+              item.valueCtrl.text.trim().isEmpty
+                  ? 'smart_album_face_pick'.tr
+                  : item.valueCtrl.text.trim(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'smart_album_face_hint'.tr,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
             ),
           ),
         ],
@@ -1422,6 +1545,13 @@ Map<String, dynamic>? _buildFilterContent({
       mapped.add({'field': item.field, 'operator': 'contains', 'value': v});
       continue;
     }
+    if (meta.type == _ConditionFieldType.face) {
+      // 人脸条件：人名（跟随合并）或 #face_id（未命名人物）
+      final v = item.valueCtrl.text.trim();
+      if (v.isEmpty) continue;
+      mapped.add({'field': 'face', 'operator': 'contains', 'value': v});
+      continue;
+    }
     if (meta.type == _ConditionFieldType.number) {
       final n = num.tryParse(item.valueCtrl.text.trim());
       if (n == null) continue;
@@ -1457,6 +1587,14 @@ List<_SmartConditionItem> _parseConditionItems(
     final op = (m['operator'] ?? '').toString();
     final value = m['value'];
     if (meta.type == _ConditionFieldType.text) {
+      if (op != 'contains') continue;
+      final s = value?.toString() ?? '';
+      final item = _SmartConditionItem(field: field, operator: 'contains');
+      item.valueCtrl.text = s;
+      items.add(item);
+      continue;
+    }
+    if (meta.type == _ConditionFieldType.face) {
       if (op != 'contains') continue;
       final s = value?.toString() ?? '';
       final item = _SmartConditionItem(field: field, operator: 'contains');
@@ -1513,7 +1651,7 @@ DateTime? _parseDate(dynamic v) {
   return DateTime(dt.year, dt.month, dt.day);
 }
 
-enum _ConditionFieldType { text, number, invalid }
+enum _ConditionFieldType { text, number, face, invalid }
 
 class _ConditionFieldMeta {
   final _ConditionFieldType type;
@@ -1536,6 +1674,11 @@ _ConditionFieldMeta _conditionFieldMeta(String field) {
     case 'height':
       return const _ConditionFieldMeta(
         type: _ConditionFieldType.number,
+        valid: true,
+      );
+    case 'face':
+      return const _ConditionFieldMeta(
+        type: _ConditionFieldType.face,
         valid: true,
       );
     default:

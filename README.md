@@ -44,7 +44,7 @@ WaterNasOS 是一款跨平台 NAS 软件，支持远程管理照片、影音、�
 
 ### 全局性调整
 
-- **项目更名**：项目名与各端显示名统一改为 **WaterNasOS**（Windows 服务端显示为 WaterNasOSServer，TV 端为 WaterNasOS TV）；Flutter 包名由 `NasCabOS` 改为 `WaterNasOS`。
+- **项目更名**：项目名与各端显示名统一改为 **WaterNasOS**（Windows 服务端显示为 WaterNasOSServer，TV 端为 WaterNasOS TV）；Flutter 包名由 `NasCabOS` 改为 `WaterNasOS`。桌面主客户端程序名 **WaterNasClient**，独立同步端 **WaterNasSync**。
 - **保持兼容**：`applicationId`、iOS Bundle ID、鸿蒙 `bundleName` 等应用标识**保持不变**，已安装用户可正常覆盖升级；网络协议、设备指纹与加密数据格式均未改动。
 - **仓库精简**：不再随仓库提供第三方运行时二进制（sftpgo、openlist、ffmpeg、ffprobe、rclone、transmission）与 AI 模型（`onnx_models`）、CocoaPods 依赖树、地名库；可运行 `tool/fetch_nascab_assets.py` 从官方资源清单获取。
 - **联系与捐助**：更新为本仓库维护者的微信收款二维码与邮箱。

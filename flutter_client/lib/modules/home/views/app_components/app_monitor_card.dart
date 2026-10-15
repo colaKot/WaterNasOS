@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../utils/device_utils.dart';
 import '../../../transfer/views/download/download_center/app_download_center_view.dart';
 import '../../../../core/routes/app_routes.dart';
 
@@ -50,24 +51,28 @@ class AppMonitorCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            child: _actionTile(
-              context,
-              icon: Image.asset(
-                'assets/app/home/album.png',
-                width: 40,
-                height: 40,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) => Icon(
-                  Icons.photo_library_outlined,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: 40,
+          // 相册备份只在原生手机端可用（控制器只在手机端注册）；
+          // web/桌面露出来点进去也是空白，故按端门禁。
+          if (DeviceUtils.isNativeMobile) ...[
+            Expanded(
+              child: _actionTile(
+                context,
+                icon: Image.asset(
+                  'assets/app/home/album.png',
+                  width: 40,
+                  height: 40,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => Icon(
+                    Icons.photo_library_outlined,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 40,
+                  ),
                 ),
+                title: 'home_photo_backup'.tr,
+                onTap: () => Get.toNamed(AppRoutes.appPhotoBackup),
               ),
-              title: 'home_photo_backup'.tr,
-              onTap: () => Get.toNamed(AppRoutes.appPhotoBackup),
             ),
-          ),
+          ],
         ],
       ),
     );

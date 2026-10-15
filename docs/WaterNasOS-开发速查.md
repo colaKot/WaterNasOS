@@ -1036,8 +1036,8 @@ flutter 是拿 `Microsoft.VisualStudio.Workload.NativeDesktop` + `…VCTools` �
 
 | 工程 | 结果 |
 |---|---|
-| `sync_client` | ✅ `√ Built build\windows\x64\runner\Release\NasCabSync.exe`（131.6s，产物目录 110MB） |
-| `flutter_client` | ✅ `√ Built …\Release\NasCabOS.exe`（20.6s，80,896 B） |
+| `sync_client` | ✅ `√ Built build\windows\x64\runner\Release\WaterNasSync.exe`（131.6s，产物目录 110MB） |
+| `flutter_client` | ✅ `√ Built …\Release\WaterNasClient.exe`（20.6s，80,896 B） |
 | `photo_client` | ✅ `√ Built …\Release\NasCabPhoto.exe` |
 | `music_client` | ✅ `√ Built …\Release\NasCabMusic.exe` |
 
@@ -1162,8 +1162,8 @@ endif()
 **判据**（10 秒）：
 ```bash
 grep '^CMAKE_INSTALL_PREFIX' <工程>/build/windows/x64/CMakeCache.txt
-# 正常: CMAKE_INSTALL_PREFIX:PATH=$<TARGET_FILE_DIR:NasCabSync>
-# 坏了: CMAKE_INSTALL_PREFIX:PATH=C:/Program Files/NasCabOS
+# 正常: CMAKE_INSTALL_PREFIX:PATH=$<TARGET_FILE_DIR:WaterNasSync>
+# 坏了: CMAKE_INSTALL_PREFIX:PATH=C:/Program Files/WaterNasClient
 ```
 **解法（实测有效，最小动作）**：只删**那一个缓存文件**即可，不要删整个 `build/windows`。
 ```bash

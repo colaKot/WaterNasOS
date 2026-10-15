@@ -24,6 +24,7 @@ import '../../transmission/transmission_view.dart';
 import '../../notes/view/notes_view.dart';
 import '../../photoBackup/controller/photo_backup_controller.dart';
 import '../../../utils/device_utils.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class AppHomeController extends GetxController {
   static AppHomeController get instance => Get.find<AppHomeController>();
@@ -56,6 +57,8 @@ class AppHomeController extends GetxController {
         .where((e) => isAdmin || e != 'backup')
         .where((e) => isAdmin || e != 'process')
         .where((e) => !DeviceUtils.isMobile || e != 'task_center')
+        // web 端无法选择本地目录 ⇒ 不展示「同步管理」
+        .where((e) => !kIsWeb || e != 'sync')
         // .where((e) => e != 'mounts' || !_isServerWin32) // 桌面端已注释，保持一致
         .toList();
   }
@@ -209,6 +212,9 @@ class AppHomeController extends GetxController {
     print('Open App: $app');
     // if (app == 'mounts' && _isServerWin32) { return; } // 桌面端已注释，保持一致
     if (DeviceUtils.isMobile && app == 'task_center') {
+      return;
+    }
+    if (kIsWeb && app == 'sync') {
       return;
     }
     if (app == 'setting') {

@@ -12,6 +12,15 @@ function currentUid(req) {
   return req.user && req.user.id ? Number(req.user.id) : 0;
 }
 
+/// 从请求体取设备上下文（v2 协议：device_id + device_bound）。
+/// 旧客户端两者都没有 ⇒ deviceBound=false，服务端按「未绑定桶」兼容。
+function deviceCtx(req) {
+  const body = req.body || {};
+  const bound = body.device_bound === true || body.device_bound === 'true' || body.device_bound === 1 || body.device_bound === '1';
+  const deviceId = String(body.device_id ?? '').trim();
+  return { deviceId, deviceBound: bound && !!deviceId };
+}
+
 function normalizeManifest(list, maxItems = 200000) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -77,6 +86,7 @@ class SyncController {
         keyword,
         sortBy: sort_by,
         sortOrder: sort_order,
+        ...deviceCtx(req),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -88,7 +98,7 @@ class SyncController {
   async summary(req, res) {
     try {
       const service = new SyncService(req.dbMain);
-      const data = await service.summary({ uid: currentUid(req) });
+      const data = await service.summary({ uid: currentUid(req), ...deviceCtx(req) });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('sync summary failed', e);
@@ -100,7 +110,7 @@ class SyncController {
     try {
       const service = new SyncService(req.dbMain);
       const { id } = req.body || {};
-      const data = await service.get({ id, uid: currentUid(req) });
+      const data = await service.get({ id, uid: currentUid(req), ...deviceCtx(req) });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
       return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
@@ -132,6 +142,7 @@ class SyncController {
         syncConfig: sync_config,
         deviceId: device_id,
         deviceName: device_name,
+        ...deviceCtx(req),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -144,7 +155,7 @@ class SyncController {
     try {
       const service = new SyncService(req.dbMain);
       const { id } = req.body || {};
-      const data = await service.remove({ id, uid: currentUid(req) });
+      const data = await service.remove({ id, uid: currentUid(req), ...deviceCtx(req) });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('sync delete failed', e);
@@ -163,6 +174,7 @@ class SyncController {
         progress,
         lastError: last_error,
         lastSyncTime: last_sync_time,
+        ...deviceCtx(req),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -174,10 +186,9 @@ class SyncController {
     try {
       const service = new SyncService(req.dbMain);
       const { id, page, pageSize } = req.body || {};
-      const data = await service.listRecords({ taskId: id, uid: currentUid(req), page, pageSize });
+      const data = await service.listRecords({ taskId: id, uid: currentUid(req), page, pageSize, ...deviceCtx(req) });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
-      Logger.error('sync listRecords failed', e);
       return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
     }
   }
@@ -226,7 +237,7 @@ class SyncController {
 
       return ResponseUtil.success(req, res, { path: abs, exists, isDirectory, writable, fileCount, allowed: true }, 'common.SUCCESS', 200);
     } catch (e) {
-      return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
+      return ResponseUtil.error(req, res, 'common.ERROR', (e && e.statusCode) || 500);
     }
   }
 
@@ -239,7 +250,7 @@ class SyncController {
       const uid = currentUid(req);
       const { id, local_files, baseline_files, max_list_per_type } = req.body || {};
 
-      const task = await service.get({ id, uid });
+      const task = await service.get({ id, uid, ...deviceCtx(req) });
       const remoteDir = await syncUtil.resolveRemoteDir(task.remote_dir, { requireExists: true });
 
       const allowed = await hasPermission(req.dbMain, req.user, 'view', remoteDir).catch(() => false);
@@ -270,6 +281,7 @@ class SyncController {
           phase: 'planning',
           ...plan.summary,
         },
+        ...deviceCtx(req),
       });
 
       return ResponseUtil.success(
@@ -297,7 +309,7 @@ class SyncController {
       );
     } catch (e) {
       Logger.error('sync plan failed', e);
-      return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
+      return ResponseUtil.error(req, res, 'common.ERROR', (e && e.statusCode) || 500);
     }
   }
 
@@ -335,6 +347,7 @@ class SyncController {
         failCount: fail_count,
         bytesTransferred: bytes_transferred,
         errorList: error_list,
+        ...deviceCtx(req),
       });
 
       const finalStatus = String(status || '') === 'failed' ? 'error' : 'idle';
@@ -351,12 +364,13 @@ class SyncController {
           fail: Number(fail_count) || 0,
         },
         lastError: String(status || '') === 'failed' ? `sync.SYNC_FAILED` : null,
+        ...deviceCtx(req),
       });
 
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('sync report failed', e);
-      return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
+      return ResponseUtil.error(req, res, 'common.ERROR', (e && e.statusCode) || 500);
     }
   }
 
@@ -369,7 +383,7 @@ class SyncController {
       const uid = currentUid(req);
       const { id, rel_paths } = req.body || {};
 
-      const task = await service.get({ id, uid });
+      const task = await service.get({ id, uid, ...deviceCtx(req) });
       const remoteDir = await syncUtil.resolveRemoteDir(task.remote_dir, { requireExists: true });
 
       const allowed = await hasPermission(req.dbMain, req.user, 'view', remoteDir).catch(() => false);
@@ -393,7 +407,7 @@ class SyncController {
       return ResponseUtil.success(req, res, { deleted, failed, total: list.length }, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('sync deleteRemote failed', e);
-      return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
+      return ResponseUtil.error(req, res, 'common.ERROR', (e && e.statusCode) || 500);
     }
   }
 
@@ -406,7 +420,7 @@ class SyncController {
       const uid = currentUid(req);
       const { id, rel_path } = req.body || {};
 
-      const task = await service.get({ id, uid });
+      const task = await service.get({ id, uid, ...deviceCtx(req) });
       const remoteDir = await syncUtil.resolveRemoteDir(task.remote_dir, { requireExists: true });
 
       const allowed = await hasPermission(req.dbMain, req.user, 'upload', remoteDir).catch(() => false);
@@ -416,6 +430,33 @@ class SyncController {
       await fs.ensureDir(abs);
       return ResponseUtil.success(req, res, { path: abs }, 'common.SUCCESS', 200);
     } catch (e) {
+      return ResponseUtil.error(req, res, 'common.ERROR', (e && e.statusCode) || 500);
+    }
+  }
+
+  /**
+   * 认领旧版任务：把本账号下「未绑定主机」的任务全部划到本机名下。
+   *
+   * 只影响 device_id 为空 / 不带 m: 前缀的任务；已被其它机器认领的不动，
+   * 因此重复调用安全。典型用途：升级到设备隔离版本后，在老机器上点一次
+   * 「归属到本机」，把以前共享桶里的任务收回到自己名下。
+   */
+  async claimLegacy(req, res) {
+    try {
+      const service = new SyncService(req.dbMain);
+      const { device_id, device_name } = req.body || {};
+      const ctx = deviceCtx(req);
+      if (!ctx.deviceBound) {
+        return ResponseUtil.error(req, res, 'sync.DEVICE_ID_REQUIRED', 400);
+      }
+      const data = await service.claimLegacy({
+        uid: currentUid(req),
+        deviceId: ctx.deviceId,
+        deviceName: device_name,
+      });
+      return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
+    } catch (e) {
+      Logger.error('sync claimLegacy failed', e);
       return ResponseUtil.error(req, res, e && e.message ? String(e.message) : 'common.ERROR', (e && e.statusCode) || 500);
     }
   }

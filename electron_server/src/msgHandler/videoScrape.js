@@ -4,6 +4,7 @@ function handleStartVideoScrape({ expressWorker, singletonWorkerManager, initUti
   const requestId = message?.data?.requestId;
   const indexId = Number(message?.data?.indexId || 0) || 0;
   const tmdbId = message?.data?.tmdbId ? Number(message.data.tmdbId || 0) || 0 : 0;
+  const dvdId = message?.data?.dvdId ? String(message.data.dvdId).trim() : '';
   const mode = message?.data?.mode ? String(message.data.mode).trim() : '';
 
   if (!indexId) {
@@ -46,7 +47,7 @@ function handleStartVideoScrape({ expressWorker, singletonWorkerManager, initUti
 
   if (worker && typeof worker.send === 'function') {
     try {
-      worker.send({ type: 'start', data: { indexId, tmdbId } });
+      worker.send({ type: 'start', data: { indexId, tmdbId, dvdId } });
     } catch (_) {}
   }
 

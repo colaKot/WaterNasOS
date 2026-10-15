@@ -93,6 +93,17 @@ class PhotoAiSettingsApiService extends BaseApiService {
     );
   }
 
+  /// 重置场景识别：清空 photo_places* 并把 gen_place 置 0 后重扫
+  Future<ApiResponse<Map<String, dynamic>>> resetPlaces({
+    bool showLoading = false,
+  }) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/place/reset',
+      body: {},
+      showLoading: showLoading,
+    );
+  }
+
   Future<ApiResponse<Map<String, dynamic>>> setAiFaceMinShowCount(
     int minShowCount, {
     bool showLoading = false,
@@ -101,6 +112,76 @@ class PhotoAiSettingsApiService extends BaseApiService {
     return apiPost<Map<String, dynamic>>(
       '/api/photo/setAiFaceMinShowCount',
       body: {'min_show_count': v},
+      showLoading: showLoading,
+    );
+  }
+
+  /// 清理历史误检人脸（/face/purge，超管）
+  Future<ApiResponse<Map<String, dynamic>>> purgeSuspiciousFaces({
+    bool showLoading = false,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/face/purge',
+      body: {},
+      showLoading: showLoading,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(
+      (res.data ?? const <String, dynamic>{}).cast<String, dynamic>(),
+      message: res.message,
+      rawResponse: res.rawResponse,
+    );
+  }
+
+  /// 重新聚类：清空人脸分组并按当前参数重扫（/face/reset）
+  Future<ApiResponse<bool>> resetFaces({bool showLoading = false}) async {
+    final res = await apiPost<dynamic>(
+      '/api/photo/face/reset',
+      body: {},
+      showLoading: showLoading,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(true, message: res.message, rawResponse: res.rawResponse);
+  }
+
+  /// 人脸聚类参数（严格度 / 最低质量 / 二次合并阈值），仅超管
+  Future<ApiResponse<Map<String, dynamic>>> getFaceTuning({
+    bool showLoading = false,
+  }) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/face/tuning/get',
+      body: {},
+      showLoading: showLoading,
+    );
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> setFaceTuning({
+    required double simThresh,
+    required int minQuality,
+    required double secondMergeThresh,
+    int? threads,
+    bool showLoading = false,
+  }) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/face/tuning/set',
+      body: {
+        'simThresh': simThresh,
+        'minQuality': minQuality,
+        'secondMergeThresh': secondMergeThresh,
+        if (threads != null) 'threads': threads,
+      },
       showLoading: showLoading,
     );
   }

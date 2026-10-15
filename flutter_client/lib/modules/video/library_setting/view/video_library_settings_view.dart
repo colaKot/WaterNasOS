@@ -46,7 +46,7 @@ class VideoLibrarySettingsView extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       for (final lib in items) ...[
-                        _LibraryCard(library: lib),
+                        _LibraryCard(library: lib, compact: true),
                         const SizedBox(height: 8),
                       ],
                       _MobileAddLibraryCard(
@@ -275,16 +275,106 @@ class _AddLibraryRow extends StatelessWidget {
 }
 
 /// 单行紧凑卡片：图标 + 名称/类型 + 计数 + 改名/删除
+///
+/// [compact] = 手机窄屏（2026-10-12 改）：
+/// 原来手机上也走 PC 那一行，图标 + 名称 + 改名 + 删除 + 主页开关 + 响度开关全挤在
+/// 一行里 ⇒ 「名称」那一格被压到只剩几十像素，**库名整个看不见**。
+/// 现在手机端改成上下两行：第一行图标 + 库名（独占剩余宽度）+ 操作按钮，
+/// 第二行类型/计数 + 两个开关。
 class _LibraryCard extends StatelessWidget {
   final VideoLibrary library;
+  final bool compact;
 
-  const _LibraryCard({required this.library});
+  const _LibraryCard({required this.library, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final ctrl = Get.find<VideoLibrarySettingsController>();
     final faint = theme.colorScheme.onSurface.withValues(alpha: 0.5);
+
+    if (compact) {
+      return CustomGlassCard(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        borderRadius: 10.0,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 第一行：图标 + 库名 + 操作按钮（库名独占剩余宽度，不会再被挤没）
+            Row(
+              children: [
+                Icon(
+                  libTypeIcon(library.libType),
+                  size: 20,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: _buildName(theme)),
+                CustomBorderedIconButton(
+                  icon: Icons.edit_outlined,
+                  tooltip: 'video_library_rename_title'.tr,
+                  onTap: () => _showRenameDialog(ctrl, library),
+                ),
+                if (!library.isDefault) ...[
+                  const SizedBox(width: 6),
+                  CustomBorderedIconButton(
+                    icon: Icons.delete_outline,
+                    tooltip: 'delete'.tr,
+                    onTap: () => ctrl.deleteLibrary(library),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            // 第二行：类型 / 来源数 / 条目数
+            Text(
+              '${libTypeLabelKey(library.libType).tr} · '
+              '${'video_library_source_count'.tr} ${library.sourceCount} · '
+              '${library.totalCount} ${'video_library_item_count'.tr}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: faint,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // 第三行：两个开关（带文字说明，不再只靠 tooltip —— 手机上没有 hover）
+            Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _ToggleRow(
+                  icon: Icons.home_outlined,
+                  label: 'video_library_show_in_home'.tr,
+                  value: library.showInHome,
+                  onChanged: (v) => ctrl.setShowInHome(library, v),
+                  faint: faint,
+                ),
+                _ToggleRow(
+                  icon: Icons.graphic_eq,
+                  label: 'video_audio_normalize'.tr,
+                  value: library.audioNormalize,
+                  onChanged: (v) => ctrl.setAudioNormalize(library, v),
+                  faint: faint,
+                ),
+                // ⭐ 日本电影（2026-10-12）：开了才在列表显示「中/无码」徽章与筛选
+                if (library.libType == 'movie')
+                  _ToggleRow(
+                    icon: Icons.local_movies_outlined,
+                    label: 'video_library_jp_movie'.tr,
+                    value: library.jpMovie,
+                    onChanged: (v) => ctrl.setJpMovie(library, v),
+                    faint: faint,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
 
     return CustomGlassCard(
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
@@ -302,40 +392,7 @@ class _LibraryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        library.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (library.isDefault) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'video_library_builtin'.tr,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                _buildName(theme),
                 const SizedBox(height: 1),
                 Text(
                   '${libTypeLabelKey(library.libType).tr} · '
@@ -404,9 +461,100 @@ class _LibraryCard extends StatelessWidget {
               ],
             ),
           ),
+          if (library.libType == 'movie') ...[
+            const SizedBox(width: 10),
+            // ⭐ 日本电影（2026-10-12）
+            Tooltip(
+              message: 'video_library_jp_movie'.tr,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.local_movies_outlined, size: 14, color: faint),
+                  const SizedBox(width: 4),
+                  CustomSwitch(
+                    value: library.jpMovie,
+                    onChanged: (v) => ctrl.setJpMovie(library, v),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(width: 4),
         ],
       ),
+    );
+  }
+
+  /// 库名 + 「内置」徽章（PC / 手机两种布局共用）
+  Widget _buildName(ThemeData theme) {
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            library.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (library.isDefault) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              'video_library_builtin'.tr,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.primary,
+                fontSize: 10,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 手机端的一枚带文字开关（图标 + 文案 + 开关）
+class _ToggleRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final Color faint;
+
+  const _ToggleRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    required this.faint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: faint),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: faint,
+            fontSize: 11,
+          ),
+        ),
+        const SizedBox(width: 4),
+        CustomSwitch(value: value, onChanged: onChanged),
+      ],
     );
   }
 }

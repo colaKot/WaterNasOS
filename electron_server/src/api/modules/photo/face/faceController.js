@@ -8,6 +8,15 @@ const photoTimeLineService = require('../timeline/photoTimeLineService');
 const tableConfig = require('../../../../db/table/tableConfig');
 const userUtil = require('../../../../utils/userUtil');
 
+// 人脸聚类参数默认值 / 取值范围（服务端与 AI 设置页共用口径）
+const FACE_TUNING_DEFAULTS = { simThresh: 0.45, minQuality: 75, secondMergeThresh: 0.45, threads: 3 };
+const FACE_TUNING_RANGE = {
+  simThresh: [0.2, 0.9],
+  minQuality: [40, 95],
+  secondMergeThresh: [0.2, 0.9],
+  threads: [1, 8],
+};
+
 async function getEnableByKey(key) {
   try {
     const raw = await tableConfig.getConfigByKey(key);
@@ -18,7 +27,7 @@ async function getEnableByKey(key) {
 }
 
 class FaceController {
-  async listFaces(req, res) {
+  listFaces = async (req, res) => {
     try {
       const faceEnable = await getEnableByKey('ai_face_enable');
       if (faceEnable !== 1) {
@@ -50,13 +59,37 @@ class FaceController {
       }
       const service = new FaceService(req.dbPhoto);
       const result = await service.listFaces({ ...(req.body || {}), ...(validPaths !== undefined ? { validPaths } : {}) });
-      return ResponseUtil.success(req, res, { faceEnable, ...result }, 'common.SUCCESS', 200);
+      // ⭐ 识别进度一起返回：用户在人脸页就能看到「识别到多少 / 共多少」
+      const progress = await (async () => {
+        try {
+          const row = await req
+            .dbPhoto('photo_index')
+            .where('is_file', 1)
+            .andWhere('in_trash', 0)
+            .select(
+              req.dbPhoto.raw('COUNT(1) as total'),
+              req.dbPhoto.raw('SUM(CASE WHEN gen_faces = 1 THEN 1 ELSE 0 END) as done')
+            )
+            .first();
+          const total = Number(row && row.total ? row.total : 0) || 0;
+          const done = Number(row && row.done ? row.done : 0) || 0;
+          return {
+            total,
+            done,
+            remain: Math.max(0, total - done),
+            percent: total > 0 ? Math.round((done / total) * 100) : 0,
+          };
+        } catch (_) {
+          return { total: 0, done: 0, remain: 0, percent: 0 };
+        }
+      })();
+      return ResponseUtil.success(req, res, { faceEnable, faceProgress: progress, ...result }, 'common.SUCCESS', 200);
     } catch (e) {
       return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }
-  }
+  };
 
-  async setFaceCover(req, res) {
+  setFaceCover = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -70,9 +103,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async updateFaceName(req, res) {
+  updateFaceName = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -86,9 +119,16 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async mergeFaces(req, res) {
+  /// 取当前用户可见的相册源（人脸写操作的校验口径，与列表一致：零角色例外）
+  _validPathsOf = async (req) => {
+    if (!req.user) return [];
+    const raw = await photoTimeLineService.getValidPaths(req.user);
+    return (raw || []).map(p => (p ? String(p) : '')).filter(Boolean);
+  };
+
+  mergeFaces = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -96,6 +136,7 @@ class FaceController {
         faceIds: body.face_ids ?? body.faceIds,
         fromFaceId: body.from_face_id ?? body.fromFaceId,
         toFaceId: body.to_face_id ?? body.toFaceId,
+        validPaths: await this._validPathsOf(req),
       });
       return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
     } catch (e) {
@@ -103,9 +144,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async setFaceStatus(req, res) {
+  setFaceStatus = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -113,6 +154,7 @@ class FaceController {
         faceId: body.face_id ?? body.faceId,
         status: body.status ?? body.state,
         is_hide: body.is_hide ?? body.isHide,
+        validPaths: await this._validPathsOf(req),
       });
       return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
     } catch (e) {
@@ -120,9 +162,36 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async resetFaces(req, res) {
+  /** 清理历史误检人脸（全局维护操作，限管理员） */
+  purgeSuspiciousFaces = async (req, res) => {
+    try {
+      const body = req.body || {};
+      const service = new FaceService(req.dbPhoto);
+      const result = await service.purgeSuspiciousFaces({
+        maxFacesPerImage: body.max_faces_per_image ?? body.maxFacesPerImage,
+        minBoxWidthRatio: body.min_box_width_ratio ?? body.minBoxWidthRatio,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  /** 只重建「当前用户可见范围内」照片的人脸（普通用户可用，不碰别人的相册） */
+  rescanFaces = async (req, res) => {
+    try {
+      const service = new FaceService(req.dbPhoto);
+      const validPaths = await this._validPathsOf(req);
+      const result = await service.rescanFaces({ validPaths });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  resetFaces = async (req, res) => {
     try {
       const service = new FaceService(req.dbPhoto);
       const result = await service.resetFaceRecognition();
@@ -132,9 +201,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async faceImage(req, res) {
+  faceImage = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -151,9 +220,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async faceImageGet(req, res) {
+  faceImageGet = async (req, res) => {
     try {
       const query = req.query || {};
       let validPaths;
@@ -178,9 +247,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async listPhotoFaces(req, res) {
+  listPhotoFaces = async (req, res) => {
     try {
       const body = req.body || {};
       let validPaths;
@@ -201,15 +270,16 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async removePhotoFromFace(req, res) {
+  removePhotoFromFace = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
       const result = await service.removePhotoFromFace({
         faceId: body.face_id ?? body.faceId,
         fileHash: body.file_hash ?? body.fileHash,
+        validPaths: await this._validPathsOf(req),
       });
       return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
     } catch (e) {
@@ -217,9 +287,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async movePhotoToFace(req, res) {
+  movePhotoToFace = async (req, res) => {
     try {
       const body = req.body || {};
       const service = new FaceService(req.dbPhoto);
@@ -234,9 +304,9 @@ class FaceController {
       const statusCode = e && e.statusCode ? Number(e.statusCode) : msgKey === 'common.NOT_FOUND' ? 404 : msgKey === 'common.PARAM_ERROR' ? 400 : 500;
       return ResponseUtil.error(req, res, msgKey, statusCode);
     }
-  }
+  };
 
-  async downloadFacePhotos(req, res) {
+  downloadFacePhotos = async (req, res) => {
     try {
       const query = req.query || {};
       const body = req.body || {};
@@ -365,7 +435,100 @@ class FaceController {
       }
       res.destroy(err instanceof Error ? err : new Error('Face download error'));
     }
-  }
+  };
+  /**
+   * 人脸聚类参数（2026-10-13）：AI 设置页可调，改完点「重新聚类」生效。
+   * - simThresh：基础匹配阈值，越大越严格（不同人更不容易被并到一起，同人也更容易裂开）
+   * - minQuality：入库最低质量，越大越能挡住模糊/侧脸/误检
+   * - secondMergeThresh：二次合并阈值，越大越不容易在维护阶段把不同人再并到一起
+   */
+  getFaceTuning = async (req, res) => {
+    try {
+      const readNum = async (key, def) => {
+        try {
+          const raw = await tableConfig.getConfigByKey(key);
+          const n = Number(raw);
+          return raw === null || raw === undefined || raw === '' || !Number.isFinite(n) ? def : n;
+        } catch (_) {
+          return def;
+        }
+      };
+      const simThresh = await readNum('ai_face_sim_thresh', FACE_TUNING_DEFAULTS.simThresh);
+      const minQuality = await readNum('ai_face_min_quality', FACE_TUNING_DEFAULTS.minQuality);
+      const secondMergeThresh = await readNum(
+        'ai_face_second_merge_thresh',
+        FACE_TUNING_DEFAULTS.secondMergeThresh
+      );
+      const threads = await readNum('ai_face_threads', FACE_TUNING_DEFAULTS.threads);
+      return ResponseUtil.success(
+        req,
+        res,
+        { simThresh, minQuality, secondMergeThresh, threads, range: FACE_TUNING_RANGE },
+        'common.SUCCESS',
+        200
+      );
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  setFaceTuning = async (req, res) => {
+    try {
+      const body = (req && req.body) || {};
+      const clampTo = (v, def, range) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return def;
+        return Math.max(range[0], Math.min(range[1], n));
+      };
+      const simThresh = clampTo(body.simThresh, FACE_TUNING_DEFAULTS.simThresh, FACE_TUNING_RANGE.simThresh);
+      const minQuality = clampTo(body.minQuality, FACE_TUNING_DEFAULTS.minQuality, FACE_TUNING_RANGE.minQuality);
+      const secondMergeThresh = clampTo(
+        body.secondMergeThresh,
+        FACE_TUNING_DEFAULTS.secondMergeThresh,
+        FACE_TUNING_RANGE.secondMergeThresh
+      );
+      const threads = clampTo(body.threads, FACE_TUNING_DEFAULTS.threads, FACE_TUNING_RANGE.threads);
+
+      // 线程数变化需要重启识别进程才生效（worker 启动时读一次）
+      let prevThreads = FACE_TUNING_DEFAULTS.threads;
+      try {
+        const rawPrev = await tableConfig.getConfigByKey('ai_face_threads');
+        const nPrev = Number(rawPrev);
+        if (rawPrev !== null && rawPrev !== undefined && rawPrev !== '' && Number.isFinite(nPrev)) {
+          prevThreads = nPrev;
+        }
+      } catch (_) {}
+
+      await tableConfig.setConfigByKey('ai_face_sim_thresh', String(simThresh));
+      await tableConfig.setConfigByKey('ai_face_min_quality', String(minQuality));
+      await tableConfig.setConfigByKey('ai_face_second_merge_thresh', String(secondMergeThresh));
+      await tableConfig.setConfigByKey('ai_face_threads', String(threads));
+
+      // 线程数改了 ⇒ 重启人脸 worker（停旧起新；识别任务会自动继续）
+      const threadsChanged = Math.floor(prevThreads) !== Math.floor(threads);
+      if (threadsChanged && process.send) {
+        try {
+          process.send({ type: 'toggleAiFace', data: { enable: 0 } });
+          setTimeout(() => {
+            try {
+              process.send({ type: 'toggleAiFace', data: { enable: 1 } });
+            } catch (_) {}
+          }, 1500);
+        } catch (_) {}
+      }
+
+      return ResponseUtil.success(
+        req,
+        res,
+        { simThresh, minQuality, secondMergeThresh, threads, range: FACE_TUNING_RANGE, restarted: threadsChanged },
+        'common.SUCCESS',
+        200
+      );
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
 }
 
 module.exports = new FaceController();

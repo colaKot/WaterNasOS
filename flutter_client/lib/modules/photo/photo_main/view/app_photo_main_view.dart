@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter/services.dart';
+import 'package:WaterNasOS/core/bootstrap/app_launch.dart';
 import '../../timeline/controller/photo_timeline_controller.dart';
 import '../../timeline/view/app_photo_timeline_view.dart';
 import '../../../../utils/toast_util.dart';
@@ -19,6 +20,8 @@ import '../../timeline/view/parts/app_photo_timeline_multiselect_bar.dart';
 import '../../trash/view/app_photo_trash_view.dart';
 import '../../../folder_view/view/app_folder_view_page.dart';
 import '../../../folder_view/folder_view_module_type.dart';
+import '../../../photoBackup/view/app_photo_backup_view.dart';
+import '../../../transfer/views/download/download_center/app_download_center_view.dart';
 
 class AppPhotoMainView extends StatefulWidget {
   const AppPhotoMainView({super.key});
@@ -35,6 +38,10 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
   int _index = 0;
   _PhotoCenterMode _centerMode = _PhotoCenterMode.timeline;
   final FocusNode _searchFocusNode = FocusNode();
+
+  /// 独立相册 App（photo_client）模式：本文件的相册端专属改动只在此模式下生效，
+  /// 主客户端（AppLaunchMode.full）行为一字不变。
+  bool get _isPhotoApp => AppLaunch.mode == AppLaunchMode.photo;
 
   Future<void> _showAlbumCreateSheet() async {
     await showModalBottomSheet<void>(
@@ -146,18 +153,24 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
         customColors?.oprationBarBgColor ?? theme.colorScheme.surface;
 
     Widget buildNormalHeaderRow() {
+      final isPhotoApp = _isPhotoApp;
       return Row(
         children: [
-          CustomBorderedIconButton(
-            icon: Icons.home_outlined,
-            tooltip: 'back'.tr,
-            onTap: () => Get.back(),
-          ),
-          const SizedBox(width: 8),
-          // 搜索栏定宽靠右：原先用 Expanded 会贪婪占满整行，把右侧按钮挤到重叠
+          // 独立相册端没有「桌面」可回：左上角不放主页图标（主客户端保持不变）
+          if (!isPhotoApp) ...[
+            CustomBorderedIconButton(
+              icon: Icons.home_outlined,
+              tooltip: 'back'.tr,
+              onTap: () => Get.back(),
+            ),
+            const SizedBox(width: 8),
+          ],
+          // 搜索栏定宽：独立相册端左置定格；主客户端维持原靠右布局
+          // （原先用 Expanded 会贪婪占满整行，把右侧按钮挤到重叠）
           Flexible(
             child: Align(
-              alignment: Alignment.centerRight,
+              alignment:
+                  isPhotoApp ? Alignment.centerLeft : Alignment.centerRight,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 220),
                 child: CustomExpandableSearchBar(
@@ -174,6 +187,15 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
             ),
           ),
           const SizedBox(width: 8),
+          // 独立相册端：回收站前加下载按钮（向下箭头），点开即下载中心
+          if (_index == 0 && isPhotoApp) ...[
+            CustomBorderedIconButton(
+              icon: Icons.arrow_downward,
+              tooltip: 'home_download_center'.tr,
+              onTap: () => Get.to(() => const AppDownloadCenterView()),
+            ),
+            const SizedBox(width: 8),
+          ],
           if (_index == 0)
             CustomBorderedIconButton(
               icon: Icons.delete_outline,
@@ -260,6 +282,8 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
       return const AppPhotoAiView();
     }
     if (_index == 4) {
+      // 独立相册端：最后一项由「文件」整体换成「备份」，内容即相册备份页
+      if (_isPhotoApp) return const AppPhotoBackupView(embedded: true);
       return const AppFolderViewPage(moduleType: FolderViewModuleType.photo);
     }
     return Center(child: Text('not_implemented_yet'.tr));
@@ -419,8 +443,13 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
                 label: 'app_photo_tab_ai'.tr,
               ),
               BottomNavigationBarItem(
-                icon: const Icon(Icons.folder_outlined),
-                label: 'file'.tr,
+                // 独立相册端：最后一项「文件」换成「备份」（相册备份内容）
+                icon: Icon(
+                  _isPhotoApp
+                      ? Icons.cloud_upload_outlined
+                      : Icons.folder_outlined,
+                ),
+                label: _isPhotoApp ? 'app_backup'.tr : 'file'.tr,
               ),
             ],
           );
@@ -460,6 +489,32 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
                   )
                 : buildBottomNavigationBar(),
           );
+        }
+
+        // 独立相册端：体系内没有「桌面」可回，系统返回一律在相册端内部消化
+        // （多选态先退多选 -> 非照片 tab 先回照片 tab -> 照片 tab 直接退出应用），
+        // 绝不回桌面。主客户端维持原逻辑（pop 回桌面）。
+        if (_isPhotoApp) {
+          return Obx(() {
+            final isMulti = _timelineCtrl.isMultiSelectMode.value;
+            return PopScope(
+              canPop: false,
+              onPopInvoked: (didPop) {
+                if (didPop) return;
+                if (isMulti) {
+                  _timelineCtrl.exitMultiSelectMode();
+                  return;
+                }
+                if (_index != 0) {
+                  setState(() => _index = 0);
+                  return;
+                }
+                // 照片主页再返回：退出应用（而不是露出下面的桌面）
+                SystemNavigator.pop();
+              },
+              child: buildScaffold(isMulti: isMulti),
+            );
+          });
         }
 
         if (_index != 0) {

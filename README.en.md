@@ -44,7 +44,7 @@ Everything changed relative to upstream is listed below: the earlier feature wor
 
 ### Project-wide
 
-- **Renamed**: the project and every client display name is now **WaterNasOS** (WaterNasOSServer for the Windows server, WaterNasOS TV for the TV clients); the Flutter package name changed from `NasCabOS` to `WaterNasOS`.
+- **Renamed**: the project and every client display name is now **WaterNasOS** (WaterNasOSServer for the Windows server, WaterNasOS TV for the TV clients); the Flutter package name changed from `NasCabOS` to `WaterNasOS`. The desktop main client program is **WaterNasClient**, the standalone sync client is **WaterNasSync**.
 - **Backward compatible**: application identifiers such as `applicationId`, the iOS Bundle ID and the HarmonyOS `bundleName` are **left unchanged**, so existing installs can upgrade in place; network protocols, device fingerprints and encrypted data formats are untouched.
 - **Slimmed repository**: third-party runtime binaries (sftpgo, openlist, ffmpeg, ffprobe, rclone, transmission), AI models (`onnx_models`), CocoaPods trees and the geonames database are no longer bundled; run `tool/fetch_nascab_assets.py` to fetch them from the official manifest.
 - **Contact & donations**: updated to the maintainer's QR code and email.

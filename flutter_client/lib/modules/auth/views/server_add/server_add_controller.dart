@@ -40,6 +40,36 @@ class ServerAddController extends GetxController {
 
   bool get isP2pMode => prefillServerInfo?.isP2p == true;
 
+  /// 把用户填的服务器地址规范化成 `host[:port]`（2026-10-12）。
+  ///
+  /// 为什么需要：用户经常直接粘贴带尾斜杠的地址（`192.168.1.10:6789/`），
+  /// 或者整段 URL（`http://192.168.1.10:6789/`），还会前后带空格。
+  /// 原来的校验正则 `^[a-zA-Z0-9.-]+(:\d+)?$` 一律判为「地址无效」，
+  /// 拼接后还会出现 `http://host:port//` 这种双斜杠地址。
+  ///
+  /// 规则：去首尾空白 → 剥掉 `http(s)://` 前缀（协议由上面的选择器决定）
+  /// → 砍掉第一个 `/`、`?`、`#` 之后的内容 → 再去一次首尾空白。
+  static String normalizeServerAddressInput(String? raw) {
+    var v = (raw ?? '').trim();
+    if (v.isEmpty) return '';
+    final lower = v.toLowerCase();
+    if (lower.startsWith('https://')) {
+      v = v.substring(8);
+    } else if (lower.startsWith('http://')) {
+      v = v.substring(7);
+    }
+    final cut = v.indexOf(RegExp(r'[/?#]'));
+    if (cut >= 0) v = v.substring(0, cut);
+    return v.trim();
+  }
+
+  /// 判断规范化后的地址是否是合法的 `host[:port]`。
+  static bool isValidServerAddress(String? raw) {
+    final v = normalizeServerAddressInput(raw);
+    if (v.isEmpty) return false;
+    return RegExp(r'^[a-zA-Z0-9.-]+(:\d{1,5})?$').hasMatch(v);
+  }
+
   @override
   void onInit() {
     super.onInit();
@@ -160,8 +190,15 @@ class ServerAddController extends GetxController {
           needInputPwdEveryTime: needInputPwdEveryTime.value,
         );
       } else {
-        // 构建完整的服务器URL
-        final fullServerUrl = '${protocol.value}://${serverUrl.value}';
+        // 构建完整的服务器URL。
+        // ⭐ 先把用户输入规范化（2026-10-12）：容忍尾部 `/`、整段 URL 粘贴、
+        // 前后空格 —— 否则会拼出 `http://host:port//` 这种请求必然失败的地址。
+        final normalizedAddress = normalizeServerAddressInput(serverUrl.value);
+        if (normalizedAddress != serverUrl.value) {
+          // 回写输入框，让用户看到真正生效的地址（listener 会同步 serverUrl）
+          serverUrlController.text = normalizedAddress;
+        }
+        final fullServerUrl = '${protocol.value}://$normalizedAddress';
 
         // 构建服务器信息
         serverInfo = ServerInfoBean(

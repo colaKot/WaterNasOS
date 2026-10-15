@@ -36,6 +36,9 @@ class ServerListController extends GetxController {
   static const String _prefPrivacyConsentAccepted =
       'android_privacy_consent_accepted';
 
+  /// 用户主动登出后置位；置位期间启动不再自动登录（避免登出后被自动登回去）。
+  static const String _prefAutoLoginDisabled = 'auth_auto_login_disabled';
+
   // 响应式状态变量
   final localServerRx = Rxn<ServerInfoBean>();
   final savedServersRx = <ServerInfoBean>[].obs;
@@ -53,6 +56,7 @@ class ServerListController extends GetxController {
   bool _exitDialogShowing = false;
   bool _initFlowStarted = false;
   bool _privacyDialogShowing = false;
+  bool _autoLoginInProgress = false;
 
   @override
   void onInit() {
@@ -85,6 +89,77 @@ class ServerListController extends GetxController {
 
     final themeMode = ThemeManager().getThemeMode();
     Get.changeThemeMode(themeMode);
+
+    // 已记住服务端与账号时自动登录，免去再点一次服务器（桌面端 / 安卓端）
+    unawaited(_tryAutoLogin());
+  }
+
+  /// 自动登录：本地存在「记住的服务器 + 账号 + 密码」时直接登录进首页。
+  ///
+  /// 触发条件（全部满足才会自动登录）：
+  /// - 用户没有主动登出过（[_prefAutoLoginDisabled] 未被置位）；
+  /// - 候选项没有开启「每次都要输入密码」；
+  /// - 候选项已有用户名与密码。
+  ///
+  /// 失败时静默退回服务器列表，不弹错误框打扰用户。
+  Future<void> _tryAutoLogin() async {
+    if (_autoLoginInProgress) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_prefAutoLoginDisabled) == true) return;
+
+      final servers = savedServersRx.toList();
+      if (servers.isEmpty) return;
+
+      ServerInfoBean? target;
+      final last = ServerStorageService.getLastSelectedServer();
+      if (last != null) {
+        target = _findMatchingServer(servers, last) ?? last;
+      }
+      target ??= _pickAutoLoginCandidate(servers);
+      if (target == null) return;
+      if (target.needInputPwdEveryTime) return;
+      if ((target.username ?? '').trim().isEmpty) return;
+      if ((target.password ?? '').trim().isEmpty) return;
+
+      final ctx = await _getOverlayContextWithRetry();
+      if (ctx == null) return;
+
+      _autoLoginInProgress = true;
+      print('[AutoLogin] 自动登录: ${target.serverName} / ${target.username}');
+      await handleServerTap(ctx, target, silentFailure: true);
+    } catch (e) {
+      print('[AutoLogin] 自动登录失败: $e');
+    } finally {
+      _autoLoginInProgress = false;
+    }
+  }
+
+  /// 在已保存列表里找与 [key] 同一身份的条目（取最新副本）。
+  ServerInfoBean? _findMatchingServer(
+    List<ServerInfoBean> servers,
+    ServerInfoBean key,
+  ) {
+    for (final s in servers) {
+      if (ServerStorageService.isSameIdentity(s, key)) return s;
+    }
+    return null;
+  }
+
+  /// 挑选自动登录候选：有用户名密码、且未开启「每次输入密码」，按最近登录时间取最新。
+  ServerInfoBean? _pickAutoLoginCandidate(List<ServerInfoBean> servers) {
+    final list = servers.where((s) {
+      return !s.needInputPwdEveryTime &&
+          (s.username ?? '').trim().isNotEmpty &&
+          (s.password ?? '').trim().isNotEmpty;
+    }).toList();
+    if (list.isEmpty) return null;
+    list.sort((a, b) {
+      final ta = a.lastLoginTime?.millisecondsSinceEpoch ?? 0;
+      final tb = b.lastLoginTime?.millisecondsSinceEpoch ?? 0;
+      return tb.compareTo(ta);
+    });
+    return list.first;
   }
 
   void _openLegalFromPrivacyDialog(String url, String title) {
@@ -365,8 +440,9 @@ class ServerListController extends GetxController {
   /// - P2P 使用 auto 模式同时探测直连/中继，连接成功后若为中继则在后台尝试升级直连
   Future<void> handleServerTap(
     BuildContext context,
-    ServerInfoBean serverItem,
-  ) async {
+    ServerInfoBean serverItem, {
+    bool silentFailure = false,
+  }) async {
     if (_serverTapLocked) return;
     _serverTapLocked = true;
     _showTapLoadingDialog(context);
@@ -440,7 +516,7 @@ class ServerListController extends GetxController {
         }
 
         if (status == null || !status.success || !status.isNasCabServer) {
-          _showErrorDialog('server_connect_fail'.tr);
+          if (!silentFailure) _showErrorDialog('server_connect_fail'.tr);
           return;
         }
 
@@ -506,11 +582,13 @@ class ServerListController extends GetxController {
       }
     } catch (e) {
       _dismissTapLoadingDialog();
-      _showErrorDialog(
-        ApiController.shouldFormatAsP2pConnectError(e)
-            ? ApiController.formatP2pConnectError(e)
-            : 'server_status_check_failed_with_error'.trParams({'error': '$e'}),
-      );
+      if (!silentFailure) {
+        _showErrorDialog(
+          ApiController.shouldFormatAsP2pConnectError(e)
+              ? ApiController.formatP2pConnectError(e)
+              : 'server_status_check_failed_with_error'.trParams({'error': '$e'}),
+        );
+      }
     } finally {
       _serverTapLocked = false;
     }
@@ -926,6 +1004,13 @@ class ServerListController extends GetxController {
         (serverItem.pairCode ?? '').trim().isNotEmpty;
     await ServerStorageService.addServer(serverItem);
     await refreshSavedServers();
+    // 记住本次登录的服务器，作为下次启动自动登录的候选
+    await ServerStorageService.saveLastSelectedServer(serverItem);
+    // 登录成功 ⇒ 解除「禁止自动登录」标记
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefAutoLoginDisabled, false);
+    } catch (_) {}
 
     ApiController.instance.setAuthInfo(
       serverId: serverItem.serverId,

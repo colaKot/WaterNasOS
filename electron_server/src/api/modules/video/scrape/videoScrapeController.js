@@ -15,7 +15,9 @@ class VideoScrapeController {
       const indexId = Number(body.index_id ?? body.indexId ?? 0) || 0;
       const tmdbIdRaw = String(body.tmdb_id ?? body.tmdbId ?? '').trim();
       const tmdbId = tmdbIdRaw ? Number(tmdbIdRaw || 0) || 0 : 0;
-      const mode = String(body.mode ?? '').trim() || (tmdbId ? 'manual' : 'auto');
+      // ⭐ 手动选中「日本片」结果时带过来的番号（见 videoTmdbController._tryJavPrioritySearch）
+      const javDvdId = String(body.jav_dvd_id ?? body.javDvdId ?? body.dvd_id ?? body.dvdId ?? '').trim();
+      const mode = String(body.mode ?? '').trim() || (tmdbId || javDvdId ? 'manual' : 'auto');
 
       if (!indexId) return ResponseUtil.error(req, res, 'common.PARAM_ERROR', 400);
       if (tmdbIdRaw && !tmdbId) return ResponseUtil.error(req, res, 'common.PARAM_ERROR', 400);
@@ -110,6 +112,7 @@ class VideoScrapeController {
               requestId,
               indexId: targetIndexId,
               tmdbId: tmdbId || undefined,
+              dvdId: javDvdId || undefined,
               mode,
             },
           });

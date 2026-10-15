@@ -47,7 +47,7 @@ Widget buildPhotoAlbumCreateEditDialogContent({
               ),
               Expanded(
                 child: SwitchListTile(
-                  activeColor: Theme.of(context).colorScheme.primary,
+                  activeThumbColor: Theme.of(context).colorScheme.onPrimary,
                   contentPadding: EdgeInsets.zero,
                   title: Text('photo_album_public'.tr),
                   value: isPublic,

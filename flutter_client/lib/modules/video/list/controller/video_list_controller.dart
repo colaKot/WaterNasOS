@@ -193,6 +193,12 @@ class VideoListController extends GetxController {
   final RxList<int> availableYears = <int>[].obs;
   final RxList<int> baseAvailableYears = <int>[].obs;
 
+  /// ⭐ 日本片标记筛选（2026-10-12）：'uncensored'（无码）/ 'chinese_sub'（中文字幕）。
+  /// 仅当当前库开了「日本电影」开关（服务端 filters.jp_tags_enabled）时才显示与生效。
+  final RxList<String> selectedJpTags = <String>[].obs;
+  final RxList<String> availableJpTags = <String>[].obs;
+  final RxBool jpTagsFilterEnabled = false.obs;
+
   final RxList<VideoListPathItem> availablePaths = <VideoListPathItem>[].obs;
   final RxList<String> selectedPaths = <String>[].obs;
   final VideoListSourceFilterStorage _sourceFilterStorage =
@@ -338,6 +344,7 @@ class VideoListController extends GetxController {
       regions.isNotEmpty ||
       actors.isNotEmpty ||
       directors.isNotEmpty ||
+      selectedJpTags.isNotEmpty ||
       selectedYears.isNotEmpty;
 
   int get selectedYearGroupCount {
@@ -359,6 +366,7 @@ class VideoListController extends GetxController {
       regions.length +
       actors.length +
       directors.length +
+      selectedJpTags.length +
       selectedYearGroupCount;
 
   bool get hasCustomSort {
@@ -386,6 +394,7 @@ class VideoListController extends GetxController {
   String _cursor = '';
   Timer? _searchDebounce;
   StreamSubscription<int>? _deletedSubscription;
+  StreamSubscription<int>? _updatedSubscription;
 
   /// 排序持久化键后缀。
   ///
@@ -597,6 +606,11 @@ class VideoListController extends GetxController {
     _deletedSubscription = VideoItemSyncService.deletedStream.listen(
       _handleExternalDelete,
     );
+    // ⭐ 条目在服务端被重新刮削后自动刷新（2026-10-12）：
+    //    桌面端列表页没有下拉刷新，不自动刷的话用户点完「应用」只能干瞪眼。
+    _updatedSubscription = VideoItemSyncService.updatedStream.listen(
+      _handleExternalUpdate,
+    );
     mediaType.value = initialMediaType;
     // ⭐ 图片 / 混合库的默认排序 = **名字升序**（需求 2026-10-12）。
     //    ⚠️ 必须放在 `_loadSortSettings()` **之前**：那个方法读不到缓存时会
@@ -633,8 +647,16 @@ class VideoListController extends GetxController {
   @override
   void onClose() {
     _deletedSubscription?.cancel();
+    _updatedSubscription?.cancel();
     _searchDebounce?.cancel();
     super.onClose();
+  }
+
+  /// 服务端重新刮削完成（[VideoItemSyncService.notifyUpdated] 已做延迟）：
+  /// 静默重拉当前页，不闪加载态，也不动用户的滚动位置与已选筛选。
+  void _handleExternalUpdate(int indexId) {
+    if (indexId <= 0) return;
+    refreshList(silent: true).catchError((_) {});
   }
 
   void _handleExternalDelete(int indexId) {
@@ -647,9 +669,13 @@ class VideoListController extends GetxController {
     }
   }
 
-  Future<void> refreshList({bool showLoading = false}) async {
+  /// 重拉第一页。
+  ///
+  /// [silent] 为 true 时不切到全屏加载态：用于「服务端刮削完成后自动刷新」，
+  /// 列表直接原地换数据，不会闪一下转圈、也不打扰正在浏览的用户。
+  Future<void> refreshList({bool showLoading = false, bool silent = false}) async {
     final requestedSelectedPaths = selectedPaths.toList(growable: false);
-    loading.value = true;
+    if (!silent) loading.value = true;
     autoLoadFailed.value = false;
     try {
       _page = 1;
@@ -672,6 +698,9 @@ class VideoListController extends GetxController {
         actors: actors.toList(),
         directors: directors.toList(),
         years: selectedYears.toList(),
+        // ⭐ 日本片标记筛选：只在服务端确认该库开了「日本电影」时才发，
+        //    否则传了也会被忽略，还可能让 URL 变长。
+        jpTags: jpTagsFilterEnabled.value ? selectedJpTags.toList() : null,
         // ⭐ 文件夹视图下不发来源筛选：folderPath 本身就是路径口径，
         //    两个一起发会被服务端 intersect 掉，出现「明明在浏览却 403」。
         sourceList: (folderViewEnabled.value || requestedSelectedPaths.isEmpty)
@@ -709,6 +738,15 @@ class VideoListController extends GetxController {
         availableYears.assignAll(filters.years);
         if (selectedYears.isEmpty) {
           baseAvailableYears.assignAll(filters.years);
+        }
+        // ⭐ 日本片标记（2026-10-12）：库没开「日本电影」时隐藏分组并清掉已选，
+        //    避免出现"筛选项还在、但结果不受影响"的错觉。
+        jpTagsFilterEnabled.value = filters.jpTagsEnabled;
+        if (!filters.jpTagsEnabled) {
+          if (selectedJpTags.isNotEmpty) selectedJpTags.clear();
+          availableJpTags.clear();
+        } else {
+          availableJpTags.assignAll(filters.jpTags);
         }
       }
     } finally {
@@ -954,6 +992,27 @@ class VideoListController extends GetxController {
     refreshList(showLoading: true);
   }
 
+  /// ⭐ 日本片标记筛选（2026-10-12）：'uncensored'（无码）/ 'chinese_sub'（中文字幕）。
+  /// 多选，两个都不选 = 不限；多选时服务端取并集（OR）。
+  void toggleJpTag(String tag) {
+    final v = tag.trim().toLowerCase();
+    if (v.isEmpty) return;
+    if (selectedJpTags.contains(v)) {
+      selectedJpTags.remove(v);
+    } else {
+      selectedJpTags.add(v);
+    }
+    refreshList(showLoading: true);
+  }
+
+  /// 可供选择的日本片标记：优先用服务端返回的，缺失时兜底两种取值。
+  List<String> getJpTagOptions() {
+    final list = availableJpTags.isNotEmpty
+        ? availableJpTags.toList()
+        : <String>['uncensored', 'chinese_sub'];
+    return list.where((e) => e.trim().isNotEmpty).toList();
+  }
+
   List<VideoListYearGroup> getYearGroups() {
     final sourceYears = baseAvailableYears.isNotEmpty
         ? baseAvailableYears
@@ -1004,6 +1063,7 @@ class VideoListController extends GetxController {
   void resetFilter() {
     genres.clear();
     regions.clear();
+    selectedJpTags.clear();
     selectedYears.clear();
     refreshList(showLoading: true);
   }

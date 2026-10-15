@@ -132,6 +132,27 @@ extension PlayerListener on PlayerController {
         playbackEngineType.value == PlaybackEngineType.media3 &&
         currentQuality.value == 'original';
 
+    // 输出编码降级兜底（2026-10-15）：H.265/AV1 转码播放失败，多数是设备对该编码
+    // 硬解能力不足（或 10-bit / 高规格超出解码器能力）。此时先自动回退到兼容性最好的
+    // H.264 重试一次，而不是直接把错误抛给用户。
+    final curQ = currentQuality.value;
+    final isTranscodeQuality =
+        curQ != PlayQuality.original && curQ != PlayQuality.originalAudio;
+    if (isTranscodeQuality &&
+        _effectiveOutputCodecOverride == null &&
+        VideoCodec.normalize(_preferredOutputCodec) != VideoCodec.h264) {
+      _effectiveOutputCodecOverride = VideoCodec.h264;
+      _syncQualityOptionsForCodec();
+      _isRecoveringFromError = true;
+      isInitialized.value = false;
+      _reloadRetryCount = 0;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (isClosed) return;
+      _isRecoveringFromError = false;
+      await _initializePlayer(keepPosition: true);
+      return;
+    }
+
     // Android 原画：原生层已先硬解再 FFmpeg 软解，上报错误时勿再用 openUrl 重置为硬解重试。
     if (isAndroidMedia3Original) {
       if (!_autoSwitchedToTranscode) {

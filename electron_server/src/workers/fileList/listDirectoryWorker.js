@@ -235,3 +235,8 @@ if (parentPort) {
     }
   });
 }
+
+// ⭐ 导出 runTask：worker 线程加载时 `parentPort` 存在，这段监听照常注册；
+// 主线程 require 时 parentPort 为 null，只拿到函数本体 —— 供 fileListController
+// 在 worker 不可用时回退到主线程直接执行。
+module.exports = { runTask };

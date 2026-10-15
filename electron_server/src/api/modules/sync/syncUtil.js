@@ -27,8 +27,8 @@ const DEFAULT_FILTER_CONFIG = {
 };
 
 const DEFAULT_SYNC_CONFIG = {
-  realtime: true, // 按需同步（实时监控）
-  intervalMinutes: 30, // 定时同步间隔，0 表示不定时
+  realtime: false, // 按需同步（实时监控）：默认关闭
+  intervalMinutes: 1, // 定时同步间隔，0 表示不定时；默认 1 分钟
   conflictStrategy: 'prefer_newer', // prefer_newer | prefer_local | prefer_remote
   deleteExtra: false, // 是否传播删除（仅双向同步生效）
 };
@@ -78,7 +78,7 @@ function normalizeSyncConfig(raw) {
   const strategy = String(src.conflictStrategy || '').trim();
   const interval = Number(src.intervalMinutes);
   return {
-    realtime: src.realtime !== false,
+    realtime: src.realtime === true,
     intervalMinutes: Number.isFinite(interval) && interval >= 0 ? Math.min(interval, 24 * 60) : DEFAULT_SYNC_CONFIG.intervalMinutes,
     conflictStrategy: ['prefer_newer', 'prefer_local', 'prefer_remote'].includes(strategy) ? strategy : DEFAULT_SYNC_CONFIG.conflictStrategy,
     deleteExtra: src.deleteExtra === true,
@@ -206,7 +206,8 @@ async function scanDirectory(rootDir, filter, options = {}) {
       files.push({
         relPath: rel,
         size: Number(stat.size) || 0,
-        mtimeMs: Number(stat.mtimeMs) || 0,
+        // 取整到毫秒：客户端按 int 解析时间戳，带小数的 mtimeMs 会被丢成 0
+        mtimeMs: Math.round(Number(stat.mtimeMs) || 0),
       });
     }
   };

@@ -1,4 +1,9 @@
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// photo_index.content_md5 是否存在（进程内缓存；缺失时请求内自愈补列）
+let _contentMd5ColumnReady = false;
 
 class PhotoSourceService {
   constructor(knex) {
@@ -9,6 +14,208 @@ class PhotoSourceService {
   normalizeUid(uid) {
     const n = Number(uid);
     return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /**
+   * 确保 photo_index.content_md5 列存在。
+   * 与服务端 /api/file/md5 使用同一套算法，用于「跨相册源内容去重」缓存。
+   */
+  async ensureContentMd5Column() {
+    if (_contentMd5ColumnReady) return true;
+    try {
+      const info = await this.knex.raw(`PRAGMA table_info('photo_index')`);
+      const rows = Array.isArray(info) ? info : ((info && info.rows) || []);
+      const names = new Set((rows || []).map(r => (r && r.name ? String(r.name) : '')));
+      if (!names.has('content_md5')) {
+        await this.knex.raw('ALTER TABLE photo_index ADD COLUMN content_md5 TEXT');
+      }
+      _contentMd5ColumnReady = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * 内容 MD5：<阈值全量；>=阈值取头/尾各 chunkSize。
+   * 必须与 fileListController.computeMd5Full / computeMd5HeadTail 逐字节一致，
+   * 否则客户端本地算出的 MD5 永远对不上。
+   */
+  async computeContentMd5(filePath, fileSize, thresholdBytes = 50 * 1024 * 1024, chunkSizeBytes = 1024 * 1024) {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile()) return '';
+      const size = Number.isFinite(Number(fileSize)) && Number(fileSize) > 0 ? Number(fileSize) : stat.size;
+      if (size <= 0) return '';
+
+      if (size < thresholdBytes) {
+        return await new Promise((resolve, reject) => {
+          const hash = crypto.createHash('md5');
+          const stream = fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 });
+          stream.on('data', chunk => hash.update(chunk));
+          stream.on('error', reject);
+          stream.on('end', () => resolve(hash.digest('hex')));
+        });
+      }
+
+      const headLen = Math.min(chunkSizeBytes, size);
+      const tailLen = Math.min(chunkSizeBytes, size);
+      const headBuf = Buffer.allocUnsafe(headLen);
+      const tailBuf = Buffer.allocUnsafe(tailLen);
+      const fh = await fs.promises.open(filePath, 'r');
+      try {
+        const headRead = await fh.read(headBuf, 0, headLen, 0);
+        const tailRead = await fh.read(tailBuf, 0, tailLen, Math.max(0, size - tailLen));
+        const hash = crypto.createHash('md5');
+        if (headRead && headRead.bytesRead > 0) hash.update(headBuf.subarray(0, headRead.bytesRead));
+        if (tailRead && tailRead.bytesRead > 0) hash.update(tailBuf.subarray(0, tailRead.bytesRead));
+        return hash.digest('hex');
+      } finally {
+        await fh.close().catch(() => {});
+      }
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /** 该用户的相册源根目录（去重、去空） */
+  async listSourceRoots(uid) {
+    const rows = await this.knex(this.tableName)
+      .where({ uid: this.normalizeUid(uid) })
+      .select('path')
+      .catch(() => []);
+    return [
+      ...new Set(
+        (rows || []).map(r => (r && r.path ? String(r.path).trim() : '')).filter(Boolean)
+      ),
+    ];
+  }
+
+  /**
+   * 跨相册源内容级去重（2026-10-13 增 size 预检 absent）。
+   *
+   * 语义：在该用户**全部相册源**（photo_source）范围内，查找是否存在内容完全相同的照片，
+   * 不局限于「同一目标文件夹/同一文件名」。
+   *
+   * 做法：先用 photo_index.size 粗筛（size 已在库内，几乎零成本），
+   * 再只对「大小相同」的极少数候选惰性计算内容 MD5，并把结果写回 photo_index.content_md5 缓存。
+   * 因此不会为了去重去全量哈希整个图库。
+   *
+   * ⭐ size 预检（absent）：items 的 md5 现在**可选**。只带 size 的条目用于判定
+   * 「这个 size 在我全部相册源里一个候选都没有」——absent 列表里的 size 意味着
+   * **内容不可能已存在**（同内容必同 size），客户端可跳过本地 MD5 直接上传。
+   * 老客户端（必带 md5）行为不变：matched 口径与此前完全一致，只是多返回 absent 字段。
+   *
+   * @param {number} uid 当前用户 id（可见性零角色例外：只比对本人的相册源）
+   * @param {Array<{md5?: string, size: number}>} items 待上传条目（md5 可选）
+   * @returns {Promise<{matched: string[], absent: number[], scanned: number, hashed: number}>}
+   */
+  async findExistingContent(uid, items) {
+    const list = Array.isArray(items) ? items : [];
+    const wantedBySize = new Map(); // size -> Set(md5)，只收集带了 md5 的条目
+    const allMd5 = new Set();
+    const requestedSizes = new Set();
+    for (const it of list) {
+      const size = Number(it && it.size);
+      if (!Number.isFinite(size) || size <= 0) continue;
+      requestedSizes.add(size);
+      const md5 = String((it && it.md5) || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{32}$/.test(md5)) continue;
+      if (!wantedBySize.has(size)) wantedBySize.set(size, new Set());
+      wantedBySize.get(size).add(md5);
+      allMd5.add(md5);
+    }
+    if (requestedSizes.size === 0) return { matched: [], absent: [], scanned: 0, hashed: 0 };
+
+    const roots = await this.listSourceRoots(uid);
+    if (roots.length === 0) {
+      // 没有任何相册源：请求的 size 必然都不存在（matched 也必然为空）
+      return { matched: [], absent: [...requestedSizes], scanned: 0, hashed: 0 };
+    }
+    if (!(await this.ensureContentMd5Column())) {
+      // 没有 content_md5 列时无法做内容比对；但 size 存在性不依赖该列，absent 仍可信
+      const presentNoColumn = await this.queryPresentSizes(roots, [...requestedSizes]);
+      return {
+        matched: [],
+        absent: [...requestedSizes].filter((s) => !presentNoColumn.has(s)),
+        scanned: 0,
+        hashed: 0,
+      };
+    }
+
+    // 1) size 存在性预检：哪些请求的 size 在图库里一个候选都没有
+    const presentSizes = await this.queryPresentSizes(roots, [...requestedSizes]);
+    const absent = [...requestedSizes].filter((s) => !presentSizes.has(s));
+
+    // 2) 内容比对：只处理「size 有候选 且 客户端带了 md5」的部分
+    const matched = new Set();
+    let scanned = 0;
+    let hashed = 0;
+    const candidateSizes = [...wantedBySize.keys()].filter((s) => presentSizes.has(s));
+    const SIZE_CHUNK = 300;
+
+    for (let i = 0; i < candidateSizes.length; i += SIZE_CHUNK) {
+      if (matched.size >= allMd5.size) break;
+      const slice = candidateSizes.slice(i, i + SIZE_CHUNK);
+
+      const query = this.knex('photo_index')
+        .where({ is_file: 1, in_trash: 0 })
+        .whereIn('size', slice)
+        .select('id', 'path', 'filename', 'size', 'content_md5');
+      query.where(qb => {
+        for (const root of roots) {
+          const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+          qb.orWhere('path', root).orWhere('path', 'like', `${prefix}%`);
+        }
+      });
+
+      const rows = await query.catch(() => []);
+      for (const row of rows || []) {
+        const size = Number(row.size);
+        const cands = wantedBySize.get(size);
+        if (!cands || cands.size === 0) continue;
+        scanned += 1;
+
+        let md5 = row.content_md5 ? String(row.content_md5).trim().toLowerCase() : '';
+        if (!md5 || !/^[0-9a-f]{32}$/.test(md5)) {
+          const abs = path.join(String(row.path || ''), String(row.filename || ''));
+          md5 = await this.computeContentMd5(abs, size);
+          if (!md5) continue;
+          hashed += 1;
+          await this.knex('photo_index').where({ id: row.id }).update({ content_md5: md5 }).catch(() => {});
+        }
+        if (cands.has(md5)) matched.add(md5);
+      }
+    }
+
+    return { matched: [...matched], absent, scanned, hashed };
+  }
+
+  /// 查询这批 size 里哪些在图库（该用户可见的源范围内）至少有一个候选行。
+  /// 只 select size，走索引，代价与 size 个数成正比、与库大小无关。
+  async queryPresentSizes(roots, sizes) {
+    const present = new Set();
+    if (!sizes || sizes.length === 0) return present;
+    const SIZE_CHUNK = 300;
+    for (let i = 0; i < sizes.length; i += SIZE_CHUNK) {
+      const slice = sizes.slice(i, i + SIZE_CHUNK);
+      const query = this.knex('photo_index')
+        .where({ is_file: 1, in_trash: 0 })
+        .whereIn('size', slice)
+        .distinct('size');
+      query.where(qb => {
+        for (const root of roots) {
+          const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+          qb.orWhere('path', root).orWhere('path', 'like', `${prefix}%`);
+        }
+      });
+      const rows = await query.catch(() => []);
+      for (const row of rows || []) {
+        const size = Number(row.size);
+        if (Number.isFinite(size) && size > 0) present.add(size);
+      }
+    }
+    return present;
   }
 
   /**

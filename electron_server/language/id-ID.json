@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "Plugin yang diperlukan untuk fitur ini masih diunduh. Silakan coba lagi nanti."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "ID perangkat tidak ada. Perbarui klien dan coba lagi.",
+      "DEVICE_ID_INVALID": "ID perangkat tidak valid"
     }
   },
   "places365": {

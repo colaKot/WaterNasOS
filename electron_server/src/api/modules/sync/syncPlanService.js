@@ -20,7 +20,10 @@ function toMap(list) {
       map.set(rel, {
         relPath: rel,
         size: Number(item.size) || 0,
-        mtimeMs: Number(item.mtimeMs) || 0,
+        // 统一取整：Node 的 stat.mtimeMs 带小数（NTFS 100ns 精度），
+        // 老客户端按 int 解析会直接失败并丢成 0，下载后不回写 mtime
+        // ⇒ 每轮重复下载。这里取整后即使客户端不升级也能收敛。
+        mtimeMs: Math.round(Number(item.mtimeMs) || 0),
       });
     }
   }

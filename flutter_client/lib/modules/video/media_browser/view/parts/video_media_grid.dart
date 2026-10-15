@@ -1,6 +1,8 @@
 import 'package:WaterNasOS/core/api/api_controller.dart';
 import 'package:WaterNasOS/modules/base/components/custom_extended_image.dart';
 import 'package:WaterNasOS/modules/video/base/beans/video_item_bean.dart';
+// ⭐ 日本片徽章组件与海报组件共用（见 base/views/video_item_poster.dart）
+import 'package:WaterNasOS/modules/video/base/views/video_item_poster.dart';
 import 'package:WaterNasOS/modules/video/base/video_utils/video_utils.dart';
 import 'package:WaterNasOS/modules/video/list/controller/video_list_controller.dart';
 import 'package:flutter/material.dart';
@@ -298,6 +300,15 @@ class VideoMediaTile extends StatelessWidget {
                         showLoading: false,
                       ),
               ),
+              // ⭐ 日本片徽章（2026-10-12）：瀑布流封面右上角
+              //    数据来自视频索引 jp_uncensored / jp_chinese_sub（扫描时从
+              //    文件名后缀 -U / -C / -UC 解析）；只对开了「日本电影」的库有值。
+              if (item.hasJpTags)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: JpTagBadges(item: item, scale: 0.85),
+                ),
               // 视频条目叠一个播放角标，与图片区分。
               // ⚠️ 开了内部标题时角标要上移，否则会和标题叠在一起。
               if (!item.isImage)

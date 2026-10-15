@@ -293,7 +293,7 @@ Future<void> showAppFileIndexSettingsSheet(
                   subtitle: Text('file_index_enable_subtitle'.tr),
                   trailing: Switch(
                     value: ctrl.indexEnabled.value,
-                    activeColor: theme.colorScheme.primary,
+                    activeThumbColor: theme.colorScheme.onPrimary,
                     onChanged: ctrl.indexConfigLoading.value ||
                             ctrl.indexConfigSaving.value
                         ? null

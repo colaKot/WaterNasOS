@@ -11,7 +11,7 @@ class SyncTranslations extends Translations {
 
 const Map<String, String> _zh = {
   // ── 通用 ──
-  'app_name': 'WaterNasOS 同步',
+  'app_name': 'WaterNasSync',
   'ok': '确定',
   'cancel': '取消',
   'save': '保存',
@@ -46,6 +46,8 @@ const Map<String, String> _zh = {
   'sync_task_count': '共 @count 个同步任务',
   'sync_no_tasks': '还没有同步任务',
   'sync_no_tasks_desc': '点击下面的按钮创建第一个同步任务',
+  'sync_legacy_banner': '检测到 @count 个旧版同步任务（未归属主机），下面显示的是本机（@device）的任务',
+  'sync_legacy_claim_action': '归属到本机',
   'sync_create_task': '新建同步任务',
   'sync_edit_task': '编辑同步任务',
   'sync_delete_confirm': '确定删除该同步任务吗？只删除任务配置，电脑与 NAS 上的文件都会保留。',
@@ -68,6 +70,15 @@ const Map<String, String> _zh = {
   'sync_dir_same': '电脑目录与 NAS 目录不能相同',
   'sync_pick_local_failed': '选择本地目录失败',
   'sync_pick_remote': '选择 NAS 目录',
+  'sync_browse': '浏览',
+  'sync_browse_title': '选择 NAS 目录',
+  'sync_browse_parent': '上一级',
+  'sync_browse_empty': '该目录下没有子文件夹',
+  'sync_browse_load_failed': '目录加载失败',
+  'sync_select_this_dir': '选择此目录',
+  'sync_remote_roots': '可用目录',
+  'sync_remote_roots_empty': '该账号下暂无可用目录',
+  'sync_remote_dir_helper': '可从下拉选择该账号可用的目录，也可直接输入完整路径',
   'sync_mode': '同步模式',
 
   'sync_mode_bidirectional': '双向同步',
@@ -81,7 +92,7 @@ const Map<String, String> _zh = {
   'sync_realtime': '按需同步',
   'sync_realtime_desc': '电脑目录有改动时自动触发同步',
   'sync_interval': '定时同步',
-  'sync_interval_hint': '设为 0 表示不定时，只靠按需同步或手动同步',
+  'sync_interval_hint': '间隔（分钟）。填 0 时按 30 秒一次执行，不会停止扫描',
   'sync_minutes': '分钟',
   'sync_manual_only': '仅手动同步',
   'sync_interval_every': '每 @minutes 分钟',
@@ -92,6 +103,31 @@ const Map<String, String> _zh = {
   'sync_conflict_prefer_local': '保留电脑上的文件',
   'sync_conflict_prefer_remote': '保留 NAS 上的文件',
 
+  // ── 创建 / 编辑向导（三步：设备 → 规则 → 路径）──
+  // 文案与主客户端 zh_cn 保持一致，便于两端界面观感统一。
+  'sync_step_device': '同步设备',
+  'sync_step_device_desc': '确认本次同步的电脑与 NAS。客户端已登录，无需再次选择。',
+  'sync_step_rules': '规则设置',
+  'sync_step_paths': '同步路径',
+  'sync_current_device': '当前电脑',
+  'sync_current_device_desc': '这台电脑上被同步的文件夹所在设备',
+  'sync_connected_nas': '已连接的 NAS',
+  'sync_connected_nas_desc': '当前客户端已登录的 NAS 服务器',
+  'sync_ready': '就绪',
+  'sync_logged_in': '已登录',
+  'sync_device_hint': '同步任务创建后可以在任务列表里随时启动、停止或修改。首次同步会先比对两端文件，只传输有差异的内容。',
+  'sync_more_info': '更多说明',
+  'sync_advanced': '高级设置',
+  'sync_pick_local_dir': '请选择电脑文件路径',
+  'sync_pick_remote_dir': '请选择NAS文件路径',
+  'sync_local_dir_hint': '电脑上要同步的文件夹，同步后内容会与 NAS 文件夹保持一致',
+  'sync_remote_dir_hint': 'NAS 上要同步的文件夹，可以直接选择已有目录',
+  'sync_summary': '同步预览',
+  'sync_safety_hint': '过滤规则会同时作用于两端，被排除的文件不会上传也不会下载。',
+  'sync_prev_step': '上一步',
+  'sync_next_step': '下一步',
+  'sync_create': '创建',
+
   // ── 过滤规则 ──
   'sync_filter': '过滤规则',
   'sync_filter_hidden': '排除隐藏文件',
@@ -100,6 +136,16 @@ const Map<String, String> _zh = {
   'sync_filter_large': '排除大文件',
   'sync_filter_ext': '排除文件类型',
   'sync_filter_ext_hint': '英文逗号分隔，例如 lnk,pst,swp',
+  'sync_filter_rule': '过滤规则',
+  'sync_filter_tab_rules': '规则设置',
+  'sync_filter_tab_selective': '选择性同步',
+  'sync_filter_exclude_small': '排除小于',
+  'sync_filter_exclude_large': '排除大于',
+  'sync_filter_file_suffix': '的文件',
+  'sync_filter_exclude_hidden': '排除前缀带"."的隐藏文件和文件夹（如 .DS_Store）',
+  'sync_filter_exclude_ext': '排除文件类型',
+  'sync_filter_selective_title': '选择性同步',
+  'sync_filter_selective_desc': '任务创建后可以按文件夹或文件类型挑选需要同步的内容，该功能正在开发中。',
 
   // ── 状态 ──
   'sync_status_idle': '空闲',
@@ -137,6 +183,12 @@ const Map<String, String> _zh = {
   'sync_record_success': '同步成功',
   'sync_record_failed': '同步失败',
   'sync_record_stopped': '已停止',
+  'sync_stat_upload': '上传',
+  'sync_stat_download': '下载',
+  'sync_stat_delete': '删除',
+  'sync_stat_skip': '跳过',
+  'sync_stat_fail': '失败',
+  'sync_stat_bytes': '传输量',
 
   // ── 设置 ──
   'settings': '设置',
@@ -159,5 +211,5 @@ const Map<String, String> _zh = {
   'tray_resume_auto': '恢复自动同步',
   'tray_settings': '设置',
   'tray_exit_app': '退出',
-  'tray_running_hint': 'WaterNasOS 同步正在后台运行',
+  'tray_running_hint': 'WaterNasSync 正在后台运行',
 };

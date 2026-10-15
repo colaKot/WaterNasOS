@@ -32,7 +32,7 @@ Future<void> main() =>
 
 | 项 | 主客户端 | 本程序 |
 |---|---|---|
-| exe 名 | `NasCabOS.exe` | **`NasCabPhoto.exe`** |
+| exe 名 | `WaterNasClient.exe` | **`NasCabPhoto.exe`** |
 | exe 图标 | 蓝色箭头（WaterNasOS） | **黄蓝相机（相册）** |
 | 窗口标题 | `WaterNasOS` | **`WaterNasOS 相册`** |
 | 单实例 mutex | `Global\NasCabOS_SingleInstance` | **`Global\NasCabPhoto_SingleInstance`** |

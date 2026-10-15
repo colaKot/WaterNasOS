@@ -21,6 +21,10 @@ class AppVideoListPage extends StatefulWidget {
   final String listType;
   final int? collectionId;
   final int? smartAlbumId;
+
+  /// 限定到某个影视库（0 = 不限，走原来的 movie/tv 全量入口）。
+  /// 2026-10-12：安卓端栏目条改成动态库列表后，需要按库过滤。
+  final int libraryId;
   final List<String> initialGenres;
   final List<String> initialRegions;
   final List<String> initialActors;
@@ -32,6 +36,7 @@ class AppVideoListPage extends StatefulWidget {
     this.listType = '',
     this.collectionId,
     this.smartAlbumId,
+    this.libraryId = 0,
     this.initialGenres = const <String>[],
     this.initialRegions = const <String>[],
     this.initialActors = const <String>[],
@@ -57,7 +62,7 @@ class _AppVideoListPageState extends State<AppVideoListPage> {
   void initState() {
     super.initState();
     _controllerTag =
-        'app_video_list_${widget.initialMediaType}_${widget.listType}_${widget.collectionId ?? 0}_${widget.smartAlbumId ?? 0}_${widget.initialGenres.join('|')}_${widget.initialRegions.join('|')}_${widget.initialActors.join('|')}_${widget.initialDirectors.join('|')}_${UniqueKey()}';
+        'app_video_list_${widget.initialMediaType}_${widget.listType}_${widget.collectionId ?? 0}_${widget.smartAlbumId ?? 0}_lib${widget.libraryId}_${widget.initialGenres.join('|')}_${widget.initialRegions.join('|')}_${widget.initialActors.join('|')}_${widget.initialDirectors.join('|')}_${UniqueKey()}';
     _historyControllerTag = 'app_video_history_${UniqueKey()}';
     _scrollController.addListener(_onScroll);
   }
@@ -312,6 +317,7 @@ class _AppVideoListPageState extends State<AppVideoListPage> {
             listType: widget.listType,
             collectionId: widget.collectionId,
             smartAlbumId: widget.smartAlbumId,
+            libraryId: widget.libraryId,
             initialGenres: widget.initialGenres,
             initialRegions: widget.initialRegions,
             initialActors: widget.initialActors,
@@ -389,6 +395,13 @@ class _AppVideoListPageState extends State<AppVideoListPage> {
                               active: ctrl.hasActiveFilters,
                             );
                           }),
+                          const SizedBox(width: 6),
+                          // ⭐ 桌面端没有下拉刷新手势，必须留一个显式刷新入口
+                          CustomBorderedIconButton(
+                            icon: Icons.refresh,
+                            onTap: () => ctrl.refreshList(showLoading: false),
+                            tooltip: 'refresh'.tr,
+                          ),
                         ],
                       ),
                     ],

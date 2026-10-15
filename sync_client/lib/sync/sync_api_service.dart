@@ -6,9 +6,16 @@ import '../core/api.dart';
 ///
 /// 路径与请求体字段来自共享包 [SyncProtocol] / [SyncEndpoint]，
 /// 与主客户端是同一份协议定义；这里只负责接到本项目的精简 HTTP 封装上。
+///
+/// ⭐ 设备隔离（2026-10-12）：每个请求都带 `device_id`（本机机器级标识，
+/// 见 [SyncDeviceId]）。同一台机器上的独立同步客户端与主客户端因此归属
+/// 同一设备、任务互通；换一台机器（哪怕同账号）则互不相通。
 class SyncApiService {
   static final SyncApiService instance = SyncApiService._();
   SyncApiService._();
+
+  /// 本机设备标识（同一台机器上各客户端解析结果一致）。
+  Future<String> _deviceId() => SyncDeviceId.resolve();
 
   Future<ApiResponse<Map<String, dynamic>>> list({
     int page = 1,
@@ -18,7 +25,8 @@ class SyncApiService {
     String? keyword,
     String? sortBy,
     String? sortOrder,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.list,
       body: SyncProtocol.listBody(
@@ -29,22 +37,26 @@ class SyncApiService {
         keyword: keyword,
         sortBy: sortBy,
         sortOrder: sortOrder,
+        deviceId: deviceId,
       ),
       timeout: const Duration(milliseconds: SyncEndpoint.listTimeoutMs),
     );
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> summary() {
+  Future<ApiResponse<Map<String, dynamic>>> summary() async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.summary,
+      body: SyncProtocol.summaryBody(deviceId: deviceId),
       timeout: const Duration(milliseconds: SyncEndpoint.summaryTimeoutMs),
     );
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> get({required int id}) {
+  Future<ApiResponse<Map<String, dynamic>>> get({required int id}) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.get,
-      body: SyncProtocol.getBody(id: id),
+      body: SyncProtocol.getBody(id: id, deviceId: deviceId),
       timeout: const Duration(milliseconds: SyncEndpoint.getTimeoutMs),
     );
   }
@@ -59,7 +71,8 @@ class SyncApiService {
     required SyncConfig syncConfig,
     String? deviceId,
     String? deviceName,
-  }) {
+  }) async {
+    final device = deviceId ?? await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.upsert,
       body: SyncProtocol.upsertBody(
@@ -70,17 +83,18 @@ class SyncApiService {
         remoteDir: remoteDir,
         filterConfig: filterConfig,
         syncConfig: syncConfig,
-        deviceId: deviceId,
+        deviceId: device,
         deviceName: deviceName,
       ),
       timeout: const Duration(milliseconds: SyncEndpoint.upsertTimeoutMs),
     );
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> delete({required int id}) {
+  Future<ApiResponse<Map<String, dynamic>>> delete({required int id}) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.remove,
-      body: SyncProtocol.deleteBody(id: id),
+      body: SyncProtocol.deleteBody(id: id, deviceId: deviceId),
       timeout: const Duration(milliseconds: SyncEndpoint.removeTimeoutMs),
     );
   }
@@ -90,7 +104,8 @@ class SyncApiService {
     String? status,
     Map<String, dynamic>? progress,
     String? lastError,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.status,
       body: SyncProtocol.statusBody(
@@ -98,6 +113,7 @@ class SyncApiService {
         status: status,
         progress: progress,
         lastError: lastError,
+        deviceId: deviceId,
       ),
       timeout: const Duration(milliseconds: SyncEndpoint.statusTimeoutMs),
     );
@@ -107,13 +123,15 @@ class SyncApiService {
     required int taskId,
     int page = 1,
     int pageSize = 50,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.recordsList,
       body: SyncProtocol.recordsListBody(
         taskId: taskId,
         page: page,
         pageSize: pageSize,
+        deviceId: deviceId,
       ),
       timeout: const Duration(milliseconds: SyncEndpoint.recordsListTimeoutMs),
     );
@@ -134,7 +152,8 @@ class SyncApiService {
     required List<LocalFileEntry> localFiles,
     List<LocalFileEntry> baselineFiles = const [],
     int? maxListPerType,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.plan,
       body: SyncProtocol.planBody(
@@ -142,6 +161,7 @@ class SyncApiService {
         localFiles: localFiles,
         baselineFiles: baselineFiles,
         maxListPerType: maxListPerType,
+        deviceId: deviceId,
       ),
       // 大目录扫描 + 比对可能较慢
       timeout: const Duration(milliseconds: SyncEndpoint.planTimeoutMs),
@@ -162,7 +182,8 @@ class SyncApiService {
     int failCount = 0,
     int bytesTransferred = 0,
     List<String> errorList = const [],
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.report,
       body: SyncProtocol.reportBody(
@@ -177,6 +198,7 @@ class SyncApiService {
         failCount: failCount,
         bytesTransferred: bytesTransferred,
         errorList: errorList,
+        deviceId: deviceId,
       ),
       timeout: const Duration(milliseconds: SyncEndpoint.reportTimeoutMs),
       maxRetries: 0,
@@ -187,10 +209,11 @@ class SyncApiService {
   Future<ApiResponse<Map<String, dynamic>>> deleteRemote({
     required int id,
     required List<String> relPaths,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.deleteRemote,
-      body: SyncProtocol.deleteRemoteBody(id: id, relPaths: relPaths),
+      body: SyncProtocol.deleteRemoteBody(id: id, relPaths: relPaths, deviceId: deviceId),
       timeout: const Duration(milliseconds: SyncEndpoint.deleteRemoteTimeoutMs),
       maxRetries: 0,
     );
@@ -200,11 +223,23 @@ class SyncApiService {
   Future<ApiResponse<Map<String, dynamic>>> mkdir({
     required int id,
     required String relPath,
-  }) {
+  }) async {
+    final deviceId = await _deviceId();
     return SyncHttp.post(
       SyncEndpoint.mkdir,
-      body: SyncProtocol.mkdirBody(id: id, relPath: relPath),
+      body: SyncProtocol.mkdirBody(id: id, relPath: relPath, deviceId: deviceId),
       timeout: const Duration(milliseconds: SyncEndpoint.mkdirTimeoutMs),
+    );
+  }
+
+  /// 认领旧版任务：把本账号下「未绑定主机」的任务划到本机名下。
+  Future<ApiResponse<Map<String, dynamic>>> claimLegacy() async {
+    final deviceId = await _deviceId();
+    final deviceName = await SyncDeviceId.resolveName();
+    return SyncHttp.post(
+      SyncEndpoint.claimLegacy,
+      body: SyncProtocol.claimLegacyBody(deviceId: deviceId, deviceName: deviceName),
+      timeout: const Duration(milliseconds: SyncEndpoint.claimLegacyTimeoutMs),
     );
   }
 }

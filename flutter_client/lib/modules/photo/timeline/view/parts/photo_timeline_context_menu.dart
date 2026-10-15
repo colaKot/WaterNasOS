@@ -133,16 +133,11 @@ class PhotoTimelineContextMenu extends StatelessWidget {
         );
       }
 
-      final canSetFaceCover =
-          controller.faceId.value != null &&
-          CurrentUserController.instance.isAdmin;
+      // 2026-10-13：人脸相册按归属隔离，设封面/移动/移出对所有登录用户开放
+      final canSetFaceCover = controller.faceId.value != null;
       final canShowPhotoFaces = controller.faceId.value != null;
-      final canMoveToOtherFace =
-          controller.faceId.value != null &&
-          CurrentUserController.instance.isAdmin;
-      final canRemoveFromFaceAlbum =
-          controller.faceId.value != null &&
-          CurrentUserController.instance.isAdmin;
+      final canMoveToOtherFace = controller.faceId.value != null;
+      final canRemoveFromFaceAlbum = controller.faceId.value != null;
       final canSetAlbumCover = controller.albumId.value != null;
 
       final entries = <ContextMenuEntry>[

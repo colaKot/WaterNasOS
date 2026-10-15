@@ -21,6 +21,15 @@ class SyncScheduler {
   /// 同一任务两次自动触发的最小间隔
   static const int _minTriggerGapMs = 30 * 1000;
 
+  /// ⭐ 定时同步间隔填 0 时的实际间隔：**30 秒一次**（需求 2026-10-13）。
+  ///
+  /// 以前 `interval <= 0` 直接 `continue`（= 完全不定时），现在改成「30 秒兜底」：
+  /// 既不会像「0 = 立刻再来一次」那样死循环猛扫，也不会完全不扫。
+  static const int _zeroIntervalMs = 30 * 1000;
+
+  /// 轮询周期。必须 ≤ [_zeroIntervalMs]，否则 30 秒的间隔排不上号。
+  static const Duration _tickPeriod = Duration(seconds: 10);
+
   final Map<int, StreamSubscription<FileSystemEvent>> _watchers = {};
   final Map<int, Timer> _debounceTimers = {};
   final Map<int, int> _lastRunMs = {};
@@ -28,6 +37,13 @@ class SyncScheduler {
   List<SyncTask> _tasks = const [];
   Timer? _tickTimer;
   bool _running = false;
+
+  /// 上一轮已知的任务 id，用来识别「刚新建的任务」。
+  Set<int> _knownIds = <int>{};
+
+  /// ⚠️ 第一次拿到任务列表只做**登记**，不触发同步 ——
+  ///    否则每次开 App 都会把所有任务立刻全跑一遍。
+  bool _primed = false;
 
   /// 由控制器注入：真正执行同步的回调
   Future<void> Function(SyncTask task)? onTrigger;
@@ -56,7 +72,7 @@ class SyncScheduler {
   void start() {
     if (_running) return;
     _running = true;
-    _tickTimer = Timer.periodic(const Duration(seconds: 60), (_) => _tick());
+    _tickTimer = Timer.periodic(_tickPeriod, (_) => _tick());
   }
 
   void stop() {
@@ -76,6 +92,11 @@ class SyncScheduler {
 
   /// 任务列表刷新后调用，同步调度状态（幂等）
   void syncTasks(List<SyncTask> tasks) {
+    final prevIds = _knownIds;
+    _knownIds = tasks.map((e) => e.id).toSet();
+    final wasPrimed = _primed;
+    _primed = true;
+
     _tasks = List<SyncTask>.from(tasks);
     if (_tasks.isEmpty) return;
     start();
@@ -91,19 +112,33 @@ class SyncScheduler {
       }
     }
 
+    final fresh = <SyncTask>[];
     for (final task in tasks) {
-      final last = task.lastSyncTime;
-      _lastRunMs.putIfAbsent(
-        task.id,
-        () => (last != null && last > 0)
-            ? last
-            : DateTime.now().millisecondsSinceEpoch,
-      );
+      if (wasPrimed && !prevIds.contains(task.id)) {
+        // ⭐ 刚新建的任务：清掉节流记录，下面立刻触发一次
+        _lastRunMs.remove(task.id);
+        fresh.add(task);
+      } else {
+        final last = task.lastSyncTime;
+        _lastRunMs.putIfAbsent(
+          task.id,
+          () => (last != null && last > 0)
+              ? last
+              : DateTime.now().millisecondsSinceEpoch,
+        );
+      }
       if (task.syncConfig.realtime) {
         _ensureWatcher(task);
       } else {
         _watchers.remove(task.id)?.cancel();
       }
+    }
+
+    // ⭐ 创建完同步任务后**马上同步一次**（需求 2026-10-13）。
+    //    走 force 分支绕过 [_minTriggerGapMs]，否则新任务会被当成「刚跑过」而跳过。
+    //    静默执行：由宿主注入的 onTrigger 决定要不要提示。
+    for (final task in fresh) {
+      unawaited(_trigger(task, force: true));
     }
   }
 
@@ -138,19 +173,23 @@ class SyncScheduler {
     final now = DateTime.now().millisecondsSinceEpoch;
     for (final task in _tasks) {
       final interval = task.syncConfig.intervalMinutes;
-      if (interval <= 0) continue;
+      // ⭐ 0（或负数）现在按 30 秒兜底，不再等于「不定时」
+      final intervalMs =
+          interval <= 0 ? _zeroIntervalMs : interval * 60 * 1000;
       final last = _lastRunMs[task.id] ?? task.lastSyncTime ?? now;
-      if (now - last >= interval * 60 * 1000) {
+      if (now - last >= intervalMs) {
         _trigger(task);
       }
     }
   }
 
-  Future<void> _trigger(SyncTask task) async {
+  Future<void> _trigger(SyncTask task, {bool force = false}) async {
     if (SyncEngine.instance.isRunning(task.id)) return;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final last = _lastRunMs[task.id] ?? 0;
-    if (now - last < _minTriggerGapMs) return;
+    if (!force) {
+      final last = _lastRunMs[task.id] ?? 0;
+      if (now - last < _minTriggerGapMs) return;
+    }
     _lastRunMs[task.id] = now;
     try {
       await onTrigger?.call(task);

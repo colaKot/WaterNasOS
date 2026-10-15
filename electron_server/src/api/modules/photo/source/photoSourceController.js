@@ -81,6 +81,32 @@ class PhotoSourceController {
     }
   }
 
+  /**
+   * 相册备份：跨相册源内容级去重（含 size 预检）。
+   * body: { items: [{ md5?, size }] } -> data: { matched: [md5...], absent: [size...], scanned, hashed }
+   * md5 可选：只带 size 的条目用于 absent 预检（该 size 无候选 => 内容必不存在，可免本地 MD5）。
+   *
+   * 可见性零角色例外：只在该用户自己的相册源范围内比对（超管也一样），
+   * 与相册时间线的 getValidPaths 口径保持一致。这是只读查询，无写操作。
+   */
+  async checkBackupContent(req, res) {
+    try {
+      const service = new PhotoSourceService(req.dbPhoto);
+      const items = req.body && Array.isArray(req.body.items) ? req.body.items : [];
+      const uid = req.user && req.user.id ? Number(req.user.id) : 0;
+      if (!Number.isFinite(uid) || uid <= 0) {
+        return ResponseUtil.error(req, res, 'auth.PERMISSION_DENIED', 403);
+      }
+      if (items.length === 0) {
+        return ResponseUtil.success(req, res, { matched: [], scanned: 0, hashed: 0 }, 'common.SUCCESS', 200);
+      }
+      const result = await service.findExistingContent(uid, items);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  }
+
   async addSource(req, res) {
     try {
       const service = new PhotoSourceService(req.dbPhoto);

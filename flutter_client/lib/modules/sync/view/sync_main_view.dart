@@ -126,3 +126,15 @@ void _showSyncRecordsDialog(BuildContext context, SyncTaskListController ctrl, S
 void _showSyncError(String message) {
   DialogUtil.showErrorDialog(message: message);
 }
+
+/// 「使用说明」弹窗。
+///
+/// ⚠️ 以前这里借用了 [_showSyncError]，于是弹窗标题显示成「错误」——
+/// 文案本身是说明书，标题却是错误，用户已经指出过。现在走信息弹窗，
+/// 标题固定为菜单项自己的名字「使用说明」。
+void _showSyncHelp() {
+  DialogUtil.showInfoDialog(
+    title: 'sync_menu_help'.tr,
+    content: 'sync_help_tooltip'.tr,
+  );
+}

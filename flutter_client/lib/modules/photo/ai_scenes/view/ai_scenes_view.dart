@@ -113,7 +113,12 @@ class AiScenesView extends StatelessWidget {
                 ),
               ],
             ),
-            body: AiScenesGrid(controller: ctrl),
+            body: Column(
+              children: [
+                AiScenesSearchSummary(controller: ctrl),
+                Expanded(child: AiScenesGrid(controller: ctrl)),
+              ],
+            ),
           );
         }
         return Container(
@@ -123,6 +128,7 @@ class AiScenesView extends StatelessWidget {
               Column(
                 children: [
                   AiScenesTopBar(controller: ctrl),
+                  AiScenesSearchSummary(controller: ctrl),
                   Expanded(child: AiScenesGrid(controller: ctrl)),
                 ],
               ),

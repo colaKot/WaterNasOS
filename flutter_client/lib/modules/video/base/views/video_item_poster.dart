@@ -147,6 +147,13 @@ class _VideoItemPosterState extends State<VideoItemPoster> {
                               ? BoxFit.contain
                               : BoxFit.cover,
                         ),
+                        // ⭐ 日本片标记徽章（2026-10-12）：封面右上角，压在图片之上
+                        if (item.hasJpTags)
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: JpTagBadges(item: item),
+                          ),
                         if (_hovered || _effectiveFavorite)
                           Positioned(
                             top: 6,
@@ -261,6 +268,57 @@ class _VideoItemPosterState extends State<VideoItemPoster> {
       currentAlbumId: widget.currentAlbumId,
       onRemovedFromCurrentAlbum: widget.onRemovedFromCurrentAlbum,
       child: child,
+    );
+  }
+}
+
+/// ⭐ 日本片标记徽章（2026-10-12）。
+///
+/// 显示在封面**右上角**：`中` = 中文字幕、`无码` = 无码，两个都有就并排。
+/// 数据来自视频索引的 `jp_uncensored` / `jp_chinese_sub` 两列（扫描时从文件名
+/// 后缀 `-U` / `-C` / `-UC` 解析）。没标记时返回零尺寸，不影响布局。
+///
+/// ⚠️ 网格、安卓端海报、瀑布流三处共用这一个组件，别各写一份。
+class JpTagBadges extends StatelessWidget {
+  final VideoHomeItemBean item;
+
+  /// 小尺寸场景（安卓端海报较小）可以传 0.9 缩短一点
+  final double scale;
+
+  const JpTagBadges({super.key, required this.item, this.scale = 1.0});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!item.hasJpTags) return const SizedBox.shrink();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (item.jpChineseSub) _chip('中', const Color(0xFF2E7D32)),
+        if (item.jpChineseSub && item.jpUncensored) SizedBox(width: 4 * scale),
+        if (item.jpUncensored) _chip('无码', const Color(0xFFC62828)),
+      ],
+    );
+  }
+
+  Widget _chip(String text, Color color) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: 5 * scale,
+        vertical: 1.5 * scale,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(4 * scale),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 10 * scale,
+          height: 1.15,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }

@@ -20,7 +20,7 @@ class VideoLeftMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isAdmin = CurrentUserController.instance.isAdmin;
+    final isAdmin = CurrentUserController.instance.isSuperAdmin;
 
     return Obx(() {
       // ⭐ 只显示「有内容」的影视库（2026-10-09）：
@@ -98,12 +98,16 @@ class VideoLeftMenu extends StatelessWidget {
             ),
           ],
         ),
-        if (isAdmin)
-          SideMenuTwoLevelGroup(
-            title: 'setting'.tr,
-            icon: Icons.settings_outlined,
-            expanded: controller.isSettingsExpanded,
-            items: [
+        // ⭐ 2026-10-12 权限隔离：设置组对**所有**用户显示，但内容按角色分叉 ——
+        //   管理员：影视库管理 / 来源设置 / 其他设置（转码、刮削、字幕、播放都在里面）
+        //   普通用户：只有「播放设置」（他自己的偏好，且按端隔离）。
+        //   ⛔ 不要把整组用 isAdmin 包起来：那样子账号连改自己默认画质的地方都没有。
+        SideMenuTwoLevelGroup(
+          title: 'setting'.tr,
+          icon: Icons.settings_outlined,
+          expanded: controller.isSettingsExpanded,
+          items: [
+            if (isAdmin) ...[
               TwoLevelSideMenuItem(
                 title: 'settings_video_library'.tr,
                 key: 'settings.library',
@@ -119,8 +123,14 @@ class VideoLeftMenu extends StatelessWidget {
                 key: 'settings.other',
                 icon: Icons.tune_outlined,
               ),
-            ],
-          ),
+            ] else
+              TwoLevelSideMenuItem(
+                title: 'video_playback_settings_title'.tr,
+                key: 'settings.playback',
+                icon: Icons.play_circle_outline,
+              ),
+          ],
+        ),
       ];
 
       return TwoLevelSideMenu(

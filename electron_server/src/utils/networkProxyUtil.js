@@ -80,41 +80,47 @@ function createHttpsProxyAgent(proxyUrlStr) {
 
   const proxyAuth = _buildProxyAuthHeader(proxyUrl);
 
-  return new https.Agent({
-    keepAlive: true,
-    createConnection: (options, callback) => {
-      const targetHost = options.servername || options.host || options.hostname;
-      const targetPort = Number(options.port || 443) || 443;
-      const connectHeaders = { Host: `${targetHost}:${targetPort}` };
-      if (proxyAuth) connectHeaders['Proxy-Authorization'] = proxyAuth;
+  const agent = new https.Agent({ keepAlive: true });
 
-      const req = (isHttpsProxy ? https : http).request({
-        host,
-        port,
-        method: 'CONNECT',
-        path: `${targetHost}:${targetPort}`,
-        headers: connectHeaders,
+  // ⛔⛔ 必须**构造之后**把 createConnection 赋到实例上。
+  //    写成 `new https.Agent({ keepAlive: true, createConnection })` 是**无效**的：
+  //    Node 22 不会把构造参数里的 createConnection 变成实例自有属性，
+  //    Agent 仍然走 https.Agent.prototype.createConnection —— 也就是**直连目标站**，
+  //    代理被静默绕过。（2026-10-12 实测：javdb.com 直连被墙 ⇒ 请求挂到超时。）
+  agent.createConnection = (options, callback) => {
+    const targetHost = options.servername || options.host || options.hostname;
+    const targetPort = Number(options.port || 443) || 443;
+    const connectHeaders = { Host: `${targetHost}:${targetPort}` };
+    if (proxyAuth) connectHeaders['Proxy-Authorization'] = proxyAuth;
+
+    const req = (isHttpsProxy ? https : http).request({
+      host,
+      port,
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: connectHeaders,
+    });
+    req.once('connect', (res, socket) => {
+      if (!res || res.statusCode !== 200) {
+        try {
+          socket.destroy();
+        } catch (_) {}
+        const err = new Error(`Proxy CONNECT failed (${res ? res.statusCode : 'no_status'})`);
+        return callback(err);
+      }
+      const tlsSocket = tls.connect({
+        socket,
+        servername: targetHost,
+        rejectUnauthorized: options.rejectUnauthorized !== false,
       });
-      req.once('connect', (res, socket) => {
-        if (!res || res.statusCode !== 200) {
-          try {
-            socket.destroy();
-          } catch (_) {}
-          const err = new Error(`Proxy CONNECT failed (${res ? res.statusCode : 'no_status'})`);
-          return callback(err);
-        }
-        const tlsSocket = tls.connect({
-          socket,
-          servername: targetHost,
-          rejectUnauthorized: options.rejectUnauthorized !== false,
-        });
-        tlsSocket.once('secureConnect', () => callback(null, tlsSocket));
-        tlsSocket.once('error', e => callback(e));
-      });
-      req.once('error', e => callback(e));
-      req.end();
-    },
-  });
+      tlsSocket.once('secureConnect', () => callback(null, tlsSocket));
+      tlsSocket.once('error', e => callback(e));
+    });
+    req.once('error', e => callback(e));
+    req.end();
+  };
+
+  return agent;
 }
 
 /**
@@ -135,9 +141,44 @@ async function resolveGlobalProxyUrl() {
   }
 }
 
+/**
+ * 解析「元数据抓取」（TMDB 搜索/详情、日本片番号刮削）应当使用的代理地址。
+ *
+ * ⭐ 2026-10-12：影视设置里那个「启用代理刮削」开关已从界面移除，代理统一到
+ *    「系统设置 → 网络代理」。为了让以前只配过影视代理的用户不至于突然失去代理
+ *    （TMDB 直连在国内会失败），解析顺序为：
+ *      ① 全局代理（总配置，首选）；
+ *      ② 旧键 `tmdbProxyEnable` / `tmdbProxyUrl`（兜底，仅当全局没配时才用）。
+ *    两者都拿不到 ⇒ 返回空串（不使用代理）。
+ *
+ * ⚠️ 所有出站刮削都必须走这里，**不能再各自读 tmdbProxy* 键** ——
+ *    之前 `videoTmdbController`（手动「搜索影音信息」）就漏了全局回退，
+ *    一旦影视代理被关掉，手动搜索会直接变成直连。
+ *
+ * @returns {Promise<string>} 可用代理地址；空串表示不走代理
+ */
+async function resolveMetadataProxyUrl() {
+  try {
+    const globalUrl = await resolveGlobalProxyUrl();
+    if (globalUrl) return globalUrl;
+  } catch (_) {}
+  try {
+    const [enableRaw, urlRaw] = await Promise.all([
+      tableConfig.getConfigByKey('tmdbProxyEnable'),
+      tableConfig.getConfigByKey('tmdbProxyUrl'),
+    ]);
+    const enabled = enableRaw === '1' || enableRaw === 1 || enableRaw === true;
+    if (!enabled) return '';
+    return parseHttpProxyUrlOrEmpty(urlRaw);
+  } catch (_) {
+    return '';
+  }
+}
+
 module.exports = {
   normalizeProxyUrlString,
   parseHttpProxyUrlOrEmpty,
   createHttpsProxyAgent,
   resolveGlobalProxyUrl,
+  resolveMetadataProxyUrl,
 };

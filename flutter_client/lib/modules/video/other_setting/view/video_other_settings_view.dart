@@ -1,4 +1,5 @@
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
+import 'package:WaterNasOS/core/user/current_user_controller.dart';
 import 'package:WaterNasOS/utils/device_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -6,17 +7,27 @@ import '../../../base/components/custom_glass_card.dart';
 import '../../../base/components/custom_switch.dart';
 import '../../../files/views/folder_picker_dialog.dart';
 import '../../base/video_utils/play_quality.dart';
+import '../../../video_player/subtitle/subtitle_language.dart';
+import 'package:WaterNasOS/modules/video/base/video_utils/video_codec.dart';
 import '../../../../utils/dialog_util.dart';
 import '../controller/video_other_settings_controller.dart';
 
 class VideoOtherSettingsView extends StatelessWidget {
-  const VideoOtherSettingsView({super.key});
+  /// 只显示「播放设置」一块（2026-10-12）。
+  ///
+  /// 普通用户在服务端没有转码 / 刮削 / 字幕的权限，进到这个页面也只该看到播放设置；
+  /// 管理员那边则始终全显示。传 true 也可以给别的入口单独复用「播放设置」卡片。
+  final bool onlyPlayback;
+
+  const VideoOtherSettingsView({super.key, this.onlyPlayback = false});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final customColors = Theme.of(context).extension<CustomColors>();
     final isNarrow = DeviceUtils.isMobile;
+    // 非管理员一律只留播放设置 —— 双保险，避免以后有人从别处直接把本页塞给子账号
+    final playbackOnly = onlyPlayback || !CurrentUserController.instance.isSuperAdmin;
     return GetBuilder<VideoOtherSettingsController>(
       init: VideoOtherSettingsController(),
       builder: (ctrl) {
@@ -35,15 +46,20 @@ class VideoOtherSettingsView extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        'video_other_settings_title'.tr,
+                        (playbackOnly
+                                ? 'video_playback_settings_title'
+                                : 'video_other_settings_title')
+                            .tr,
                         style: theme.textTheme.titleMedium,
                       ),
                       IconButton(
                         tooltip: 'refresh'.tr,
                         onPressed: () async {
-                          await ctrl.fetchSettings(showLoading: true);
-                          await ctrl.fetchTranscodeSettings(showLoading: true);
-                          await ctrl.fetchSubtitleSettings(showLoading: true);
+                          if (!playbackOnly) {
+                            await ctrl.fetchSettings(showLoading: true);
+                            await ctrl.fetchTranscodeSettings(showLoading: true);
+                            await ctrl.fetchSubtitleSettings(showLoading: true);
+                          }
                           await ctrl.fetchPlayQualitySettings(showLoading: true);
                         },
                         icon: const Icon(Icons.refresh),
@@ -59,71 +75,69 @@ class VideoOtherSettingsView extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const SizedBox(height: 2),
-                      CustomGlassCard(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'video_scrape_settings_title'.tr,
-                                style: theme.textTheme.titleSmall,
-                              ),
-                              const SizedBox(height: 12),
-                              _TokenField(ctrl: ctrl),
-                              const SizedBox(height: 12),
-                              _LanguageField(ctrl: ctrl),
-                              const SizedBox(height: 12),
-                              _ProxyToggle(ctrl: ctrl),
-                              Obx(() {
-                                if (!ctrl.proxyEnabled.value) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Column(
-                                  children: [
-                                    const SizedBox(height: 10),
-                                    _ProxyField(ctrl: ctrl),
-                                  ],
-                                );
-                              }),
-                              const SizedBox(height: 14),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: ElevatedButton(
-                                  onPressed: () => ctrl.saveSettings(),
-                                  child: Text('save'.tr),
+                      if (!playbackOnly) ...[
+                        CustomGlassCard(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'video_scrape_settings_title'.tr,
+                                  style: theme.textTheme.titleSmall,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 12),
+                                _TokenField(ctrl: ctrl),
+                                const SizedBox(height: 12),
+                                _LanguageField(ctrl: ctrl),
+                                const SizedBox(height: 12),
+                                // ⭐ 代理已统一到「系统设置 → 网络代理」（2026-10-12）：
+                                // 影视这边不再单独配置代理，只留一行说明指向总配置。
+                                Text(
+                                  'video_tmdb_proxy_managed_globally'.tr,
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                                const SizedBox(height: 14),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: ElevatedButton(
+                                    onPressed: () => ctrl.saveSettings(),
+                                    child: Text('save'.tr),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      CustomGlassCard(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'video_subtitle_settings_title'.tr,
-                                style: theme.textTheme.titleSmall,
-                              ),
-                              const SizedBox(height: 12),
-                              _SubtitlePreExtractToggle(ctrl: ctrl),
-                              const SizedBox(height: 14),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: ElevatedButton(
-                                  onPressed: () => ctrl.saveSubtitleSettings(),
-                                  child: Text('save'.tr),
+                        const SizedBox(height: 12),
+                        CustomGlassCard(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'video_subtitle_settings_title'.tr,
+                                  style: theme.textTheme.titleSmall,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 12),
+                                _SubtitlePreExtractToggle(ctrl: ctrl),
+                                const SizedBox(height: 14),
+                                _DefaultSubtitleLanguageField(ctrl: ctrl),
+                                const SizedBox(height: 14),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: ElevatedButton(
+                                    onPressed: () => ctrl.saveSubtitleSettings(),
+                                    child: Text('save'.tr),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
+                      ],
                       CustomGlassCard(
                         child: Padding(
                           padding: const EdgeInsets.all(14),
@@ -136,6 +150,8 @@ class VideoOtherSettingsView extends StatelessWidget {
                               ),
                               const SizedBox(height: 12),
                               _DefaultPlayQualityField(ctrl: ctrl),
+                              const SizedBox(height: 14),
+                              _VideoCodecField(ctrl: ctrl),
                               const SizedBox(height: 14),
                               _AudioDownmixToggle(ctrl: ctrl),
                               const SizedBox(height: 14),
@@ -150,33 +166,35 @@ class VideoOtherSettingsView extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      CustomGlassCard(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'video_transcode_settings_title'.tr,
-                                style: theme.textTheme.titleSmall,
-                              ),
-                              const SizedBox(height: 12),
-                              _TranscodeHwDecoderField(ctrl: ctrl),
-                              const SizedBox(height: 12),
-                              _TranscodeTempDirField(ctrl: ctrl),
-                              const SizedBox(height: 14),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: ElevatedButton(
-                                  onPressed: () => ctrl.saveTranscodeSettings(),
-                                  child: Text('save'.tr),
+                      if (!playbackOnly) ...[
+                        const SizedBox(height: 12),
+                        CustomGlassCard(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'video_transcode_settings_title'.tr,
+                                  style: theme.textTheme.titleSmall,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 12),
+                                _TranscodeHwDecoderField(ctrl: ctrl),
+                                const SizedBox(height: 12),
+                                _TranscodeTempDirField(ctrl: ctrl),
+                                const SizedBox(height: 14),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: ElevatedButton(
+                                    onPressed: () => ctrl.saveTranscodeSettings(),
+                                    child: Text('save'.tr),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -198,7 +216,9 @@ class _DefaultPlayQualityField extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Obx(() {
-      final value = PlayQuality.options.contains(ctrl.defaultPlayQuality.value)
+      // ⭐ 档位随输出编码变化（2026-10-15）：读到 videoCodec 也让本组件跟着刷新
+      final opts = PlayQuality.optionsFor(ctrl.videoCodec.value);
+      final value = opts.contains(ctrl.defaultPlayQuality.value)
           ? ctrl.defaultPlayQuality.value
           : PlayQuality.original;
       return Column(
@@ -221,7 +241,7 @@ class _DefaultPlayQualityField extends StatelessWidget {
               border: OutlineInputBorder(),
               isDense: true,
             ),
-            items: PlayQuality.options
+            items: opts
                 .map(
                   (option) => DropdownMenuItem(
                     value: option,
@@ -231,6 +251,81 @@ class _DefaultPlayQualityField extends StatelessWidget {
                 .toList(),
             onChanged: (v) =>
                 ctrl.defaultPlayQuality.value = v ?? PlayQuality.original,
+          ),
+        ],
+      );
+    });
+  }
+}
+
+/// ⭐ 输出视频编码方式（2026-10-13）。
+///
+/// 选项 H.264 / H.265 / AV1；选中非 H.264 时先弹确认框（明确提示「需要服务端支持 +
+/// 当前设备能解码」，用户要求「选中了以后再提示」），确认后才生效。
+/// 不可用的选项在右侧红字标注原因（服务端不支持 / 当前设备不支持）。
+class _VideoCodecField extends StatelessWidget {
+  final VideoOtherSettingsController ctrl;
+
+  const _VideoCodecField({required this.ctrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Obx(() {
+      final value = VideoCodec.normalize(ctrl.videoCodec.value);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'video_codec_setting_title'.tr,
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'video_codec_setting_tip'.tr,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: value,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: VideoCodec.options.map((option) {
+              final hint = ctrl.codecAvailabilityHint(option);
+              return DropdownMenuItem(
+                value: option,
+                child: Row(
+                  children: [
+                    Expanded(child: Text(VideoCodec.label(option))),
+                    if (hint != null)
+                      Text(
+                        hint,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (v) async {
+              if (v == null) return;
+              final next = VideoCodec.normalize(v);
+              if (next == value) return;
+              // 选中 H.265 / AV1 时先弹提示，确认后才生效
+              if (VideoCodec.needsSupportHint(next)) {
+                final ok = await DialogUtil.showConfirmDialog(
+                  title: 'video_codec_confirm_title'.tr,
+                  content: 'video_codec_confirm_message'
+                      .trParams({'codec': VideoCodec.label(next)}),
+                );
+                if (ok != true) return;
+              }
+              ctrl.videoCodec.value = next;
+            },
           ),
         ],
       );
@@ -557,35 +652,54 @@ class _SubtitlePreExtractToggle extends StatelessWidget {
   }
 }
 
-class _ProxyToggle extends StatelessWidget {
+/// ⭐ 默认字幕语言（2026-10-15）：播放电影时按所选语言自动匹配字幕。
+///
+/// 字幕文件命名五花八门（cn / chs / 简中 / 简体中文 / zh-CN / chi …），
+/// 识别逻辑见 [SubtitleLanguage]。
+class _DefaultSubtitleLanguageField extends StatelessWidget {
   final VideoOtherSettingsController ctrl;
 
-  const _ProxyToggle({required this.ctrl});
+  const _DefaultSubtitleLanguageField({required this.ctrl});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Obx(() {
-      final enabled = ctrl.proxyEnabled.value;
-      return Row(
+      final value = SubtitleLanguage.normalize(
+        ctrl.defaultSubtitleLanguage.value,
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'video_tmdb_proxy_enable'.tr,
-                  style: theme.textTheme.titleSmall,
-                ),
-                const SizedBox(height: 4),
-                Text('video_tmdb_proxy_enable_tip'.tr),
-              ],
-            ),
+          Text(
+            'video_default_subtitle_language'.tr,
+            style: theme.textTheme.titleSmall,
           ),
-          const SizedBox(width: 12),
-          CustomSwitch(
-            value: enabled,
-            onChanged: (v) => ctrl.proxyEnabled.value = v,
+          const SizedBox(height: 4),
+          Text(
+            'video_default_subtitle_language_tip'.tr,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: value,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: SubtitleLanguage.options
+                .map(
+                  (code) => DropdownMenuItem(
+                    value: code,
+                    child: Text(SubtitleLanguage.labelKey(code).tr),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) {
+              if (v == null) return;
+              ctrl.defaultSubtitleLanguage.value = v;
+            },
           ),
         ],
       );
@@ -682,31 +796,3 @@ class _LanguageField extends StatelessWidget {
   }
 }
 
-class _ProxyField extends StatelessWidget {
-  final VideoOtherSettingsController ctrl;
-
-  const _ProxyField({required this.ctrl});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('video_tmdb_proxy_url'.tr, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        TextField(
-          controller: ctrl.proxyUrlController,
-          maxLines: 1,
-          decoration: InputDecoration(
-            hintText: 'video_tmdb_proxy_url_hint'.tr,
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text('video_tmdb_proxy_save_tip'.tr),
-      ],
-    );
-  }
-}

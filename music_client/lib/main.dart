@@ -1,7 +1,7 @@
 import 'package:WaterNasOS/core/bootstrap/app_launch.dart' as shell_launch;
 import 'package:WaterNasOS/main.dart' as shell;
 
-/// WaterNasOS 音乐（独立 exe）入口。
+/// WaterNasMusic（独立 exe）入口。
 ///
 /// 本工程 **不复制主客户端任何业务代码**：通过 `pubspec.yaml` 里的
 /// `WaterNasOS: path: ../flutter_client` 直接复用主客户端整套代码，

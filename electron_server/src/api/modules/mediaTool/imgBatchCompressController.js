@@ -1,5 +1,6 @@
 const ResponseUtil = require('../../apiUtils/responseUtil');
 const Logger = require('../../../utils/logger');
+const userUtil = require('../../../utils/userUtil');
 const { ImgBatchCompressService } = require('./imgBatchCompressService');
 
 function waitForIpcResponse({ requestId, responseType, timeoutMs }) {
@@ -93,6 +94,8 @@ class ImgBatchCompressController {
         keyword,
         sortBy: sort_by,
         sortOrder: sort_order,
+        uid: req.user && req.user.id,
+        isAdmin: userUtil.isAdmin(req.user),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -113,6 +116,8 @@ class ImgBatchCompressController {
         quality,
         outSize: out_size,
         nonImagePolicy: non_image_policy,
+        uid: req.user && req.user.id,
+        isAdmin: userUtil.isAdmin(req.user),
       });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -130,7 +135,7 @@ class ImgBatchCompressController {
       try {
         await this._stopByIpc({ id });
       } catch (_) {}
-      const data = await service.remove({ id });
+      const data = await service.remove({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
       Logger.error('imgBatchCompress delete failed', e);
@@ -143,6 +148,9 @@ class ImgBatchCompressController {
   async start(req, res) {
     try {
       const { id } = req.body || {};
+      // 归属校验（2026-10-13）：不是自己的任务按 NOT_FOUND 处理，避免跨账号操作
+      const service = new ImgBatchCompressService(req.dbMain);
+      await service.getById({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       const data = await this._startByIpc({ id });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {
@@ -156,6 +164,9 @@ class ImgBatchCompressController {
   async stop(req, res) {
     try {
       const { id } = req.body || {};
+      // 归属校验（2026-10-13）：不是自己的任务按 NOT_FOUND 处理，避免跨账号操作
+      const service = new ImgBatchCompressService(req.dbMain);
+      await service.getById({ id, uid: req.user && req.user.id, isAdmin: userUtil.isAdmin(req.user) });
       const data = await this._stopByIpc({ id });
       return ResponseUtil.success(req, res, data, 'common.SUCCESS', 200);
     } catch (e) {

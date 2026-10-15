@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "Los complementos necesarios para esta función aún se están descargando. Inténtelo de nuevo más tarde."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "Falta el identificador del dispositivo. Actualice el cliente e inténtelo de nuevo.",
+      "DEVICE_ID_INVALID": "Identificador de dispositivo no válido"
     }
   },
   "places365": {

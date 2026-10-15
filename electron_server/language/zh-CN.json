@@ -78,7 +78,9 @@
       "MANIFEST_INVALID": "文件清单格式错误",
       "STATUS_INVALID": "同步任务状态无效",
       "SYNC_FAILED": "同步过程中出现错误，请查看同步记录",
-      "REMOTE_DIR_NO_PERMISSION": "没有该 NAS 目录的操作权限，请先联系管理员分配权限"
+      "REMOTE_DIR_NO_PERMISSION": "没有该 NAS 目录的操作权限，请先联系管理员分配权限",
+      "DEVICE_ID_REQUIRED": "缺少设备标识，请升级客户端后重试",
+      "DEVICE_ID_INVALID": "设备标识无效"
     },
     "message": {
       "NEW_DEVICE_LOGIN_TITLE": "新设备登录",

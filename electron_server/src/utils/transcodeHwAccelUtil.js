@@ -28,6 +28,9 @@ function normalizeHwAccelProfile(parsed) {
 function getCodecKeyFromEncoder(encoder) {
   const value = String(encoder || '').toLowerCase();
   if (!value) return '';
+  // ⭐ av1 必须最先判断：av1_nvenc / av1_qsv / av1_amf / av1_vaapi / av1_videotoolbox / libsvtav1
+  // 若先判 hevc/265，av1 系列会被错判成 h264（2026-10-13 修复）。
+  if (value.includes('av1') || value.includes('svtav1')) return 'av1';
   return value.includes('hevc') || value.includes('265') ? 'h265' : 'h264';
 }
 
@@ -73,6 +76,7 @@ function createAvailableEntry(groupMeta) {
     profiles: {
       h264: null,
       h265: null,
+      av1: null,
     },
   };
 }
@@ -99,7 +103,7 @@ function buildAvailableHwAccelList(attempts) {
     map.set(groupMeta.key, entry);
   }
   return Array.from(map.values())
-    .filter(entry => entry.profiles.h264 || entry.profiles.h265)
+    .filter(entry => entry.profiles.h264 || entry.profiles.h265 || entry.profiles.av1)
     .map(entry => normalizeAvailableHwAccelEntry(entry))
     .filter(Boolean);
 }
@@ -113,10 +117,12 @@ function normalizeAvailableHwAccelEntry(entry) {
   const device = entry.device ? String(entry.device).trim() : null;
   const h264 = entry && entry.profiles && entry.profiles.h264 ? normalizeHwAccelProfile(entry.profiles.h264) : null;
   const h265 = entry && entry.profiles && entry.profiles.h265 ? normalizeHwAccelProfile(entry.profiles.h265) : null;
-  if (!h264 && !h265) return null;
+  const av1 = entry && entry.profiles && entry.profiles.av1 ? normalizeHwAccelProfile(entry.profiles.av1) : null;
+  if (!h264 && !h265 && !av1) return null;
   const codecs = [];
   if (h264) codecs.push('h264');
   if (h265) codecs.push('h265');
+  if (av1) codecs.push('av1');
   return {
     key,
     label,
@@ -126,6 +132,7 @@ function normalizeAvailableHwAccelEntry(entry) {
     profiles: {
       h264: h264 || null,
       h265: h265 || null,
+      av1: av1 || null,
     },
   };
 }
@@ -156,8 +163,9 @@ function normalizeHwAccelConfig(parsed) {
   if (profilesRaw) {
     const h264 = normalizeHwAccelProfile(profilesRaw.h264);
     const h265 = normalizeHwAccelProfile(profilesRaw.h265);
-    if (h264 || h265) {
-      result.profiles = { h264: h264 || null, h265: h265 || null };
+    const av1 = normalizeHwAccelProfile(profilesRaw.av1);
+    if (h264 || h265 || av1) {
+      result.profiles = { h264: h264 || null, h265: h265 || null, av1: av1 || null };
     }
   }
   return result;
@@ -168,7 +176,8 @@ function combineHwAccelEntryToConfig(entry) {
   if (!normalized) return null;
   const h264 = normalized.profiles.h264;
   const h265 = normalized.profiles.h265;
-  const base = h264 || h265;
+  const av1 = normalized.profiles.av1;
+  const base = h264 || h265 || av1;
   if (!base) return null;
   return {
     key: normalized.key,
@@ -185,6 +194,7 @@ function combineHwAccelEntryToConfig(entry) {
     profiles: {
       h264: h264 || null,
       h265: h265 || null,
+      av1: av1 || null,
     },
   };
 }

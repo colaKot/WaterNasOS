@@ -10,6 +10,7 @@ import '../../beans/server_info_bean.dart';
 import '../../service/response/login_response.dart';
 import '../../../../utils/dialog_util.dart';
 import '../../../../utils/toast_util.dart';
+import '../../../../utils/cache_manager.dart';
 import '../../service/server_storage_service.dart';
 import 'package:WaterNasOS/core/routes/app_routes.dart';
 import '../../../home/views/components/session_wallpaper_background.dart';
@@ -28,6 +29,12 @@ class LoginController extends GetxController {
   final showPairCodeInput = false.obs;
   final isPairCodeConnecting = false.obs;
   final connectedHostName = ''.obs;
+
+  /// web「记住登录状态」开关：默认不勾选；勾过且本地有有效会话时，进入登录页即自动登录。
+  final rememberLogin = false.obs;
+
+  /// 正在尝试自动登录（首帧同步置位，避免登录表单闪一下）。
+  final autoLoginChecking = false.obs;
   final formKey = GlobalKey<FormState>();
 
   bool _loginInProgress = false;
@@ -66,6 +73,50 @@ class LoginController extends GetxController {
       _loadLoginConfig();
       _checkServerInitStatusOnInit();
     }
+
+    // web 端「记住登录状态」：勾过 => 本启动直接跳过登录页进主页。
+    // 同步置位 autoLoginChecking，让首帧就显示转圈而不是登录表单。
+    if (kIsWeb && ApiController.instance.rememberLogin) {
+      autoLoginChecking.value = true;
+      unawaited(_tryAutoLogin());
+    }
+  }
+
+  /// 尝试用本地记住的会话自动登录（仅 web）。
+  /// 只对「同一台服务器」生效：记住的 baseUrl 与地址栏不一致（换了 NAS/域名）必须重新登录。
+  Future<void> _tryAutoLogin() async {
+    try {
+      final storedBase =
+          (CacheManager().getString('auth_baseUrl') ?? '').trim();
+      final currentBase = _currentBrowserBaseUrl();
+      if (storedBase.isEmpty || storedBase != currentBase) return;
+
+      final api = ApiController.instance;
+      if (!api.state.isAuthenticated) {
+        // 访问令牌可能已过期：有刷新令牌就静默刷新一次
+        final refreshed = await api.refreshAuthToken();
+        if (!refreshed || !api.state.isAuthenticated) return;
+      }
+      _enterHome();
+    } catch (e) {
+      print('[Login] auto login failed: $e');
+    } finally {
+      autoLoginChecking.value = false;
+    }
+  }
+
+  /// 当前浏览器地址栏的源（scheme://authority），与登录时写入的 baseUrl 同口径。
+  String _currentBrowserBaseUrl() {
+    final uri = Uri.base;
+    return '${uri.scheme}://${uri.authority}';
+  }
+
+  void _enterHome() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (Get.currentRoute != AppRoutes.home) {
+        Get.offAllNamed(AppRoutes.home);
+      }
+    });
   }
 
   Future<void> _loadLoginConfig() async {
@@ -316,6 +367,11 @@ class LoginController extends GetxController {
 
     // 通知浏览器表单提交成功，触发 Chrome 的密码保存提示
     TextInput.finishAutofillContext();
+
+    // web：按开关持久化「记住登录状态」（不勾选 = 写入 false，下次打开仍要登录）
+    if (kIsWeb) {
+      ApiController.instance.rememberLogin = rememberLogin.value;
+    }
 
     await SessionWallpaperBackground.preloadForCurrentSession();
     Get.offAllNamed(AppRoutes.home);

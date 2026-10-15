@@ -14,12 +14,15 @@ const syncController = require('./syncController');
 
 // 任务管理
 router.post('/list', authenticateJWT, SyncValidation.validateList(), SyncValidation.handleValidationErrors, (req, res) => syncController.list(req, res));
-router.post('/summary', authenticateJWT, (req, res) => syncController.summary(req, res));
+router.post('/summary', authenticateJWT, SyncValidation.validateSummary(), SyncValidation.handleValidationErrors, (req, res) => syncController.summary(req, res));
 router.post('/get', authenticateJWT, SyncValidation.validateGet(), SyncValidation.handleValidationErrors, (req, res) => syncController.get(req, res));
 router.post('/upsert', authenticateJWT, SyncValidation.validateUpsert(), SyncValidation.handleValidationErrors, (req, res) => syncController.upsert(req, res));
 router.post('/delete', authenticateJWT, SyncValidation.validateDelete(), SyncValidation.handleValidationErrors, (req, res) => syncController.remove(req, res));
 router.post('/status', authenticateJWT, SyncValidation.validateUpdateStatus(), SyncValidation.handleValidationErrors, (req, res) => syncController.updateStatus(req, res));
 router.post('/records/list', authenticateJWT, SyncValidation.validateListRecords(), SyncValidation.handleValidationErrors, (req, res) => syncController.listRecords(req, res));
+
+// 设备归属：把旧版（未绑定主机）任务认领到本机
+router.post('/device/claimLegacy', authenticateJWT, SyncValidation.validateClaimLegacy(), SyncValidation.handleValidationErrors, (req, res) => syncController.claimLegacy(req, res));
 
 // 服务端接收端：路径探测、同步计划、结果回写、NAS 侧删除与建目录
 router.post('/probe', authenticateJWT, SyncValidation.validateProbe(), SyncValidation.handleValidationErrors, (req, res) => syncController.probe(req, res));

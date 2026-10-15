@@ -10,6 +10,7 @@ class VideoScrapeApiService extends BaseApiService {
   Future<ApiResponse<Map<String, dynamic>>> startScrape({
     required int indexId,
     int? tmdbId,
+    String? javDvdId,
     String? mode,
     bool showLoading = false,
   }) {
@@ -18,6 +19,9 @@ class VideoScrapeApiService extends BaseApiService {
       body: {
         'index_id': indexId,
         if (tmdbId != null && tmdbId > 0) 'tmdb_id': tmdbId,
+        // ⭐ 日本片结果没有 TMDB id，改用番号让服务端直接按番号刮削
+        if (javDvdId != null && javDvdId.trim().isNotEmpty)
+          'jav_dvd_id': javDvdId.trim(),
         if (mode != null && mode.trim().isNotEmpty) 'mode': mode.trim(),
       },
       showLoading: showLoading,

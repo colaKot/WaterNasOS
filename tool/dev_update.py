@@ -67,7 +67,13 @@ SERVER = os.path.join(ROOT, 'electron_server')
 
 
 def log(msg):
-    sys.stdout.write(msg + '\n')
+    # 控制台是 GBK（cp936）时 '\u2705' 这类字符写 stdout 会抛 UnicodeEncodeError。
+    # 它崩在「归档已经写完」之后，会把一次成功的更新变成 rc=1，
+    # 而本仓库的判断口径是「看退出码」⇒ 会被误判成失败。退回用 buffer 写 UTF-8。
+    try:
+        sys.stdout.write(msg + '\n')
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write((msg + '\n').encode('utf-8', 'replace'))
     sys.stdout.flush()
 
 

@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "Plugin cần thiết cho tính năng này vẫn đang tải xuống. Vui lòng thử lại sau."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "Thiếu mã định danh thiết bị. Vui lòng cập nhật ứng dụng và thử lại.",
+      "DEVICE_ID_INVALID": "Mã định danh thiết bị không hợp lệ"
     }
   },
   "places365": {

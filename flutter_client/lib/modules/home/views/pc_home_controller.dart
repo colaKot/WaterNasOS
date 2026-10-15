@@ -75,6 +75,8 @@ class PcHomeController extends GetxController {
   }
 
   bool _isAppBlocked(String appKey) {
+    // web 端无法选择本地目录，目录同步在浏览器里不可用 ⇒ 不展示「同步管理」
+    if (kIsWeb && appKey == 'sync') return true;
     // Windows 服务端不支持远程挂载能力，桌面不展示该应用
     // if (appKey == 'mounts' && _isServerWin32) return true;
     if (!_isNormalUser) return false;

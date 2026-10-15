@@ -592,3 +592,48 @@ Jellyfin 仍停在 8.1 分支（没跟 9.0）⇒ 不是"旧"，是上游支持�
   （`git ls-tree origin/main` 查无此文件）。所以换 exe 不影响 git，但也意味着**从仓库构建的人拿不到 ffmpeg** ——
   这是既有状态，不是本次引入。升级前务必 `cp` 备份两个 exe 到 `_patch_backup/`。
 * ⚠️ 需要联网下载；已查本地三层（`_toolchain` / `%LOCALAPPDATA%\Programs\NasCabOSServer` / `node_modules`）**都没有现成构建**。
+
+---
+
+## 十、长期要点（2026-10-12 从 MEMORY.md 迁入，避免长期记忆超限被截断）
+
+### 10.1 瀑布流（手写、零依赖）
+* 组合 = `SliverCrossAxisGroup`（再套 `SliverList` 做列容器） + `SliverVariedExtentList`。
+  ⛔ `SliverCrossAxisGroup` **恒把 N 列都发满**（高度取最高列，短列下方留空是正常表现，不是 bug）。
+  ⛔ 不能用 `SliverList`（等高，得不到瀑布流效果）。
+* ⛔ `SliverLayoutBuilder.builder` 跑在 **layout 阶段**（不是 build）⇒ 里面用到的 Rx 必须在
+  外层 `Obx` 闭包内**先读一次**，否则不重建 / 抛 "setState during layout"。
+* 尺寸基线（实测调优后）：瀑布流列宽 **430**；普通网格 **320 × (4:3)**、短边 **240**。
+
+### 10.2 缩略图按需生成
+* 开关 `tinyPregenEnabled`：**无该行 = 按需生成**（默认）。
+* ⭐ **worker 必须常驻**（`IDLE_POLL_MS = 1500`）。worker 空闲退出后，接口返回的 202
+  赶不上前端 **15.5s 重试**节奏 ⇒ 网格成片空白（看起来像"图片丢了"）。
+* ⚠️ `_deferTinyToWorker()` 走「交给 worker」这条路时**必然抛 `file.TINY_PENDING`**，
+  调用方要当正常分支接住，别当错误上报。
+
+### 10.3 混合库分页（图片表 + 视频表归并）
+* ✅ 最终方案：**把归并本身放进 SQL**（`_mixedUnionPage`）——
+  手拼 `SELECT * FROM (…) UNION ALL SELECT * FROM (…) ORDER BY sort_key, src, uid LIMIT n+1`。
+  统一 TEXT 排序键（时间列 `printf('%020d', COALESCE(col,0))`）⇒ SQLite 保证单调 ⇒ keyset 构造性正确。
+* 踩过的坑：
+  * ⛔ knex `unionAll` 会 emit `union all (select …)`，SQLite 遇尾随 ORDER BY/LIMIT 报 `near "(": syntax error` ⇒ 只能手拼 SQL 字符串。
+  * ⛔ knex 里 `NULL as col` 会被当标识符引号化 ⇒ `no such column: NULL` ⇒ 必须 `knex.raw('NULL AS col')`。
+  * ⛔ UNION ALL 按**位置**而非名字对齐 ⇒ 两侧必须显式别名投影（曾出现视频的 path 跑进 filename）。
+  * 游标 = `key \u0001 src \u0001 sid`（文件名可能含 `|`，所以用 `\u0001`），必须正好 3 段。
+  * 图片 id 加 `MIXED_IMAGE_ID_OFFSET = 1000000000` 再发前端（两表 id 都从 1 开始，会撞）。
+  * `_mixedEffectiveSortBy()`：混合库把 `view_time`/`taken_at` 降级为 `create_time`（`video_index` 没有 `taken_at` 列）。
+* ⚠️ 实测 `view_time` 两张表 **100% 全 NULL/0** ⇒ 按它排会退化成纯 id 序。**这是数据属性不是 bug**。
+* ⭐ SQLite 是 **BINARY 序**（`_`=0x5F 排在字母**后**）⇒ 验证脚本别用 `localeCompare`，要按码点比。
+* 分页验证口径：8 种排序组合 × 每组合走完 **76 页 / 3782 行**，零重复、零页边界错位。
+
+### 10.4 前端加密与带 token 的 URL
+* 算法：`key = sha256(serverId)`、`iv = sha256(jsonStr)[0:16]`、`base64(iv + 密文)`。
+* ⭐ 只有 `getTinyUrl` **自动**带 accessToken；`getRawFileUrl` 默认 `false`，而
+  `/api/file/rawFile` 挂在 `authenticateJWT` 之后 ⇒ 给 `<video>` 用必须显式
+  `withAccessToken:true`，否则 401（现象是「点了不播」）。
+
+### 10.5 GPU / ffmpeg 加速结论（已实测，别再折腾）
+* libvips 纯 CPU；ffmpeg 硬解 JPEG 只有 cuvid / qsv（AMD `*_amf` 没有 JPEG 解码器）；
+  **没有任何 GPU API 能解 PNG**；ffmpeg 软解比 sharp 慢 **2.3~4.7×**。
+* 旁证：Jellyfin 的图片后端用 SkiaSharp，也是纯 CPU。⇒ 缩略图性能只能从并发/缓存/按需生成上找。

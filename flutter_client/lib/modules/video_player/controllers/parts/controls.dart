@@ -187,6 +187,9 @@ extension PlayerControls on PlayerController {
       checkAndroidIfNeedTranscode();
       applyAndroidFvpEngineIfNeeded();
     }
+    // ⭐ 切档位后重新校验输出编码兼容性（2026-10-13）：从原画切到转码档位时，
+    // 编码选择才开始生效，此时若不兼容需提示并回退 H.264。
+    guardOutputCodecCompatibility();
     _initializePlayer(keepPosition: true, switchPosition: switchPosition);
   }
 }

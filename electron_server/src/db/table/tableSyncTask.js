@@ -64,6 +64,8 @@ class tableSyncTask {
       { columns: ['status'], name: 'idx_sync_task_status', unique: false },
       { columns: ['mode'], name: 'idx_sync_task_mode', unique: false },
       { columns: ['device_id'], name: 'idx_sync_task_device_id', unique: false },
+      // 设备隔离（2026-10-12）：list/summary/归属校验都按 (uid, device_id) 查
+      { columns: ['uid', 'device_id'], name: 'idx_sync_task_uid_device', unique: false },
       { columns: ['remote_dir'], name: 'idx_sync_task_remote_dir', unique: false },
       { columns: ['create_time'], name: 'idx_sync_task_create_time', unique: false },
       { columns: ['uid', 'status'], name: 'idx_sync_task_uid_status', unique: false },

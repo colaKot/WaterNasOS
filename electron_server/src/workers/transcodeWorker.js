@@ -166,12 +166,47 @@ function computeHlsGopFrames(segDurSeconds, videoStream) {
 
 function isQsvVideoEncoder(encoder) {
   const e = String(encoder || '').toLowerCase();
-  return e === 'h264_qsv' || e === 'hevc_qsv';
+  return e === 'h264_qsv' || e === 'hevc_qsv' || e === 'av1_qsv';
 }
 
 function isVideotoolboxEncoder(encoder) {
   const e = String(encoder || '').toLowerCase();
-  return e === 'h264_videotoolbox' || e === 'hevc_videotoolbox';
+  return e === 'h264_videotoolbox' || e === 'hevc_videotoolbox' || e === 'av1_videotoolbox';
+}
+
+// ⭐⭐ 输出编码方式选择（2026-10-13）：影视设置里可选 H.264 / H.265 / AV1。
+// 归一化到三个编码族；非法或缺失一律回退 h264（兼容性最好）。
+function normalizeOutputCodec(raw) {
+  const v = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+  if (v === 'h265' || v === 'hevc' || v === 'h.265') return 'h265';
+  if (v === 'av1') return 'av1';
+  return 'h264';
+}
+
+// 软件编码器兜底：ffmpeg 自带 libx264/libx265/libsvtav1，不依赖显卡，必然可用。
+function softEncoderForCodec(codec) {
+  if (codec === 'h265') return 'libx265';
+  if (codec === 'av1') return 'libsvtav1';
+  return 'libx264';
+}
+
+// 从硬件方案里取目标编码族的硬件编码器；取不到返回 null（调用方退软编）。
+function pickHwEncoderForCodec(hwConfig, codec) {
+  if (!hwConfig) return null;
+  const profiles = hwConfig.profiles && typeof hwConfig.profiles === 'object' ? hwConfig.profiles : null;
+  if (profiles && profiles[codec] && profiles[codec].encoder) {
+    return String(profiles[codec].encoder);
+  }
+  // 兼容旧结构（无 profiles、只有单一 encoder）：仅当它属于目标编码族时才可用
+  const single = hwConfig.encoder ? String(hwConfig.encoder) : '';
+  if (!single) return null;
+  const lower = single.toLowerCase();
+  const singleKey = lower.includes('av1') || lower.includes('svtav1')
+    ? 'av1'
+    : (lower.includes('hevc') || lower.includes('265'))
+      ? 'h265'
+      : 'h264';
+  return singleKey === codec ? single : null;
 }
 
 /** WMV/ASF 容器 + VC-1/WMV3 视频；音轨常见 wmapro。与 MP4/MKV 不同，ASF 上 input -ss 落点常非 IDR。 */
@@ -865,8 +900,17 @@ async function startTranscoding(playId, filePath, options = {}) {
       // - cpu: 全 CPU
       const effectiveBurnSubtitle = skipSubtitleBurn ? false : burnSubtitle;
       const effectiveUseBitmapSubtitleOverlay = skipSubtitleBurn ? false : useBitmapSubtitleOverlay;
-      const useHwAccel = mode === 'hw_full' || mode === 'hw_encode' ? !!hwConfig && !!hwConfig.encoder : false;
-      const videoCodec = useHwAccel ? hwConfig.encoder : 'libx264';
+      // ⭐ 输出编码族：由转码请求的 options.codec 决定（缺省 h264）。
+      const targetCodec = normalizeOutputCodec(options && options.codec);
+      const hwEncoderForCodec =
+        mode === 'hw_full' || mode === 'hw_encode' ? pickHwEncoderForCodec(hwConfig, targetCodec) : null;
+      // CUDA 硬解全链路只对 h264_nvenc 做过适配；目标编码换成 h265/av1 时统一降级为
+      // 「仅硬件编码」（CPU 解码 + 硬件编码），避免硬解帧格式与编码器不匹配导致花屏/失败。
+      if (mode === 'hw_full' && hwEncoderForCodec && hwEncoderForCodec !== 'h264_nvenc') {
+        mode = 'hw_encode';
+      }
+      const useHwAccel = (mode === 'hw_full' || mode === 'hw_encode') && !!hwEncoderForCodec;
+      const videoCodec = useHwAccel ? hwEncoderForCodec : softEncoderForCodec(targetCodec);
       // 视频直通（仅转音频）：HDR/DV 需色调映射、需烧录字幕、指定了目标分辨率都必须重编视频
       const videoCopy =
         wantVideoCopy && !needsHdrToSdr && !burnSubtitle && !targetWidth;
@@ -1172,13 +1216,18 @@ async function startTranscoding(playId, filePath, options = {}) {
       if (!videoCopy) {
         if (videoCodec === 'libx264') {
           outputOptions.splice(1, 0, '-preset veryfast', '-sc_threshold 0');
-        } else if (videoCodec === 'h264_nvenc') {
+        } else if (videoCodec === 'libx265') {
+          outputOptions.splice(1, 0, '-preset veryfast');
+        } else if (videoCodec === 'libsvtav1') {
+          // SVT-AV1 preset 0(最慢/最高质量)~13(最快)；HLS 实时性优先取 8
+          outputOptions.splice(1, 0, '-preset 8');
+        } else if (videoCodec === 'h264_nvenc' || videoCodec === 'hevc_nvenc' || videoCodec === 'av1_nvenc') {
           if (useCudaFull) {
             outputOptions.splice(1, 0, '-preset fast');
           } else {
             outputOptions.splice(1, 0, '-preset fast', '-pix_fmt yuv420p');
           }
-        } else if (videoCodec === 'h264_qsv' || videoCodec === 'hevc_qsv') {
+        } else if (videoCodec === 'h264_qsv' || videoCodec === 'hevc_qsv' || videoCodec === 'av1_qsv') {
           // QSV 上 force_key_frames 可能产生非 IDR 的 I 帧，HLS 只在 IDR 处切分；配合 temp_file 时会一直不写 .ts，杀进程才落盘超大 segment_000
           const qsvExtra =
             videoCodec === 'h264_qsv'
@@ -1205,20 +1254,27 @@ async function startTranscoding(playId, filePath, options = {}) {
         outputOptions.push(`-force_key_frames expr:gte(t,n_forced*${segDur})`);
       }
       outputOptions.push('-f', 'hls', '-hls_time', String(segDur), '-hls_list_size', '0');
+      // ⭐ H.264 走传统 MPEG-TS；H.265/AV1 必须走 fMP4 分片
+      // （AV1 in MPEG-TS 连 ffmpeg 自己都解析不出来，实测不可用；fMP4 + #EXT-X-MAP 才是正解）。
+      const useFmp4 = targetCodec !== 'h264';
+      if (useFmp4) {
+        outputOptions.push('-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', path.join(outputDir, 'init.mp4'));
+      }
+      const segPattern = useFmp4 ? path.join(outputDir, 'segment_%03d.m4s') : segmentPath;
 
       command
         .outputOptions(outputOptions)
         // 带空格的路径必须作为独立参数传入，避免 fluent-ffmpeg 对数组字符串做兼容性拆分
-        .outputOptions('-hls_segment_filename', segmentPath, '-hls_flags', 'independent_segments+temp_file')
+        .outputOptions('-hls_segment_filename', segPattern, '-hls_flags', 'independent_segments+temp_file')
         .output(m3u8Path);
 
       command.on('start', cmdLine => {
         if (videoCopy) {
           Logger.info(`[TranscodeWorker] Started FFmpeg (video copy + audio transcode): ${cmdLine}`);
         } else if (useHwAccel) {
-          Logger.info(`[TranscodeWorker] Started FFmpeg with HW accel (${hwConfig.name || hwConfig.encoder}): ${cmdLine}`);
+          Logger.info(`[TranscodeWorker] Started FFmpeg with HW accel (${hwEncoderForCodec}): ${cmdLine}`);
         } else {
-          Logger.info(`[TranscodeWorker] Started FFmpeg (CPU): ${cmdLine}`);
+          Logger.info(`[TranscodeWorker] Started FFmpeg (CPU, codec=${targetCodec}): ${cmdLine}`);
         }
       });
 

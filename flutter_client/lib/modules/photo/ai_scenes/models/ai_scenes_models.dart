@@ -89,3 +89,63 @@ class AiSceneListResult {
     );
   }
 }
+
+/// 语义搜索命中结果。
+///
+/// 为什么只需要「相册原名列表」而不是完整条目：
+/// 相册列表接口（/photo/place/list）本来就一次返回全部相册（含封面与隐藏状态），
+/// 所以搜索只需拿到**命中顺序**，再去本地列表里取原有条目 —— 封面/隐藏状态天然保留，
+/// 也免掉服务端再算一遍封面。
+class AiSceneSearchResult {
+  /// 服务端按相关度排好序的相册原名
+  final List<String> rawNames;
+
+  /// 已识别的场景标签（用于给用户看「已识别：日落 · 海滩」）
+  final List<String> tags;
+
+  /// 未被词表识别的片段（用于提示「没听懂：xxx」）
+  final List<String> unmatched;
+
+  /// true = 走了语义解析；false = 退回标签名子串匹配
+  final bool semantic;
+
+  AiSceneSearchResult({
+    required this.rawNames,
+    required this.tags,
+    required this.unmatched,
+    required this.semantic,
+  });
+
+  factory AiSceneSearchResult.fromJson(Map<String, dynamic> json) {
+    final raw = (json['items'] as List<dynamic>? ?? []);
+    final names = <String>[];
+    for (final e in raw) {
+      if (e is! Map) continue;
+      final n = (e['place_name_raw'] ?? e['place_name'])?.toString() ?? '';
+      if (n.trim().isNotEmpty) names.add(n.trim());
+    }
+
+    final parsed = (json['parsed'] as Map?)?.cast<String, dynamic>();
+    final tags = <String>[];
+    final tagList = (parsed?['tags'] as List<dynamic>?) ?? const [];
+    for (final t in tagList) {
+      final label = t is Map ? (t['label']?.toString() ?? '') : '';
+      if (label.trim().isNotEmpty && !tags.contains(label.trim())) {
+        tags.add(label.trim());
+      }
+    }
+    final unmatched = <String>[];
+    final unList = (parsed?['unmatched'] as List<dynamic>?) ?? const [];
+    for (final u in unList) {
+      final s = u?.toString().trim() ?? '';
+      if (s.isNotEmpty) unmatched.add(s);
+    }
+
+    return AiSceneSearchResult(
+      rawNames: names,
+      tags: tags,
+      unmatched: unmatched,
+      semantic: json['mode']?.toString() == 'semantic',
+    );
+  }
+}

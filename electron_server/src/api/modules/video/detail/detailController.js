@@ -220,13 +220,30 @@ class VideoDetailController {
       if (!uid) return res.status(401).end();
 
       const q = req.query || {};
-      const tmdbId = String(q.tmdb_id ?? q.tmdbId ?? '').trim();
-      if (!tmdbId) return res.status(400).end();
+      let tmdbId = String(q.tmdb_id ?? q.tmdbId ?? '').trim();
+      const indexId = Number(q.index_id ?? q.indexId ?? 0) || 0;
+      const name = String(q.name ?? '').trim();
+      let thumb = String(q.thumb ?? '').trim();
 
       const size = 500;
-      const thumb = String(q.thumb ?? '').trim();
 
       const service = new VideoDetailService(req.dbVideo);
+
+      // ⭐ 日本片演员没有 tmdbId：客户端只给 index_id + 演员名，
+      //    这里从索引里把 NFO 记的 thumb（Jellyfin 生成的本地头像路径，
+      //    或我们刮削时抓到的站点头像 URL）取出来，再决定是直接读本地文件还是下载。
+      if (indexId > 0 && name && (!thumb || !tmdbId)) {
+        const guard = await this._ensureIndexAccess(req, indexId);
+        if (!guard.ok) return res.status(guard.statusCode || 403).end();
+        const found = await service.findPersonMetaInIndex({ indexId, name });
+        if (found) {
+          if (!thumb && found.thumb) thumb = found.thumb;
+          if (!tmdbId && found.tmdbId) tmdbId = found.tmdbId;
+        }
+      }
+
+      if (!tmdbId && !thumb) return res.status(400).end();
+
       const info = await service.getPersonJpegCacheInfo({
         tmdbId,
         size,
@@ -239,7 +256,17 @@ class VideoDetailController {
       if (!filePath) return res.status(404).end();
 
       if (info.exists) {
-        res.set('Content-Type', 'image/jpeg');
+        // 本地 Jellyfin 头像可能是 png/webp，按扩展名给对 Content-Type，
+        // 否则客户端会按 jpeg 解码失败、退回占位图。
+        const ext = path.extname(filePath).toLowerCase();
+        const mime = ext === '.png'
+          ? 'image/png'
+          : ext === '.webp'
+            ? 'image/webp'
+            : ext === '.gif'
+              ? 'image/gif'
+              : 'image/jpeg';
+        res.set('Content-Type', mime);
         return res.sendFile(filePath);
       }
 

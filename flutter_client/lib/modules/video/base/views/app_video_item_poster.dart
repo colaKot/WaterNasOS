@@ -2,6 +2,8 @@ import 'package:WaterNasOS/core/routes/app_routes.dart';
 import 'package:WaterNasOS/modules/base/components/custom_extended_image.dart';
 import 'package:WaterNasOS/modules/video/base/beans/video_item_bean.dart';
 import 'package:WaterNasOS/modules/video/base/video_utils/video_utils.dart';
+// ⭐ 日本片徽章组件与 PC 版海报共用（见 video_item_poster.dart 的 JpTagBadges）
+import 'package:WaterNasOS/modules/video/base/views/video_item_poster.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../../core/api/api_controller.dart';
@@ -244,7 +246,7 @@ class AppVideoItemPoster extends StatelessWidget {
   }
 
   Future<void> _showActionMenu(BuildContext context) async {
-    final isAdmin = CurrentUserController.instance.isAdmin;
+    final isAdmin = CurrentUserController.instance.isSuperAdmin;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -447,8 +449,16 @@ class AppVideoItemPoster extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // ⭐ 日本片标记徽章（2026-10-12）：放封面右上角；
+                  //    有徽章时把「更多」按钮往下挪，避免叠在一起。
+                  if (item.hasJpTags)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: JpTagBadges(item: item, scale: 0.9),
+                    ),
                   Positioned(
-                    top: 6,
+                    top: item.hasJpTags ? 30 : 6,
                     right: 6,
                     child: Material(
                       color: Colors.transparent,

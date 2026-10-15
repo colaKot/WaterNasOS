@@ -5,6 +5,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../sync/sync_controller.dart';
+import 'autostart.dart';
 
 /// 托盘常驻 + 关窗最小化。
 ///
@@ -46,6 +47,7 @@ class SyncTray {
         ? SyncController.instance
         : null;
     final paused = ctrl?.autoPaused.value ?? false;
+    final startOnBoot = await AutoStart.isEnabled();
 
     final menu = Menu(
       items: [
@@ -53,6 +55,24 @@ class SyncTray {
           key: 'tray_show',
           label: 'tray_show_main_window'.tr,
           onClick: (_) => Future<void>(() => showWindow()),
+        ),
+        // ⭐ 开机自动启动（2026-10-13）：托盘右键直接勾选，写系统自启项。
+        MenuItem.checkbox(
+          key: 'tray_start_on_boot',
+          label: 'auto_start'.tr,
+          checked: startOnBoot,
+          onClick: (item) {
+            final next = !(item.checked ?? false);
+            // 先改本地勾选态：tray_manager 会在 onClick 结束后据此重绘菜单
+            item.checked = next;
+            Future<void>(() async {
+              final ok = await AutoStart.setEnabled(next);
+              if (!ok) {
+                item.checked = !next; // 写失败回滚，别让界面骗人
+                await updateMenu();
+              }
+            });
+          },
         ),
         MenuItem.separator(),
         MenuItem(
@@ -119,7 +139,7 @@ class SyncTray {
     } else {
       await trayManager.setIcon('assets/tray_icon_round.ico');
     }
-    await trayManager.setToolTip('WaterNasOS 同步');
+    await trayManager.setToolTip('WaterNasSync');
     await _applyContextMenu();
 
     trayManager.addListener(_SyncTrayListener());

@@ -8,7 +8,8 @@ import 'app_window_title_impl_stub.dart'
 class AppWindowTitle {
   AppWindowTitle._();
 
-  /// 默认标题：完整版为 `WaterNasOS`，独立端为 `WaterNasOS 相册` / `WaterNasOS 音乐`。
+  /// 默认标题：完整版 `WaterNasClient`，独立端 `WaterNasPhoto` / `WaterNasMusic`。
+  /// （桌面图标／任务栏用的短名在各平台资源里：`WNClient` / `WNPhoto` / `WNMusic`。）
   static String get defaultTitle => AppLaunch.appTitle;
 
   static void setTitle(String title) {

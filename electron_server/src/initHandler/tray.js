@@ -2,6 +2,7 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const Logger = require('../utils/logger');
+const autoLaunchUtil = require('../utils/autoLaunchUtil');
 
 function getRootPath(app) {
   if (!app) return null;
@@ -79,11 +80,61 @@ module.exports = {
       } catch {}
     };
 
-    const trayMenuTemplate = [
+    /** 读当前「开机自动启动」状态（注册表 / LaunchAgent / autostart） */
+    const readOpenAtLogin = () => {
+      try {
+        return !!autoLaunchUtil.getOpenAtLogin(app);
+      } catch (e) {
+        return false;
+      }
+    };
+
+    let refreshTrayMenu = () => {};
+
+    const buildTrayMenuTemplate = () => [
       {
         label: 'Show/Hide',
         click: toggleWindow,
       },
+      { type: 'separator' },
+      // ⭐ 开机自动启动（2026-10-13）：托盘右键直接勾选。
+      //    同时写系统自启项（注册表 Run / LaunchAgent / ~/.config/autostart）
+      //    与数据库配置 openAtLogin，保证与「设置」页里的开关是同一份状态。
+      {
+        label: '开机自动启动',
+        type: 'checkbox',
+        checked: readOpenAtLogin(),
+        click: async item => {
+          const next = !!item.checked;
+          let ok = false;
+          try {
+            ok = autoLaunchUtil.setOpenAtLogin(app, next) !== false;
+          } catch (e) {
+            ok = false;
+          }
+          if (!ok) {
+            // 写系统自启项失败：回滚勾选态，别让界面骗人
+            item.checked = !next;
+            refreshTrayMenu();
+            return;
+          }
+          try {
+            const tableConfig = require('../db/table/tableConfig');
+            if (tableConfig && tableConfig.setConfigByKey) {
+              await tableConfig.setConfigByKey(
+                tableConfig.KEY_OPEN_AT_LOGIN,
+                next ? 'true' : 'false'
+              );
+            }
+          } catch (e) {
+            Logger.error(
+              'Tray save openAtLogin failed:',
+              e && e.message ? e.message : e
+            );
+          }
+        },
+      },
+      { type: 'separator' },
       {
         label: 'Restart',
         click: () => {
@@ -105,7 +156,13 @@ module.exports = {
       },
     ];
 
-    const contextMenu = Menu.buildFromTemplate(trayMenuTemplate);
+    refreshTrayMenu = () => {
+      try {
+        this.tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate()));
+      } catch {}
+    };
+
+    const contextMenu = Menu.buildFromTemplate(buildTrayMenuTemplate());
     try {
       this.tray.setToolTip('WaterNasOS');
     } catch {}

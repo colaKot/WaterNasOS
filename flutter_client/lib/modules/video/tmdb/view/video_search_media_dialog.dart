@@ -8,6 +8,7 @@ import '../../../../utils/dialog_util.dart';
 import '../../../../utils/toast_util.dart';
 import '../service/video_tmdb_api_service.dart';
 import '../../scrape/service/video_scrape_api_service.dart';
+import '../../base/services/video_item_sync_service.dart';
 
 class VideoSearchMediaDialog {
   static Future<void> show(
@@ -84,11 +85,14 @@ class _VideoSearchMediaDialogContentState
   }
 
   Future<void> _applyResult(VideoTmdbSearchItem r) async {
-    if (widget.item.id <= 0 || r.id <= 0) return;
+    if (widget.item.id <= 0) return;
+    if (r.isJav ? r.dvdId.isEmpty : r.id <= 0) return;
     try {
       final resp = await VideoScrapeApiService.instance.startScrape(
         indexId: widget.item.id,
-        tmdbId: r.id,
+        // 日本片结果没有 TMDB id，改带番号（服务端按番号直接刮削）
+        tmdbId: r.isJav ? null : r.id,
+        javDvdId: r.isJav ? r.dvdId : null,
         mode: 'manual',
         showLoading: false,
       );
@@ -109,6 +113,9 @@ class _VideoSearchMediaDialogContentState
       // 先关闭对话框，再显示 Toast，否则 Toast 会被对话框遮挡或一起被移除
       Navigator.of(context).pop();
       ToastUtil.show('video_scrape_apply_success_toast'.tr);
+      // ⭐ 刮削在服务端是异步子进程，这里通知各列表延后自动刷新
+      //    —— 否则用户点完应用会发现列表毫无变化，只能自己手动刷。
+      VideoItemSyncService.notifyUpdated(widget.item.id);
     } catch (_) {
       if (!mounted) return;
       ToastUtil.show('video_scrape_start_failed'.tr);
@@ -129,6 +136,7 @@ class _VideoSearchMediaDialogContentState
         searchMode: _searchMode,
         query: query,
         tmdbId: tmdbId,
+        indexId: widget.item.id,
         page: p,
         showLoading: false,
       );
@@ -236,17 +244,27 @@ class _VideoSearchMediaDialogContentState
     final title = r.title.isNotEmpty ? r.title : r.originalTitle;
     final subtitleParts = <String>[
       if (r.year > 0) r.year.toString(),
-      if (r.id > 0) 'TMDB ${r.id}',
+      // ⭐ 日本片结果没有 TMDB id，显示「日本电影 · 番号」
+      if (r.isJav && r.dvdId.isNotEmpty)
+        '${'video_library_jp_movie'.tr} · ${r.dvdId}'
+      else if (r.id > 0)
+        'TMDB ${r.id}',
     ];
     final subtitle = subtitleParts.join(' · ');
-    final posterUrl = r.posterUrl.isNotEmpty
-        ? ApiController.instance.getVideoPosterImageUrl(
+    // ⭐ 日本片结果的封面是日文站外链，有防盗链、裸连必 403，
+    //    必须走服务端按番号抓取的封面代理；TMDB 结果仍走原来的 poster 代理。
+    final posterUrl = r.posterUrl.isEmpty
+        ? ''
+        : r.isJav
+        ? (r.dvdId.isEmpty
+              ? ''
+              : ApiController.instance.getVideoJavCoverUrl(dvdId: r.dvdId))
+        : ApiController.instance.getVideoPosterImageUrl(
             tmdbId: r.id.toString(),
             size: 240,
             thumb: r.posterUrl,
             mediaType: r.mediaType,
-          )
-        : '';
+          );
     final actorsText = (r.actors).take(6).join(' / ');
     final genresText = (r.genres).take(6).join(' / ');
 

@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:math';
 
+import 'package:nascab_sync_core/nascab_sync_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 应用级偏好 + 本机设备标识。
@@ -12,7 +12,6 @@ class AppPrefs {
 
   static const String _kAutoStart = 'nascab_sync.auto_start';
   static const String _kAutoSyncPaused = 'nascab_sync.auto_sync_paused';
-  static const String _kDeviceId = 'nascab_sync.device_id';
   static const String _kDeviceName = 'nascab_sync.device_name';
 
   static SharedPreferences? _prefs;
@@ -46,24 +45,15 @@ class AppPrefs {
 
   // ── 设备标识 ──
 
-  /// 设备 ID：首次生成后持久化，形如 `sync-3f2a91c4`
-  static Future<String> getDeviceId() async {
-    final sp = await _sp();
-    final cached = sp.getString(_kDeviceId);
-    if (cached != null && cached.isNotEmpty) return cached;
+  /// 设备 ID：本机机器级标识（与主客户端同一套解析，见核心包 SyncDeviceId）。
+  ///
+  /// 2026-10-12 之前这里是「每安装一个随机 UUID」，导致同一台机器上
+  /// 独立同步客户端与主客户端被当成两台设备、任务互不相通；现在改为
+  /// OS 机器级标识（Windows MachineGuid 等），同机一致、换机必不同。
+  static Future<String> getDeviceId() => SyncDeviceId.resolve();
 
-    final rand = Random();
-    final buf = StringBuffer('sync-');
-    const hex = '0123456789abcdef';
-    for (var i = 0; i < 12; i++) {
-      buf.write(hex[rand.nextInt(16)]);
-    }
-    final id = buf.toString();
-    await sp.setString(_kDeviceId, id);
-    return id;
-  }
-
-  /// 设备名：默认取本机主机名
+  /// 设备名（本地展示用，用户可改名）：默认取本机主机名。
+  /// 注意：上报给服务端的 device_name 统一用主机名，避免两个客户端互相覆盖。
   static Future<String> getDeviceName() async {
     final sp = await _sp();
     final cached = sp.getString(_kDeviceName);

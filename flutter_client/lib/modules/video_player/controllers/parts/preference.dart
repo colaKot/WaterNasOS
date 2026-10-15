@@ -13,7 +13,9 @@ extension PlayerPreference on PlayerController {
     try {
       final res = await HttpUtil.post(
         '$baseUrl/api/video/getPlayQuality',
-        body: {},
+        // ⭐ 必须带 clientType（2026-10-12）：默认画质是按「端 + 用户」隔离存的，
+        // 不带的话服务端会归一成空串，读到的还是那份旧的全量配置 ⇒ 按端隔离失效。
+        body: {'clientType': DeviceUtils.clientTypeKey},
         headers: token != null ? {'Authorization': 'Bearer $token'} : null,
       );
       if (!res.isOk) return;
@@ -21,9 +23,25 @@ extension PlayerPreference on PlayerController {
       if (data == null) return;
       final payload = data['data'];
       if (payload is! Map) return;
+      // ⭐ 输出编码方式 + 服务端编码能力（2026-10-13）。
+      // 与画质同一个接口一次拉回，服务端按 (uid, 端) 隔离存。
+      _preferredOutputCodec = VideoCodec.normalize(payload['codec']?.toString());
+      // ⭐ 码率档位随编码变化（2026-10-15）：先在当前编码的档位表里建立列表，
+      // 否则 265 专属档位（如 1440p_5m）会被 h264 列表判为非法而丢失。
+      _syncQualityOptionsForCodec();
       final quality = payload['quality']?.toString().trim() ?? '';
-      if (quality.isEmpty || !qualityOptions.contains(quality)) return;
-      _defaultPlayQuality = quality;
+      if (quality.isNotEmpty && qualityOptions.contains(quality)) {
+        _defaultPlayQuality = quality;
+      }
+      final cap = payload['codecCapability'];
+      _serverCodecCapability = cap is Map
+          ? cap.map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+      // ⭐ 默认字幕语言（2026-10-15）：与画质同一接口一次拉回，
+      // 打开播放列表时决定默认选中哪条字幕。
+      _defaultSubtitleLanguage = SubtitleLanguage.normalize(
+        payload['defaultSubtitleLanguage']?.toString(),
+      );
     } catch (_) {}
   }
 

@@ -192,11 +192,13 @@ class Media3PlayerSession(
         return false
     }
 
-    /** 硬解失败后重建播放器，视频轨仅走 FFmpeg 扩展解码器。 */
+    /** 硬解失败后重建播放器，视频轨仅走 FFmpeg 扩展解码器。
+     *  说明：H.265/AV1 的转码流走 fMP4 HLS，部分设备虽自报支持该编码硬解，
+     *  实际解码 10-bit / 高规格时仍会失败；这里对 HLS/转码同样放开软解兜底，
+     *  交给 FFmpeg 扩展解码器接手（否则 hevc/av1 转码失败后无路可退）。 */
     private fun trySoftwareDecodeFallback(): Boolean {
         if (triedSoftwareDecodeFallback) return false
         val url = mainUrl ?: return false
-        if (isHlsOrTranscodeUrl(url)) return false
 
         triedSoftwareDecodeFallback = true
         videoSoftwareDecodeOnly = true

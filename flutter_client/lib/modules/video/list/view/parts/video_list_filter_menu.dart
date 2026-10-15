@@ -173,6 +173,39 @@ class VideoListFilterPanel extends StatelessWidget {
         ];
       }
 
+      /// ⭐ 日本片标记（2026-10-12）：仅在库开了「日本电影」开关时出现。
+      List<Widget> jpTagOptions() {
+        final tags = controller.getJpTagOptions();
+        if (tags.isEmpty) return const <Widget>[];
+        String labelOf(String tag) {
+          switch (tag) {
+            case 'uncensored':
+              return 'video_list_filter_jp_uncensored'.tr;
+            case 'chinese_sub':
+              return 'video_list_filter_jp_chinese_sub'.tr;
+          }
+          return tag;
+        }
+
+        return [
+          chip(
+            text: 'all'.tr,
+            selected: controller.selectedJpTags.isEmpty,
+            onTap: () {
+              controller.selectedJpTags.clear();
+              controller.refreshList(showLoading: true);
+            },
+          ),
+          ...tags.map((t) {
+            return chip(
+              text: labelOf(t),
+              selected: controller.selectedJpTags.contains(t),
+              onTap: () => controller.toggleJpTag(t),
+            );
+          }),
+        ];
+      }
+
       List<Widget> mediaTypeOptions() {
         final hasFixedType = controller.initialMediaType.trim().isNotEmpty;
         if (hasFixedType) return const <Widget>[];
@@ -200,6 +233,13 @@ class VideoListFilterPanel extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // ⭐ 日本片标记（2026-10-12）放最前：类型(genres)动辄几十上百项，
+            // 排在它下面会被顶到很远，用户基本翻不到（用户反馈）。
+            if (controller.jpTagsFilterEnabled.value)
+              groupRow(
+                label: 'video_list_filter_jp_tags'.tr,
+                options: jpTagOptions(),
+              ),
             if (showMediaTypeFilter &&
                 controller.initialMediaType.trim().isEmpty)
               groupRow(label: 'type'.tr, options: mediaTypeOptions()),

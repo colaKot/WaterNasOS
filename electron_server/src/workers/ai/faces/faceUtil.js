@@ -39,6 +39,15 @@ const DET_SCORE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_DET_SCO
 // 该限制基于检测框的 width/height 的较小值。
 const FACE_MIN_BOX_SIZE_PX = Math.max(0, Math.min(4096, Number(process.env.FACE_MIN_BOX_SIZE_PX ?? 80)));
 
+// ⭐ 2026-10-13 误检治理（阈值来自真实库统计，见 tool/_diag_face_threshold.py）：
+// 真实人脸框宽普遍是图宽的 3%~15%（单脸照片众数 11.9%），而规则纹理误检（条纹/栅格图案）
+// 多在 1%~3%。取 1.5% 做下限：只砍掉极小的框，真实人脸误伤约 0.1%。
+const FACE_MIN_BOX_WIDTH_RATIO = Math.max(0, Math.min(0.5, Number(process.env.FACE_MIN_BOX_WIDTH_RATIO ?? 0.015)));
+
+// 单图人脸数上限：超过这个数基本是图案误检（真实合影超过 20 人的极少）。
+// 真实库里 ≥20 脸的照片仅 64 张，且框宽均值只有 2%~3%；整张丢弃最干净。
+const FACE_MAX_FACES_PER_IMAGE = Math.max(0, Math.min(200, Number(process.env.FACE_MAX_FACES_PER_IMAGE ?? 20)));
+
 // 特征提取输入尺寸：EdgeFace 与 insightFace/arcface 都用 112x112 对齐人脸。
 const FEAT_INPUT_SIZE = 112;
 
@@ -192,6 +201,11 @@ function isFaceBoxAcceptable(box, rotatedMeta) {
   if (!(w > 1 && h > 1)) return false;
   const minSide = Math.min(w, h);
   if (FACE_MIN_BOX_SIZE_PX > 0 && minSide < FACE_MIN_BOX_SIZE_PX) return false;
+  // 相对图宽的下限：过滤「整张纹理里找到的极小伪脸」
+  if (FACE_MIN_BOX_WIDTH_RATIO > 0 && ow > 0) {
+    const ratio = Math.max(w, h) / Math.max(1, ow);
+    if (ratio < FACE_MIN_BOX_WIDTH_RATIO) return false;
+  }
   return true;
 }
 
@@ -611,6 +625,14 @@ class FaceEngine {
     if (!imagePath || !fs.existsSync(imagePath)) return [];
     const { rotatedMeta, faces } = await this.detectFaces(imagePath);
     if (!faces || faces.length === 0) return [];
+    // ⭐ 2026-10-13：单图脸数超上限 ⇒ 判定为图案误检，整张丢弃（不做部分保留，
+    // 部分保留反而会造出一堆只含误检的「人脸相册」）。
+    if (FACE_MAX_FACES_PER_IMAGE > 0 && faces.length > FACE_MAX_FACES_PER_IMAGE) {
+      Logger.info(
+        `⚠️ 疑似误检图案，整张丢弃：faces=${faces.length} > ${FACE_MAX_FACES_PER_IMAGE}`
+      );
+      return [];
+    }
     const results = [];
     for (const face of faces) {
       const box = face && face.box ? face.box : null;
@@ -685,9 +707,186 @@ async function getFaceEngine() {
   return singleton;
 }
 
+/* ============================================================================
+ * ⭐ 2026-10-14 聚类决策层（纯函数，不碰 DB / 模型，可离线单测）
+ *
+ * 背景（用户反馈「好多人的人脸混在了一起」）：原有实现有三处会在样本一多时
+ * 把不同的人并到一组，全部集中在决策层，与模型精度无关：
+ *   1) 只要「最近的原型」相似度 >= 阈值就认领，不看第二名有多近 ——
+ *      两个人的原型都在阈值上方时，采样噪声就能把人判给错的那个；
+ *   2) 原型权重里有个「多样性因子」：与近期样本**越不像**权重越大（最高 1.4×），
+ *      方向正好相反 —— 它主动把最可疑（最不像本人）的样本拉进原型，
+ *      让原型慢慢漂移到别人身上，再吸进更多人（hub 形成的主因之一）；
+ *   3) 二次合并按相似度排序后贪心合并，没有传递性约束：
+ *      A~B、B~C 就会把 A/B/C 三个人并成一组。
+ * 下面三个函数分别给这三处提供可测的判定，调用点在 faceWorker.js。
+ * ========================================================================== */
+
+/** 与近期样本的相似度高于此值时，认为该样本是「本人同一种姿态/光照下的重复」*/
+const PROTO_RECENT_HIGH_SIM = 0.95;
+/** 新颖样本对原型拉扯的最大衰减（0.4 ⇒ 权重最低降到基准的 60%）*/
+const PROTO_NOVELTY_DAMP_MAX = 0.4;
+
+/**
+ * 原型更新权重因子。
+ *
+ * ⭐ 方向必须是「越不像本人的样本，越不许拉扯原型」。
+ * 返回区间 [1 - DAMP_MAX, 1]，**永不放大**。
+ * @param {number} maxSimToRecent 该样本与原型近期样本的最大余弦相似度；无历史时传 null
+ */
+function protoWeightFactor(maxSimToRecent) {
+  // ⚠️ null/undefined 表示「没有近期样本」，不能走 Number()（Number(null) === 0）
+  if (maxSimToRecent === null || maxSimToRecent === undefined) return 1;
+  const s = Number(maxSimToRecent);
+  if (!Number.isFinite(s)) return 1;
+  const novelty = Math.max(0, Math.min(1, (PROTO_RECENT_HIGH_SIM - s) / 0.25));
+  return 1 - PROTO_NOVELTY_DAMP_MAX * novelty;
+}
+
+/**
+ * 维护「按根人脸去重的 top2 相似度」小表。
+ * 同一个根人脸（同一人物分组）只保留最高分，避免同一组内的多个原型把第二名位置占掉，
+ * 导致「第二名」其实是同一个人，二义性判定失真。
+ *
+ * @param {Array<{rootId:number, sim:number}>} top 长度 <= 2、按 sim 降序、rootId 互不相同
+ * @param {number} rootId
+ * @param {number} sim
+ * @returns {Array<{rootId:number, sim:number}>} 原地更新后的 top（便于链式使用）
+ */
+function pushTopRoot(top, rootId, sim) {
+  const r = Number(rootId) || 0;
+  const s = Number(sim);
+  if (!Array.isArray(top) || !Number.isFinite(s)) return top;
+  let hit = null;
+  for (const t of top) {
+    if (Number(t.rootId) === r) { hit = t; break; }
+  }
+  if (hit) {
+    if (s <= hit.sim) return top;
+    hit.sim = s;
+  } else {
+    top.push({ rootId: r, sim: s });
+  }
+  top.sort((a, b) => b.sim - a.sim);
+  if (top.length > 2) top.length = 2;
+  return top;
+}
+
+/**
+ * 认领判定：最近原型是否足够可信。
+ *
+ * 规则：
+ *  - bestSim < req                       ⇒ 拒绝（新建一个人脸组）
+ *  - bestSim - secondSim < margin        ⇒ 拒绝（两个人难以区分，宁可分不可误合）
+ *  - 其余                                ⇒ 接受
+ * secondSim 用 -Infinity / null 表示「只有一个人脸组」。
+ *
+ * @param {{bestSim:number, secondSim:number, req:number, margin:number}} p
+ * @returns {{accepted:boolean, ambiguous:boolean, gap:number}}
+ */
+function decideFaceAssignment(p) {
+  const o = p || {};
+  const best = Number(o.bestSim);
+  const req = Number(o.req);
+  const margin = Math.max(0, Number(o.margin) || 0);
+  if (!Number.isFinite(best) || !Number.isFinite(req) || best < req) {
+    return { accepted: false, ambiguous: false, gap: NaN };
+  }
+  const second = Number(o.secondSim);
+  const gap = Number.isFinite(second) ? best - second : Infinity;
+  const ambiguous = gap < margin;
+  return { accepted: !ambiguous, ambiguous, gap };
+}
+
+/**
+ * 二次合并的选择器：从候选相似度对里挑出「本轮真正要合并的」。
+ *
+ * 两条护栏，都是为了掐掉链式合并：
+ *  1) **互为最近邻**（requireMutual，默认开）：只有 b 是 a 的最佳伙伴、且 a 也是 b 的最佳伙伴
+ *     才允许合并。A~B、B~C 这种「桥」无法同时满足两边，于是不会把三个人串起来；
+ *  2) **本轮一对一匹配**：每个人脸本轮最多参与一次合并，A 不会被并进 B 又并进 C。
+ *     同一人物的多个碎片会在后续维护轮次里逐轮收敛（每轮至少消掉一半）。
+ *
+ * @param {Array<{a:number,b:number,sim:number,simBest:number,countA:number,countB:number,timeOk?:boolean}>} pairs
+ * @param {object} [opts]
+ * @param {number} [opts.limit] 本轮最多合并几对
+ * @param {boolean} [opts.requireMutual] 是否要求互为最近邻（默认 true）
+ * @param {Array<{name?:string, match:(p:object)=>boolean}>} [opts.tiers]
+ *        按顺序尝试的「档位」，每档只处理还没被占用的人脸（对应原有「先合并小分组，再常规，再严格」）
+ * @returns {Array<{keepId:number, dropId:number, a:number, b:number, score:number, tier:string}>}
+ */
+function selectMergePairs(pairs, opts = {}) {
+  const limit = Math.max(0, Number(opts.limit) || 0);
+  const requireMutual = opts.requireMutual !== false;
+  const tiers = Array.isArray(opts.tiers) && opts.tiers.length > 0
+    ? opts.tiers
+    : [{ name: 'all', match: () => true }];
+
+  const list = [];
+  for (const raw of Array.isArray(pairs) ? pairs : []) {
+    if (!raw) continue;
+    const a = Number(raw.a) || 0;
+    const b = Number(raw.b) || 0;
+    if (!a || !b || a === b) continue;
+    const sim = Number(raw.sim);
+    const simBest = Number(raw.simBest);
+    const score = Math.max(Number.isFinite(sim) ? sim : -1, Number.isFinite(simBest) ? simBest : -1);
+    list.push({
+      a, b, sim, simBest, score,
+      countA: Math.max(0, Number(raw.countA) || 0),
+      countB: Math.max(0, Number(raw.countB) || 0),
+      timeOk: raw.timeOk === undefined ? true : !!raw.timeOk,
+    });
+  }
+  if (list.length === 0 || limit === 0) return [];
+
+  // 每个人的最佳伙伴（按 score）
+  const bestPartner = new Map();
+  for (const p of list) {
+    const cur1 = bestPartner.get(p.a);
+    if (!cur1 || p.score > cur1.score) bestPartner.set(p.a, { other: p.b, score: p.score });
+    const cur2 = bestPartner.get(p.b);
+    if (!cur2 || p.score > cur2.score) bestPartner.set(p.b, { other: p.a, score: p.score });
+  }
+
+  const used = new Set();
+  const out = [];
+  for (const tier of tiers) {
+    if (out.length >= limit) break;
+    const match = typeof tier.match === 'function' ? tier.match : () => true;
+    const cands = list
+      .filter(p => !used.has(p.a) && !used.has(p.b) && match(p))
+      .filter(p => {
+        if (!requireMutual) return true;
+        const pa = bestPartner.get(p.a);
+        const pb = bestPartner.get(p.b);
+        return !!pa && !!pb && pa.other === p.b && pb.other === p.a;
+      })
+      .sort((x, y) => y.score - x.score);
+    for (const p of cands) {
+      if (out.length >= limit) break;
+      if (used.has(p.a) || used.has(p.b)) continue;
+      const keepId = p.countA >= p.countB ? p.a : p.b;
+      const dropId = keepId === p.a ? p.b : p.a;
+      used.add(p.a);
+      used.add(p.b);
+      out.push({
+        keepId, dropId, a: p.a, b: p.b, score: p.score,
+        tier: tier.name || 'tier',
+      });
+    }
+  }
+  return out;
+}
+
 module.exports = {
   getFaceEngine,
   bufferToFloat32,
   float32ToBuffer,
   normalizeL2,
+  // 聚类决策层（纯函数）
+  protoWeightFactor,
+  pushTopRoot,
+  decideFaceAssignment,
+  selectMergePairs,
 };

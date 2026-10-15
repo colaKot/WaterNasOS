@@ -200,7 +200,7 @@ class _IndexSettingsViewState extends State<_IndexSettingsView> {
                             ),
                             const SizedBox(height: 12),
                             SwitchListTile(
-                              activeColor: theme.colorScheme.primary,
+                              activeThumbColor: theme.colorScheme.onPrimary,
                               contentPadding: EdgeInsets.zero,
                               value: enabled,
                               onChanged: loading || saving

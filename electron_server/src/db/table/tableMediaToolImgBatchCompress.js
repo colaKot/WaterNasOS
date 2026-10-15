@@ -25,6 +25,7 @@ class tableMediaToolImgBatchCompress {
     if (!tableExists) {
       await knex.schema.createTable(this.tableName, table => {
         table.increments('id').primary();
+        table.integer('uid').notNullable().defaultTo(0); // 任务归属用户（0=旧版未归属，仅管理员可见）
         table.text('source_path').notNullable();
         table.text('target_path').notNullable();
         table
@@ -66,6 +67,15 @@ class tableMediaToolImgBatchCompress {
       });
       Logger.info(`✅ Table ${this.tableName} created`);
     }
+
+    const info = await knex.raw(`PRAGMA table_info('${this.tableName}')`).catch(() => null);
+    const rows = Array.isArray(info) ? info : ((info?.rows || info) ?? []);
+    const colNames = new Set((rows || []).map(r => (r && r.name ? String(r.name) : '')).filter(Boolean));
+    if (!colNames.has('uid')) {
+      try {
+        await knex.raw(`ALTER TABLE ${this.tableName} ADD COLUMN uid INTEGER NOT NULL DEFAULT 0`);
+      } catch (_) {}
+    }
   }
 
   async createIndexes(connection = null) {
@@ -75,6 +85,7 @@ class tableMediaToolImgBatchCompress {
     const indexNames = rows.map(row => row.name);
 
     const targetIndexes = [
+      { columns: ['uid'], name: 'idx_media_tool_img_batch_compress_uid', unique: false },
       { columns: ['status'], name: 'idx_media_tool_img_batch_compress_status', unique: false },
       { columns: ['create_time'], name: 'idx_media_tool_img_batch_compress_create_time', unique: false },
       { columns: ['update_time'], name: 'idx_media_tool_img_batch_compress_update_time', unique: false },

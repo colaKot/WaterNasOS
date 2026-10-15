@@ -16,6 +16,25 @@ function normalizeString(v) {
   return String(v).trim();
 }
 
+/// 设备归属前缀。
+///
+/// 服务端存库的 device_id 一律是 `m:<客户端机器标识>`；
+/// 旧版本客户端写进去的是 NAS serverId / 随机 UUID / 空串（没有任何前缀），
+/// 靠「有没有 m: 前缀」就能把「已绑定主机的任务」与「旧版未绑定任务」分开。
+const DEVICE_KEY_PREFIX = 'm:';
+
+function deviceKeyOf(deviceId) {
+  const raw = normalizeString(deviceId);
+  return raw ? `${DEVICE_KEY_PREFIX}${raw}` : '';
+}
+
+/// 是否按 v2（设备隔离）语义通信。
+/// 旧客户端不会传 device_bound，据此明确区分，避免「upsert 带 device_id 的旧客户端」被误判。
+function isDeviceBound(reqOrBody) {
+  const b = reqOrBody && (reqOrBody.device_bound ?? reqOrBody.body?.device_bound);
+  return b === true || b === 'true' || b === 1 || b === '1';
+}
+
 class SyncService {
   constructor(knexMain) {
     this.knexMain = knexMain;
@@ -38,7 +57,37 @@ class SyncService {
     };
   }
 
-  async list({ uid, page, pageSize, status, mode, keyword, sortBy, sortOrder } = {}) {
+  /**
+   * 任务可见范围（用户 2026-10-12 定的四条规则）：
+   *   - v2 客户端：只有 (uid, m:<device_id>) 自己的任务；
+   *   - 旧客户端（无 device_bound）：只能看到「未绑定主机」的旧任务（过渡期兼容），
+   *     已被某台机器认领走的任务对它不可见。
+   */
+  _scopedQuery(uid, deviceId, deviceBound) {
+    const uidNum = Number(uid) || 0;
+    let q = this.knexMain(this.tableName).where({ uid: uidNum });
+    if (deviceBound) {
+      q = q.where({ device_id: deviceKeyOf(deviceId) });
+    } else {
+      q = q.andWhere(builder => {
+        builder.where('device_id', '').orWhereNot('device_id', 'like', `${DEVICE_KEY_PREFIX}%`);
+      });
+    }
+    return q;
+  }
+
+  /** 旧版「未绑定主机」任务数量（v2 客户端列表页据此提示认领）。 */
+  async _countLegacyPending(uid) {
+    const rows = await this.knexMain(this.tableName)
+      .where({ uid: Number(uid) || 0 })
+      .andWhere(builder => {
+        builder.where('device_id', '').orWhereNot('device_id', 'like', `${DEVICE_KEY_PREFIX}%`);
+      })
+      .count({ c: '*' });
+    return Number((rows && rows[0] && (rows[0].c ?? rows[0]['count(*)'])) || 0) || 0;
+  }
+
+  async list({ uid, page, pageSize, status, mode, keyword, sortBy, sortOrder, deviceId, deviceBound } = {}) {
     const uidNum = Number(uid) || 0;
     const pageNum = Number(page || 1) || 1;
     const hasPageSize = pageSize !== undefined && pageSize !== null;
@@ -48,8 +97,8 @@ class SyncService {
     const sortCol = ['id', 'create_time', 'update_time', 'last_sync_time', 'name', 'status'].includes(String(sortBy || 'id')) ? String(sortBy || 'id') : 'id';
     const sortDir = String(sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
-    let q = this.knexMain(this.tableName).select('*').where({ uid: uidNum });
-    let countQ = this.knexMain(this.tableName).count({ c: '*' }).where({ uid: uidNum });
+    let q = this._scopedQuery(uidNum, deviceId, deviceBound);
+    let countQ = this._scopedQuery(uidNum, deviceId, deviceBound);
 
     if (status !== undefined && status !== null && String(status).trim()) {
       q = q.where({ status: String(status).trim() });
@@ -77,23 +126,27 @@ class SyncService {
     const ordered = q.orderBy(sortCol, sortDir);
     const rows = limit === null ? await ordered : await ordered.limit(limit).offset(offset);
 
+    // 仅 v2 客户端关心「还有没有旧版未认领任务」；旧客户端看到的就是未绑定桶本身，没有意义。
+    const legacyPending = deviceBound ? await this._countLegacyPending(uidNum) : 0;
+
     return {
       page: limit === null ? 1 : pageNum,
       pageSize: limit === null ? total : limit,
       total,
+      legacy_pending_count: legacyPending,
       items: rows.map(r => this._mapRow(r)),
     };
   }
 
-  async get({ id, uid }) {
+  async get({ id, uid, deviceId, deviceBound } = {}) {
     const idNum = Number(id);
     if (!Number.isFinite(idNum) || idNum <= 0) throw syncUtil.buildHttpError('validation.ID_INVALID', 400);
-    const row = await this.knexMain(this.tableName).where({ id: idNum, uid: Number(uid) || 0 }).first();
+    const row = await this._scopedQuery(uid, deviceId, deviceBound).where({ id: idNum }).first();
     if (!row) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
     return this._mapRow(row);
   }
 
-  async upsert({ id, uid, name, mode, localDir, remoteDir, filterConfig, syncConfig, deviceId, deviceName } = {}) {
+  async upsert({ id, uid, name, mode, localDir, remoteDir, filterConfig, syncConfig, deviceId, deviceName, deviceBound } = {}) {
     const uidNum = Number(uid) || 0;
     if (!uidNum) throw syncUtil.buildHttpError('common.UNAUTHORIZED', 401);
 
@@ -110,15 +163,20 @@ class SyncService {
     if (!remote) throw syncUtil.buildHttpError('sync.REMOTE_DIR_REQUIRED', 400);
     if (!local) throw syncUtil.buildHttpError('sync.LOCAL_DIR_REQUIRED', 400);
 
+    // v2 客户端必须带设备标识，否则任务会掉进「未绑定桶」，设备隔离就漏了。
+    const boundKey = deviceBound ? deviceKeyOf(deviceId) : '';
+    if (deviceBound && !boundKey) throw syncUtil.buildHttpError('sync.DEVICE_ID_REQUIRED', 400);
+
     const remoteAbs = await syncUtil.resolveRemoteDir(remote, { requireExists: hasId ? false : true });
 
     const filterText = JSON.stringify(syncUtil.normalizeFilterConfig(filterConfig));
     const syncText = JSON.stringify(syncUtil.normalizeSyncConfig(syncConfig));
-    const devId = normalizeString(deviceId);
     const devName = normalizeString(deviceName);
+    // 旧客户端兼容：存它上报的原始值（NAS serverId / 随机 UUID），后续可被认领收编。
+    const legacyDevId = deviceBound ? boundKey : normalizeString(deviceId);
 
     if (hasId) {
-      const existed = await this.knexMain(this.tableName).where({ id: idNum, uid: uidNum }).first();
+      const existed = await this._scopedQuery(uidNum, deviceId, deviceBound).where({ id: idNum }).first();
       if (!existed) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
 
       await this.knexMain(this.tableName)
@@ -130,7 +188,7 @@ class SyncService {
           remote_dir: remoteAbs,
           filter_config: filterText,
           sync_config: syncText,
-          device_id: devId || existed.device_id,
+          // 设备归属不可改写：想换机器就删了重建，避免「任务被搬走」造成的基线错位。
           device_name: devName || existed.device_name,
           update_time: new Date(),
         });
@@ -140,7 +198,7 @@ class SyncService {
     const [newId] = await this.knexMain(this.tableName).insert({
       uid: uidNum,
       name: taskName,
-      device_id: devId,
+      device_id: legacyDevId,
       device_name: devName,
       mode: m,
       local_dir: local,
@@ -157,26 +215,24 @@ class SyncService {
     return { id: newId };
   }
 
-  async remove({ id, uid }) {
+  async remove({ id, uid, deviceId, deviceBound } = {}) {
     const idNum = Number(id);
     if (!Number.isFinite(idNum) || idNum <= 0) throw syncUtil.buildHttpError('validation.ID_INVALID', 400);
-    const existed = await this.knexMain(this.tableName).where({ id: idNum, uid: Number(uid) || 0 }).first();
+    const existed = await this._scopedQuery(uid, deviceId, deviceBound).where({ id: idNum }).first();
     if (!existed) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
     await this.knexMain(this.tableName).where({ id: idNum }).del();
     await this.knexMain(this.recordTableName).where({ task_id: idNum }).del();
     return { ok: true };
   }
 
-  async updateStatus({ id, uid, status, progress, lastError, lastSyncTime }) {
+  async updateStatus({ id, uid, status, progress, lastError, lastSyncTime, deviceId, deviceBound } = {}) {
     const idNum = Number(id);
     if (!Number.isFinite(idNum) || idNum <= 0) throw syncUtil.buildHttpError('validation.ID_INVALID', 400);
 
     // uid 必填。漏传会让 WHERE 退化成只按 id 命中，等于任何登录用户都能
-    // 改写别人的同步任务状态（该漏洞此前一直被 addRecord 先抛 404 挡着）。
+    // 改写别人的同步任务状态。
     const uidNum = Number(uid);
     if (!Number.isFinite(uidNum) || uidNum <= 0) throw syncUtil.buildHttpError('common.UNAUTHORIZED', 401);
-
-    const where = { id: idNum, uid: uidNum };
 
     const data = { update_time: new Date() };
     if (status !== undefined && status !== null && String(status).trim()) {
@@ -190,16 +246,16 @@ class SyncService {
     if (lastError !== undefined) data.last_error = lastError === null ? null : normalizeString(lastError);
     if (lastSyncTime !== undefined && lastSyncTime !== null) data.last_sync_time = new Date(Number(lastSyncTime) || Date.now());
 
-    const affected = await this.knexMain(this.tableName).where(where).update(data);
+    const affected = await this._scopedQuery(uidNum, deviceId, deviceBound).where({ id: idNum }).update(data);
     if (!affected) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
     return { ok: true };
   }
 
-  async addRecord({ taskId, uid, startTime, endTime, status, uploadCount, downloadCount, deleteCount, skipCount, failCount, bytesTransferred, errorList, durationMs }) {
+  async addRecord({ taskId, uid, startTime, endTime, status, uploadCount, downloadCount, deleteCount, skipCount, failCount, bytesTransferred, errorList, durationMs, deviceId, deviceBound }) {
     const taskIdNum = Number(taskId);
     if (!Number.isFinite(taskIdNum) || taskIdNum <= 0) throw syncUtil.buildHttpError('validation.ID_INVALID', 400);
 
-    const taskRow = await this.knexMain(this.tableName).where({ id: taskIdNum, uid: Number(uid) || 0 }).first();
+    const taskRow = await this._scopedQuery(uid, deviceId, deviceBound).where({ id: taskIdNum }).first();
     if (!taskRow) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
 
     const start = Number(startTime) || Date.now();
@@ -215,25 +271,41 @@ class SyncService {
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
     };
 
-    const [recordId] = await this.knexMain(this.recordTableName).insert({
-      task_id: taskIdNum,
-      start_time: new Date(start),
-      end_time: new Date(end),
-      status: recordStatus,
-      upload_count: safeInt(uploadCount),
-      download_count: safeInt(downloadCount),
-      delete_count: safeInt(deleteCount),
-      skip_count: safeInt(skipCount),
-      fail_count: safeInt(failCount),
-      bytes_transferred: safeInt(bytesTransferred),
-      error_list: JSON.stringify(errors),
-      duration_ms: Math.max(0, Math.floor(end - start)),
-    });
+    const up = safeInt(uploadCount);
+    const down = safeInt(downloadCount);
+    const del = safeInt(deleteCount);
+    const failed = safeInt(failCount);
+
+    // 「空轮次」不落记录：整轮没有任何实际动作（没传、没删、没失败）时，
+    // 每 N 分钟一条的「上传 0 / 下载 0 / 跳过 2688」只会把同步记录刷屏。
+    // ⚠️ 任务状态与 last_sync_time 照常更新（下面那段不受影响），
+    // 所以「上次同步时间」仍是每轮都刷新，只是记录列表里只留真动过的轮次。
+    // 失败/被中止的轮次一律保留，方便排查。
+    const isEmptyRun = up === 0 && down === 0 && del === 0 && failed === 0 && recordStatus === tableSyncRecord.STATUS_SUCCESS;
+
+    let recordId = null;
+    if (!isEmptyRun) {
+      const inserted = await this.knexMain(this.recordTableName).insert({
+        task_id: taskIdNum,
+        start_time: new Date(start),
+        end_time: new Date(end),
+        status: recordStatus,
+        upload_count: up,
+        download_count: down,
+        delete_count: del,
+        skip_count: safeInt(skipCount),
+        fail_count: failed,
+        bytes_transferred: safeInt(bytesTransferred),
+        error_list: JSON.stringify(errors),
+        duration_ms: Math.max(0, Math.floor(end - start)),
+      });
+      recordId = Array.isArray(inserted) ? inserted[0] : inserted;
+      await this._pruneRecords(taskIdNum);
+    }
 
     await this.knexMain(this.tableName).where({ id: taskIdNum, uid: Number(uid) || 0 }).update({ last_sync_time: new Date(start), update_time: new Date() });
 
-    await this._pruneRecords(taskIdNum);
-    return { id: recordId };
+    return { id: recordId, skipped: isEmptyRun };
   }
 
   async _pruneRecords(taskIdNum) {
@@ -250,10 +322,10 @@ class SyncService {
     return { ...row, error_list: Array.isArray(errors) ? errors : [] };
   }
 
-  async listRecords({ taskId, uid, page, pageSize } = {}) {
+  async listRecords({ taskId, uid, page, pageSize, deviceId, deviceBound } = {}) {
     const taskIdNum = Number(taskId);
     if (!Number.isFinite(taskIdNum) || taskIdNum <= 0) throw syncUtil.buildHttpError('validation.ID_INVALID', 400);
-    const taskRow = await this.knexMain(this.tableName).where({ id: taskIdNum, uid: Number(uid) || 0 }).first();
+    const taskRow = await this._scopedQuery(uid, deviceId, deviceBound).where({ id: taskIdNum }).first();
     if (!taskRow) throw syncUtil.buildHttpError('common.NOT_FOUND', 404);
 
     const pageNum = Number(page || 1) || 1;
@@ -274,10 +346,9 @@ class SyncService {
     };
   }
 
-  /** 统计某用户的任务概况，供客户端首屏展示 */
-  async summary({ uid } = {}) {
-    const uidNum = Number(uid) || 0;
-    const rows = await this.knexMain(this.tableName).select('status').where({ uid: uidNum });
+  /** 统计本机（v2）或未绑定桶（旧客户端）的任务概况，供客户端首屏展示 */
+  async summary({ uid, deviceId, deviceBound } = {}) {
+    const rows = await this._scopedQuery(uid, deviceId, deviceBound).select('status');
     const result = { total: rows.length, idle: 0, running: 0, paused: 0, error: 0 };
     for (const r of rows) {
       const st = String(r.status || '');
@@ -285,6 +356,31 @@ class SyncService {
     }
     return result;
   }
+
+  /**
+   * 把本账号下「旧版未绑定主机」的任务认领到本机。
+   *
+   * 只会动 device_id 为空或不带 `m:` 前缀的任务；已被其它机器认领的（带 m: 前缀）
+   * 不受影响，因此重复调用是安全的（第二次 claimed = 0）。
+   * @returns {Promise<{claimed: number}>}
+   */
+  async claimLegacy({ uid, deviceId, deviceName } = {}) {
+    const uidNum = Number(uid) || 0;
+    const key = deviceKeyOf(deviceId);
+    if (!uidNum || !key) throw syncUtil.buildHttpError('common.UNAUTHORIZED', 401);
+
+    const claimed = await this.knexMain(this.tableName)
+      .where({ uid: uidNum })
+      .andWhere(builder => {
+        builder.where('device_id', '').orWhereNot('device_id', 'like', `${DEVICE_KEY_PREFIX}%`);
+      })
+      .update({
+        device_id: key,
+        device_name: normalizeString(deviceName) || undefined,
+        update_time: new Date(),
+      });
+    return { claimed: Number(claimed) || 0 };
+  }
 }
 
-module.exports = { SyncService };
+module.exports = { SyncService, deviceKeyOf, DEVICE_KEY_PREFIX };

@@ -27,6 +27,15 @@ class tablePhotoIndex {
     if (!colNames.has('gen_gps_add')) {
       await addColumn('gen_gps_add', 'INTEGER DEFAULT 0');
     }
+    // 内容级去重用的内容 MD5（与 /api/file/md5 同算法，惰性填充）
+    if (!colNames.has('content_md5')) {
+      await addColumn('content_md5', 'TEXT');
+    }
+    // ⭐ 2026-10-15 活动识别（独立于场景维度，docs §8.22.7）。
+    // 老数据默认 0 ⇒ 会全量重扫一遍活动标签；场景标签不受影响（用 gen_place）。
+    if (!colNames.has('gen_activity')) {
+      await addColumn('gen_activity', 'INTEGER DEFAULT 0');
+    }
   }
 
   /**
@@ -83,6 +92,7 @@ class tablePhotoIndex {
         table.integer('gen_phash').defaultTo(0); // 是否已经生成phash
         table.integer('gen_describe').defaultTo(0); // 是否已经生成描述
         table.integer('gen_place').defaultTo(0); // 是否已经生成场景信息
+        table.integer('gen_activity').defaultTo(0); // 是否已经生成活动信息（独立于场景，见 tablePhotoActivity.js）
         table.integer('gen_ocr').defaultTo(0); // 是否已经生成ocr
         table.integer('gen_faces').defaultTo(0); // 是否已经生成人脸
         table.integer('gen_tiny').defaultTo(0); // 是否已经生成缩略图
@@ -157,6 +167,7 @@ class tablePhotoIndex {
 
       { columns: ['gen_faces', 'is_file', 'in_trash', 'type', 'original_time', 'id'], name: 'idx_photo_index_gen_faces_queue', unique: false },
       { columns: ['gen_place', 'is_file', 'in_trash', 'type', 'id'], name: 'idx_photo_index_gen_place_queue', unique: false },
+      { columns: ['gen_activity', 'is_file', 'in_trash', 'type', 'id'], name: 'idx_photo_index_gen_activity_queue', unique: false },
 
       { columns: ['gen_phash', 'id'], name: 'idx_photo_index_gen_phash_queue', unique: false },
       { columns: ['gen_phash', 'phash', 'id'], name: 'idx_photo_index_gen_phash_phash', unique: false },

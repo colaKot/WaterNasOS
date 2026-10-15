@@ -78,7 +78,9 @@
       "MANIFEST_INVALID": "Invalid file manifest format",
       "STATUS_INVALID": "Invalid sync task status",
       "SYNC_FAILED": "Errors occurred during sync, please check the sync records",
-      "REMOTE_DIR_NO_PERMISSION": "No permission to operate this NAS folder. Ask an administrator to grant access first."
+      "REMOTE_DIR_NO_PERMISSION": "No permission to operate this NAS folder. Ask an administrator to grant access first.",
+      "DEVICE_ID_REQUIRED": "Missing device identifier. Please update the client and try again.",
+      "DEVICE_ID_INVALID": "Invalid device identifier"
     },
     "message": {
       "NEW_DEVICE_LOGIN_TITLE": "New device login",

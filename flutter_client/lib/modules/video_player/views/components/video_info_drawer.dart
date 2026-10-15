@@ -218,38 +218,65 @@ class _VideoInfoDrawerState extends State<VideoInfoDrawer> {
     );
   }
 
-  /// 码率行：原画时只显示一行；转码时同时显示「原始码率」与「转码码率」。
+  /// 转码信息行（2026-10-13 扩展）：是否转码 / 转码编码格式 / 码率。
+  ///
+  /// - 原画直出：状态=原画直出，只报原始码率；
+  /// - 转码中：状态=转码中，追加「转码编码」，码率分「原始码率 + 转码码率」两行。
   List<Widget> _buildBitrateRows(Color textColor, Color subTextColor) {
     final ctrl = widget.playerController;
+    final rows = <Widget>[];
+
+    // ① 是否转码
+    rows.add(
+      _buildInfoRow(
+        'player_info_transcode_status'.tr,
+        ctrl.transcodeStatusTextKey.tr,
+        textColor,
+        subTextColor,
+      ),
+    );
+
+    // ② 转码输出的视频编码（原画直出 / 仅转音频时为 null，不显示该行）
+    final codecText = ctrl.transcodeCodecText;
+    if (codecText != null) {
+      rows.add(
+        _buildInfoRow(
+          'player_info_transcode_codec'.tr,
+          codecText,
+          textColor,
+          subTextColor,
+        ),
+      );
+    }
+
+    // ③ 码率
     final source = ctrl.sourceBitrateText;
     final transcode = ctrl.transcodeBitrateText;
     if (transcode == null) {
       // 原画（或拿不到转码信息）：只报原始码率
-      final text = source;
-      if (text == null || text.isEmpty) return const [];
-      return [
-        _buildInfoRow(
-          'player_info_bitrate'.tr,
-          text,
-          textColor,
-          subTextColor,
-        ),
-      ];
+      if (source != null && source.isNotEmpty) {
+        rows.add(
+          _buildInfoRow('player_info_bitrate'.tr, source, textColor, subTextColor),
+        );
+      }
+      return rows;
     }
-    final rows = <Widget>[
+    rows.add(
       _buildInfoRow(
         'player_info_source_bitrate'.tr,
         (source == null || source.isEmpty) ? '-' : source,
         textColor,
         subTextColor,
       ),
+    );
+    rows.add(
       _buildInfoRow(
         'player_info_transcode_bitrate'.tr,
         transcode,
         textColor,
         subTextColor,
       ),
-    ];
+    );
     return rows;
   }
 

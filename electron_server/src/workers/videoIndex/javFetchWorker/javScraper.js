@@ -22,11 +22,34 @@ const { guessAvType } = require('./avIdExtractor');
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
+// ⭐ 内置站点地址。可在「影视设置 → 刮削设置」里按站点覆盖（见 _resolveBase），
+//    因为这类站点的域名换得非常勤：javbus 主域常年 302 弹走，avsox 也常挂。
+//    JavDB 相对稳定，所以默认顺序里它排第一。
 const SITE_BASE = {
+  javdb: 'https://javdb.com',
   javbus: 'https://www.javbus.com',
   avsox: 'https://avsox.click',
   fc2: 'https://adult.contents.fc2.com',
 };
+
+/** 站点名 → 配置键（用于在设置里覆盖地址）。 */
+const SITE_BASE_KEY = {
+  javdb: 'javSiteBaseJavdb',
+  javbus: 'javSiteBaseJavbus',
+  avsox: 'javSiteBaseAvsox',
+  fc2: 'javSiteBaseFc2',
+};
+
+/**
+ * 取站点根地址：调用方传进来的 siteBases 优先，其次内置默认。
+ * @param {string} name javdb / javbus / avsox / fc2
+ * @param {{siteBases?: Record<string,string>}} [opts]
+ */
+function _resolveBase(name, opts) {
+  const over = opts && opts.siteBases && typeof opts.siteBases === 'object' ? opts.siteBases : null;
+  const v = over && over[name] ? String(over[name]).trim() : '';
+  return String(v || SITE_BASE[name] || '').replace(/\/+$/, '');
+}
 
 const HEADERS = {
   'User-Agent':
@@ -83,6 +106,15 @@ function absoluteUrl(base, url) {
   return `${base.replace(/\/+$/, '')}/${u.replace(/^\/+/, '')}`;
 }
 
+/**
+ * DMM 系图片小图 → 大图（对齐 OpenAver javdb.py / jav321.py 的做法）。
+ * `ps.jpg`（小竖版）换成 `pl.jpg`（大图）、`/pt/` 换成 `/pl/`，
+ * 这样拿到的封面不会再是站点点缀用的缩略图。非 DMM 域名原样返回。
+ */
+function upgradeDmmImage(url) {
+  return String(url || '').replace(/ps\.jpg$/i, 'pl.jpg').replace('/pt/', '/pl/');
+}
+
 /** 截取某个标签之后、到最近的块级结束标签之前的内容。 */
 function cutBlock(rest) {
   const stops = ['</p>', '</div>', '</li>', '<br'];
@@ -120,7 +152,7 @@ function parseGenreLinks(html) {
 }
 
 /** 解析 javbus / avsox 详情页里的演员（avatar-box）。 */
-function parseAvatarActresses(html) {
+function parseAvatarActresses(html, base = '') {
   const out = [];
   const re = /<a[^>]*class="[^"]*avatar-box[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
   let m;
@@ -128,7 +160,7 @@ function parseAvatarActresses(html) {
     const imgTag = /<img[^>]*>/i.exec(m[1]);
     const nameFromImg = imgTag ? attrOf(imgTag[0], 'title') : '';
     const name = nameFromImg || stripTags(m[1]);
-    const pic = imgTag ? attrOf(imgTag[0], 'src') : '';
+    const pic = imgTag ? absoluteUrl(base, attrOf(imgTag[0], 'src')) : '';
     if (!name) continue;
     out.push({
       name,
@@ -158,11 +190,11 @@ function parseDurationMinutes(text) {
  * 发起 GET 请求。传了 proxyUrl 就走代理（HTTP CONNECT 隧道）。
  * @returns {Promise<string|null>} 响应正文；请求失败返回 null
  */
-async function httpGetText(url, { proxyUrl = '', timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+async function httpGetText(url, { proxyUrl = '', timeoutMs = DEFAULT_TIMEOUT_MS, headers = null } = {}) {
   const agent = proxyUrl ? networkProxyUtil.createHttpsProxyAgent(proxyUrl) : null;
   try {
     const res = await axios.get(url, {
-      headers: HEADERS,
+      headers: headers || HEADERS,
       timeout: timeoutMs,
       maxRedirects: 5,
       decompress: true,
@@ -182,7 +214,7 @@ async function httpGetText(url, { proxyUrl = '', timeoutMs = DEFAULT_TIMEOUT_MS 
 
 /** javbus：有码，信息最全。 */
 async function scrapeJavbus(avid, opts) {
-  const base = SITE_BASE.javbus;
+  const base = _resolveBase('javbus', opts);
   const html = await httpGetText(`${base}/${encodeURIComponent(avid)}`, opts);
   if (!html) return null;
 
@@ -198,13 +230,14 @@ async function scrapeJavbus(avid, opts) {
   const dvdid = fieldAfterLabel(html, '識別碼:') || avid;
   const publishDate = fieldAfterLabel(html, '發行日期:');
   const duration = parseDurationMinutes(fieldAfterLabel(html, '長度:'));
-  const actresses = parseAvatarActresses(html);
+  const actresses = parseAvatarActresses(html, base);
 
   return {
     source: 'javbus',
     dvdid,
     title: title.replace(dvdid, '').trim() || title,
     coverUrl: cover,
+    
     publishDate: /^\d{4}-\d{2}-\d{2}$/.test(publishDate) ? publishDate : '',
     durationMinutes: duration,
     director: fieldAfterLabel(html, '導演:'),
@@ -220,7 +253,7 @@ async function scrapeJavbus(avid, opts) {
 
 /** avsox：无码 / javbus 兜底。avsox 不能直达详情页，要先搜索再取匹配项。 */
 async function scrapeAvsox(avid, opts) {
-  const base = SITE_BASE.avsox;
+  const base = _resolveBase('avsox', opts);
   const searchId = avid.replace(/^FC2-/i, 'FC2-PPV-');
   const searchHtml = await httpGetText(`${base}/cn/search/${encodeURIComponent(searchId)}`, opts);
   if (!searchHtml) return null;
@@ -255,13 +288,14 @@ async function scrapeAvsox(avid, opts) {
   const publishDate = fieldAfterLabel(html, '发行时间:');
   const producer = fieldAfterLabel(html, '制作商:');
   const serial = fieldAfterLabel(html, '系列:');
-  const actresses = parseAvatarActresses(html);
+  const actresses = parseAvatarActresses(html, base);
 
   return {
     source: 'avsox',
     dvdid: avid,
     title: title.replace(avid, '').trim() || title,
     coverUrl: cover,
+    
     publishDate: /^\d{4}-\d{2}-\d{2}$/.test(publishDate) ? publishDate : '',
     durationMinutes: parseDurationMinutes(fieldAfterLabel(html, '长度:')),
     director: '',
@@ -279,7 +313,7 @@ async function scrapeAvsox(avid, opts) {
 async function scrapeFc2(avid, opts) {
   const idNum = String(avid).replace(/^FC2-/i, '').trim();
   if (!/^\d{5,7}$/.test(idNum)) return null;
-  const base = SITE_BASE.fc2;
+  const base = _resolveBase('fc2', opts);
   const url = `${base}/article/${idNum}/`;
   const html = await httpGetText(url, opts);
   if (!html) return null;
@@ -337,10 +371,118 @@ async function scrapeFc2(avid, opts) {
   };
 }
 
+/* ------------------------------ JavDB ------------------------------ */
+
+// JavDB 需要过 18 岁确认，否则搜索/详情页会被拦。
+const JAVDB_HEADERS = {
+  ...HEADERS,
+  Cookie: 'over18=1; locale=zh',
+};
+
+/** 番号归一化：只留字母数字并大写，用于跨站点比对（SNOS-403 == snos403）。 */
+function _normAvKey(s) {
+  return String(s || '').replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
+}
+
+/** 取某段标签之后、指定 href 前缀的所有链接文本（用于演员 / 類別）。 */
+function _linksAfterLabel(html, label, hrefPrefix, max = 0) {
+  const idx = html.indexOf(label);
+  if (idx === -1) return [];
+  const seg = html.slice(idx, idx + 2500);
+  const out = [];
+  const esc = hrefPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`<a[^>]*href="${esc}[^"]*"[^>]*>([\\s\\S]*?)<\\/a>`, 'gi');
+  let m;
+  while ((m = re.exec(seg))) {
+    const t = stripTags(m[1]);
+    if (t && !out.includes(t)) {
+      out.push(t);
+      if (max > 0 && out.length >= max) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * JavDB：先在搜索页里找**精确番号**的那一条，再进详情页取信息。
+ *
+ * ⚠️ 搜索是模糊的（搜 SNOS-403 会同时返回 SNOS-413 / SNOS-430），
+ *    所以必须比对结果条目的 <strong> 番号，命中不了就当没找到，
+ *    绝不能拿第一条结果充数 —— 那正是别的刮削器把片子配对错的原因。
+ */
+async function scrapeJavdb(avid, opts) {
+  const base = _resolveBase('javdb', opts);
+  const searchHtml = await httpGetText(`${base}/search?q=${encodeURIComponent(avid)}&f=all`, {
+    ...opts,
+    headers: JAVDB_HEADERS,
+  });
+  if (!searchHtml) return null;
+
+  const key = _normAvKey(avid);
+
+  // 结果条目：<a href="/v/xxxx" class="box" title="…">…</a>
+  const itemRe = /<a[^>]*href="(\/v\/[^"]+)"[^>]*class="box"[^>]*title="([^"]*)"[\s\S]*?<\/a>/gi;
+  let m;
+  let detailUrl = '';
+  while ((m = itemRe.exec(searchHtml))) {
+    const strong = /<div class="video-title">\s*<strong>([\s\S]*?)<\/strong>/i.exec(m[0]);
+    const idText = strong ? stripTags(strong[1]) : '';
+    if (idText && _normAvKey(idText) === key) {
+      detailUrl = quickFixHref(m[1]);
+      break;
+    }
+  }
+  if (!detailUrl) return null;
+
+  const html = await httpGetText(absoluteUrl(base, detailUrl), { ...opts, headers: JAVDB_HEADERS });
+  if (!html) return null;
+
+  const titleHtml = (/<h2[^>]*class="title[^>]*>([\s\S]*?)<\/h2>/i.exec(html) || [])[1] || '';
+  const curTitle = /<strong[^>]*class="[^"]*current-title[^"]*"[^>]*>([\s\S]*?)<\/strong>/i.exec(titleHtml);
+  const rawTitle = stripTags(curTitle ? curTitle[1] : titleHtml);
+
+  const coverTag = /<img[^>]*class="[^"]*video-cover[^"]*"[^>]*>/i.exec(html);
+  // DMM 系图片：把封面小图升级成大图（对齐 OpenAver javdb.py 的做法）。
+  const coverRaw = coverTag ? attrOf(coverTag[0], 'src') : '';
+  const cover = coverRaw ? absoluteUrl(base, upgradeDmmImage(coverRaw)) : '';
+  if (!rawTitle && !cover) return null;
+
+  const dvdid = fieldAfterLabel(html, '番號:') || avid;
+  const publishDate = fieldAfterLabel(html, '日期:');
+  const actresses = _linksAfterLabel(html, '演員:', '/actors', 0);
+  // 库里其它日本片的标题格式是「番号 + 空格 + 日文标题」，这里保持一致
+  const title = dvdid && rawTitle && !rawTitle.toUpperCase().startsWith(dvdid.toUpperCase())
+    ? `${dvdid} ${rawTitle}`
+    : rawTitle;
+
+  return {
+    source: 'javdb',
+    dvdid,
+    title,
+    coverUrl: cover,
+    
+    publishDate: /^\d{4}-\d{2}-\d{2}$/.test(publishDate) ? publishDate : '',
+    durationMinutes: parseDurationMinutes(fieldAfterLabel(html, '時長:')),
+    director: fieldAfterLabel(html, '導演:'),
+    producer: fieldAfterLabel(html, '片商:'),
+    publisher: '',
+    serial: fieldAfterLabel(html, '系列:'),
+    genres: _linksAfterLabel(html, '類別:', '/tags', 0),
+    actresses,
+    actressPics: {},
+    siteUrl: absoluteUrl(base, detailUrl),
+  };
+}
+
+/** 搜索页里的 href 偶发带转义（`\/v\/xxx`），统一还原成正常路径。 */
+function quickFixHref(href) {
+  return String(href || '').replace(/\\\//g, '/');
+}
+
 /**
  * 根据番号类型挑选站点顺序，依次尝试，返回第一个成功的结果。
  * @param {string} dvdid 番号
- * @param {{proxyUrl?: string, timeoutMs?: number}} [options]
+ * @param {{proxyUrl?: string, timeoutMs?: number, siteBases?: Record<string,string>}} [options]
  * @returns {Promise<object|null>}
  */
 async function scrapeByDvdId(dvdid, options = {}) {
@@ -348,8 +490,10 @@ async function scrapeByDvdId(dvdid, options = {}) {
   if (!id) return null;
 
   const type = guessAvType(id);
-  // fc2 先走 FC2 官网，其它（含无码 / 普通）都从 javbus 开始
-  const order = type === 'fc2' ? [scrapeFc2, scrapeAvsox, scrapeJavbus] : [scrapeJavbus, scrapeAvsox];
+  // javdb 最稳，排第一；javbus / avsox 域名常年失效，只作兜底。fc2 先走官方站。
+  const order = type === 'fc2'
+    ? [scrapeFc2, scrapeJavdb, scrapeAvsox, scrapeJavbus]
+    : [scrapeJavdb, scrapeJavbus, scrapeAvsox];
 
   for (const scraper of order) {
     const result = await scraper(id, options).catch(() => null);
@@ -360,5 +504,10 @@ async function scrapeByDvdId(dvdid, options = {}) {
 
 module.exports = {
   scrapeByDvdId,
+  scrapeJavdb,
+  scrapeJavbus,
+  scrapeAvsox,
   parseDurationMinutes,
+  SITE_BASE,
+  SITE_BASE_KEY,
 };

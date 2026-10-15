@@ -20,11 +20,18 @@ class AppVideoHomePage extends StatefulWidget {
   final VoidCallback? onOpenTv;
   final VoidCallback? onOpenHistory;
 
+  /// 点某个库的标题时直达该库（2026-10-12 新增）。
+  ///
+  /// 栏目条改成动态库列表后，首页的分类入口应该直接切到对应库，
+  /// 而不是像以前那样只能按 movie/tv 二选一。
+  final void Function(int libraryId)? onOpenLibrary;
+
   const AppVideoHomePage({
     super.key,
     this.onOpenMovie,
     this.onOpenTv,
     this.onOpenHistory,
+    this.onOpenLibrary,
   });
 
   @override
@@ -82,8 +89,14 @@ class _AppVideoHomePageState extends State<AppVideoHomePage> {
           updateList(ctrl.recentPlay);
         }
 
-        /// 库分类点击：按libType 回到原有的 movie/tv 入口
+        /// 库分类点击：优先按 libraryId 直达该库（2026-10-12），
+        /// 没接回调时退回按 libType 的老入口。
         void openLibGroup(VideoHomeLibraryGroup g) {
+          final openLib = widget.onOpenLibrary;
+          if (openLib != null && g.libraryId > 0) {
+            openLib(g.libraryId);
+            return;
+          }
           final isTv = g.libType == 'tv';
           final cb = isTv ? widget.onOpenTv : widget.onOpenMovie;
           if (cb != null) {

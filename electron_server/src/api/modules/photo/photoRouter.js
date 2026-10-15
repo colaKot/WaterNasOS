@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateJWT, requireAdmin } = require('../../middleware/authMiddleware');
+const { authenticateJWT, requireAdmin, requireSuperAdmin } = require('../../middleware/authMiddleware');
 const { requirePermission } = require('../../middleware/permissionMiddleware');
 const photoSourceController = require('./source/photoSourceController');
 const photoConfigController = require('./config/photoConfigController');
@@ -22,6 +22,8 @@ function createFileViewHandler(sourceType, action) {
     return fileListController[action](req, res);
   };
 }
+// 相册备份：跨相册源内容级去重（只读；只比对本人的相册源）
+router.post('/backup/check_content', authenticateJWT, photoSourceController.checkBackupContent);
 // 来源设置（按 owner 隔离：用户只能管理自己添加的源目录；管理员可用 body.uid 指定他人）
 router.post('/source/list', authenticateJWT, photoSourceController.listSources);
 router.post('/source/add', authenticateJWT, photoSourceController.addSource);
@@ -32,14 +34,14 @@ router.post('/source/scan', authenticateJWT, photoSourceController.scanSource);
 // 缩略图重建是全库级操作，仍限管理员
 router.post('/source/regenerate_thumbnails', authenticateJWT, requireAdmin, photoSourceController.regenerateThumbnails);
 //是否启用ocr
-router.post('/setAiOcrEnable', authenticateJWT, requireAdmin, photoConfigController.setAiOcrEnable);
-router.post('/setAiPetEnable', authenticateJWT, requireAdmin, photoConfigController.setAiPetEnable);
-router.post('/setAiFaceEnable', authenticateJWT, requireAdmin, photoConfigController.setAiFaceEnable);
-router.post('/setAiFaceMinShowCount', authenticateJWT, requireAdmin, photoConfigController.setAiFaceMinShowCount);
-router.post('/setAiPlaceEnable', authenticateJWT, requireAdmin, photoConfigController.setAiPlaceEnable);
-router.post('/setAiSimilarEnable', authenticateJWT, requireAdmin, photoConfigController.setAiSimilarEnable);
-router.post('/setAiGpuPrefer', authenticateJWT, requireAdmin, photoConfigController.setAiGpuPrefer);
-router.post('/getAiConfig', authenticateJWT, requireAdmin, photoConfigController.getAiConfig);
+router.post('/setAiOcrEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiOcrEnable);
+router.post('/setAiPetEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiPetEnable);
+router.post('/setAiFaceEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiFaceEnable);
+router.post('/setAiFaceMinShowCount', authenticateJWT, requireSuperAdmin, photoConfigController.setAiFaceMinShowCount);
+router.post('/setAiPlaceEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiPlaceEnable);
+router.post('/setAiSimilarEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiSimilarEnable);
+router.post('/setAiGpuPrefer', authenticateJWT, requireSuperAdmin, photoConfigController.setAiGpuPrefer);
+router.post('/getAiConfig', authenticateJWT, requireSuperAdmin, photoConfigController.getAiConfig);
 router.post('/getPreviewConfig', authenticateJWT, photoConfigController.getPreviewConfig);
 router.post('/setPreviewSize', authenticateJWT, photoConfigController.setPreviewSize);
  
@@ -50,6 +52,7 @@ router.post('/timeline/photos', authenticateJWT, photoTimeLineController.getTime
 router.post('/timeline/years', authenticateJWT, photoTimeLineController.getTimelineYearList);
 // places
 router.post('/place/list', authenticateJWT, placesController.listPlaces);
+router.post('/place/search', authenticateJWT, placesController.searchPlaces);
 router.post('/place/status/set', authenticateJWT, requireAdmin, placesController.setPlaceStatus);
 router.post('/place/reset', authenticateJWT, requireAdmin, placesController.resetPlaces);
 
@@ -102,12 +105,22 @@ router.post('/face/list', authenticateJWT, faceController.listFaces);
 router.get('/face/download/:filename?', authenticateJWT, faceController.downloadFacePhotos);
 router.post('/face/reset', authenticateJWT, requireAdmin, faceController.resetFaces);
 router.post('/face/cover/set', authenticateJWT, requireAdmin, faceController.setFaceCover);
-router.post('/face/name/update', authenticateJWT, requireAdmin, faceController.updateFaceName);
-router.post('/face/merge', authenticateJWT, requireAdmin, faceController.mergeFaces);
-router.post('/face/status/set', authenticateJWT, requireAdmin, faceController.setFaceStatus);
+// 命名只是「给自己看」的标签，不影响聚类结果 ⇒ 所有登录用户可用（2026-10-13 用户要求）
+router.post('/face/name/update', authenticateJWT, faceController.updateFaceName);
+// 人脸聚类参数（严格度 / 最低质量 / 二次合并阈值），仅超管可调
+router.post('/face/tuning/get', authenticateJWT, requireSuperAdmin, faceController.getFaceTuning);
+router.post('/face/tuning/set', authenticateJWT, requireSuperAdmin, faceController.setFaceTuning);
+// 人脸写操作（隐藏/合并/移动/移出）对所有登录用户开放（2026-10-13 用户要求：
+// 每个人管理自己相册里的人脸）；服务端会校验目标人脸/照片在该用户可见范围内。
+router.post('/face/merge', authenticateJWT, faceController.mergeFaces);
+router.post('/face/status/set', authenticateJWT, faceController.setFaceStatus);
 router.post('/face/photo/list', authenticateJWT, faceController.listPhotoFaces);
-router.post('/face/photo/remove', authenticateJWT, requireAdmin, faceController.removePhotoFromFace);
-router.post('/face/photo/move', authenticateJWT, requireAdmin, faceController.movePhotoToFace);
+router.post('/face/photo/remove', authenticateJWT, faceController.removePhotoFromFace);
+router.post('/face/photo/move', authenticateJWT, faceController.movePhotoToFace);
+// 只重建「调用者可见范围内」照片的人脸（普通用户可用）；/face/reset 全库重建仍限管理员
+router.post('/face/rescan', authenticateJWT, faceController.rescanFaces);
+// 清理历史误检人脸（全局维护，限管理员）
+router.post('/face/purge', authenticateJWT, requireSuperAdmin, faceController.purgeSuspiciousFaces);
 router.get('/face/image', authenticateJWT, faceController.faceImageGet);
 
 // Similar

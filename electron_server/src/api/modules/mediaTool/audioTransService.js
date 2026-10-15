@@ -1,5 +1,26 @@
 const PathUtil = require('../../../utils/pathUtil');
 const tableMediaToolAudioTrans = require('../../../db/table/tableMediaToolAudioTrans');
+// 账号隔离（2026-10-13）：任务归属助手（内联，避免新增文件无法热更进 asar）
+function normalizeUid(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function ownedQuery(knex, tableName, uid, isAdmin) {
+  const owner = normalizeUid(uid);
+  const q = knex(tableName);
+  if (owner <= 0) {
+    // fail closed：解析不出用户就不给看任何行
+    q.where({ uid: -1 });
+    return q;
+  }
+  q.where(builder => {
+    builder.where({ uid: owner });
+    // 旧版任务（uid=0，本改造之前创建）仅管理员可见
+    if (isAdmin) builder.orWhere({ uid: 0 });
+  });
+  return q;
+}
 
 function normalizeString(v) {
   if (v === undefined || v === null) return '';
@@ -31,7 +52,7 @@ class AudioTransService {
     this.tableName = 'media_tool_audio_trans';
   }
 
-  async list({ page, pageSize, keyword, sortBy, sortOrder } = {}) {
+  async list({ page, pageSize, keyword, sortBy, sortOrder, uid, isAdmin } = {}) {
     const pageNum = Number(page || 1) || 1;
     const hasPageSize = pageSize !== undefined && pageSize !== null;
     const limit = hasPageSize ? Number(pageSize || 20) || 20 : null;
@@ -40,8 +61,9 @@ class AudioTransService {
     const sortCol = ['id', 'create_time', 'update_time', 'status'].includes(String(sortBy || 'id')) ? String(sortBy || 'id') : 'id';
     const sortDir = String(sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
-    let q = this.knexMain(this.tableName).select('*');
-    let countQ = this.knexMain(this.tableName).count({ c: '*' });
+    // 账号隔离（2026-10-13）：只看自己的任务；uid=0 的旧版任务仅管理员可见
+    let q = ownedQuery(this.knexMain, this.tableName, uid, isAdmin).select('*');
+    let countQ = ownedQuery(this.knexMain, this.tableName, uid, isAdmin).count({ c: '*' });
 
     const kw = normalizeString(keyword);
     if (kw) {
@@ -66,7 +88,7 @@ class AudioTransService {
     };
   }
 
-  async upsert({ id, sourcePath, targetPath, transConfig, nonAudioPolicy }) {
+  async upsert({ id, sourcePath, targetPath, transConfig, nonAudioPolicy, uid, isAdmin }) {
     const idNum = id === undefined || id === null ? null : Number(id);
     const hasId = Number.isFinite(idNum) && idNum > 0;
 
@@ -91,7 +113,7 @@ class AudioTransService {
     const now = new Date();
 
     if (hasId) {
-      const existed = await this.knexMain(this.tableName).where({ id: idNum }).first();
+      const existed = await ownedQuery(this.knexMain, this.tableName, uid, isAdmin).where({ id: idNum }).first();
       if (!existed) throw buildHttpError('common.NOT_FOUND', 404);
       const status = existed && existed.status ? String(existed.status).trim().toLowerCase() : '';
       if (status === tableMediaToolAudioTrans.STATUS_RUNNING) throw buildHttpError('common.ERROR', 409);
@@ -107,6 +129,7 @@ class AudioTransService {
     }
 
     const insertData = {
+      uid: normalizeUid(uid),
       source_path: source,
       target_path: target,
       trans_config: cfg,
@@ -131,10 +154,19 @@ class AudioTransService {
     return { id: newId };
   }
 
-  async remove({ id }) {
+  /// 按归属取单条（start / stop 前校验用）
+  async getById({ id, uid, isAdmin }) {
     const idNum = Number(id);
     if (!Number.isFinite(idNum) || idNum <= 0) throw buildHttpError('validation.ID_INVALID', 400);
-    const existed = await this.knexMain(this.tableName).where({ id: idNum }).first();
+    const row = await ownedQuery(this.knexMain, this.tableName, uid, isAdmin).where({ id: idNum }).first();
+    if (!row) throw buildHttpError('common.NOT_FOUND', 404);
+    return row;
+  }
+
+  async remove({ id, uid, isAdmin }) {
+    const idNum = Number(id);
+    if (!Number.isFinite(idNum) || idNum <= 0) throw buildHttpError('validation.ID_INVALID', 400);
+    const existed = await ownedQuery(this.knexMain, this.tableName, uid, isAdmin).where({ id: idNum }).first();
     if (!existed) throw buildHttpError('common.NOT_FOUND', 404);
     await this.knexMain(this.tableName).where({ id: idNum }).del();
     return { ok: true };

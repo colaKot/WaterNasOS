@@ -1,9 +1,14 @@
+// 说明：本页（旧的单页表单）已被「设备 → 规则 → 路径」三步向导
+// （ui/sync_wizard/sync_create_wizard_view.dart）取代，路由与入口均已移除，
+// 此文件仅作参考保留，不再被任何页面引用。请勿删除。
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:nascab_sync_core/nascab_sync_core.dart';
 
+import '../core/file_api.dart';
 import '../sync/sync_controller.dart';
+import 'remote_dir_picker.dart';
 
 /// 任务编辑页：新建 / 修改一个同步任务。
 class TaskEditView extends StatefulWidget {
@@ -27,6 +32,9 @@ class _TaskEditViewState extends State<TaskEditView> {
   late SyncFilterConfig _filter;
   late SyncConfig _syncCfg;
   bool _saving = false;
+
+  /// NAS 侧「当前账号可用目录」的候选，供下拉快选（来自 /api/file/list）
+  List<String> _remoteRoots = const [];
 
   bool get _isEdit => _origin != null;
 
@@ -53,6 +61,7 @@ class _TaskEditViewState extends State<TaskEditView> {
     _largeSizeCtrl =
         TextEditingController(text: '${_filter.excludeLargeSize}');
     _extCtrl = TextEditingController(text: _filter.excludeExtensions.join(','));
+    _loadRemoteRoots();
   }
 
   @override
@@ -77,6 +86,26 @@ class _TaskEditViewState extends State<TaskEditView> {
     } catch (_) {
       _toast('sync_pick_local_failed'.tr);
     }
+  }
+
+  /// 拉取当前账号可见的 NAS 根目录，作为「NAS 目录」的候选。
+  /// 失败就静默降级成纯手填，不打扰用户。
+  Future<void> _loadRemoteRoots() async {
+    final res = await FileApiService.instance.listDirs();
+    if (!mounted || !res.success || res.data == null) return;
+    setState(() {
+      _remoteRoots = res.data!.dirs.map((e) => e.path).toList();
+    });
+  }
+
+  /// 打开 NAS 目录浏览器逐级选择
+  Future<void> _browseRemoteDir() async {
+    final picked = await showRemoteDirPicker(
+      context,
+      initialPath: _remoteCtrl.text.trim(),
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+    setState(() => _remoteCtrl.text = picked);
   }
 
   void _toast(String msg) {
@@ -108,7 +137,7 @@ class _TaskEditViewState extends State<TaskEditView> {
           .toList();
 
     _syncCfg.intervalMinutes =
-        (int.tryParse(_intervalCtrl.text.trim()) ?? 30).clamp(0, 24 * 60);
+        (int.tryParse(_intervalCtrl.text.trim()) ?? 1).clamp(0, 24 * 60);
 
     setState(() => _saving = true);
     final err = await SyncController.instance.createOrUpdate(
@@ -195,13 +224,65 @@ class _TaskEditViewState extends State<TaskEditView> {
           ),
           _Section(
             title: 'sync_remote_dir'.tr,
-            child: TextField(
-              controller: _remoteCtrl,
-              decoration: const InputDecoration(
-                hintText: '/volume1/backup/docs',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _remoteCtrl,
+                        decoration: InputDecoration(
+                          hintText: '/volume1/backup/docs',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          // 可编辑下拉：候选是账号可用目录，但输入框仍可自由手填
+                          suffixIcon: PopupMenuButton<String>(
+                            tooltip: '',
+                            icon: const Icon(Icons.arrow_drop_down, size: 20),
+                            onSelected: (v) =>
+                                setState(() => _remoteCtrl.text = v),
+                            itemBuilder: (ctx) {
+                              if (_remoteRoots.isEmpty) {
+                                return [
+                                  PopupMenuItem<String>(
+                                    enabled: false,
+                                    value: '',
+                                    child: Text('sync_remote_roots_empty'.tr),
+                                  ),
+                                ];
+                              }
+                              return _remoteRoots
+                                  .map(
+                                    (p) => PopupMenuItem<String>(
+                                      value: p,
+                                      child: Text(
+                                        p,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList();
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _browseRemoteDir,
+                      icon: const Icon(Icons.folder_open, size: 18),
+                      label: Text('sync_browse'.tr),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'sync_remote_dir_helper'.tr,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
             ),
           ),
           _Section(

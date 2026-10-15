@@ -20,11 +20,11 @@ class SyncWizardController extends GetxController {
   final RxString taskName = ''.obs;
   final RxString mode = SyncMode.bidirectional.obs;
 
-  /// 按需同步（本地文件变化时自动触发）
-  final RxBool realtime = true.obs;
+  /// 按需同步（本地文件变化时自动触发）：默认关闭
+  final RxBool realtime = false.obs;
 
-  /// 定时同步间隔（分钟），0 表示不定时
-  final RxInt intervalMinutes = 30.obs;
+  /// 定时同步间隔（分钟），0 表示不定时；默认 1 分钟
+  final RxInt intervalMinutes = 1.obs;
 
   final RxString localDir = ''.obs;
   final RxString remoteDir = ''.obs;
@@ -42,11 +42,14 @@ class SyncWizardController extends GetxController {
 
   int? editingId;
 
+  /// 当前电脑名称（主机名）：解析完成前退回平台名。
+  final RxString deviceNameRx = ''.obs;
+  String get deviceName =>
+      deviceNameRx.value.isNotEmpty ? deviceNameRx.value : DeviceUtils.platformName;
+
   bool get isEdit => editingId != null;
   bool get canGoNext => step.value < 2;
   bool get canGoPrev => step.value > 0;
-
-  String get deviceName => DeviceUtils.platformName;
 
   String get serverLabel {
     final base = ApiController.instance.baseUrl.trim();
@@ -58,7 +61,19 @@ class SyncWizardController extends GetxController {
     return base;
   }
 
-  String get serverId => ApiController.instance.state.serverId;
+  @override
+  void onInit() {
+    super.onInit();
+    _ensureDeviceName();
+  }
+
+  /// 解析本机主机名（设备展示名）。失败不影响主流程。
+  Future<void> _ensureDeviceName() async {
+    try {
+      final name = await SyncDeviceId.resolveName();
+      if (name.isNotEmpty) deviceNameRx.value = name;
+    } catch (_) {}
+  }
 
   void loadFromTask(SyncTask task) {
     editingId = task.id;
@@ -210,7 +225,7 @@ class SyncWizardController extends GetxController {
         remoteDir: remoteDir.value.trim(),
         filterConfig: filterConfig.value,
         syncConfig: buildSyncConfig(),
-        deviceId: serverId,
+        // device_id 由 API 服务按本机机器标识自动带上（SyncDeviceId）
         deviceName: deviceName,
       );
       if (!res.success) {

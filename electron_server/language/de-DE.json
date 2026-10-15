@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "Erforderliche Plugins für diese Funktion werden noch heruntergeladen. Bitte versuchen Sie es später erneut."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "Geräte-ID fehlt. Bitte aktualisieren Sie den Client und versuchen Sie es erneut.",
+      "DEVICE_ID_INVALID": "Ungültige Geräte-ID"
     }
   },
   "places365": {

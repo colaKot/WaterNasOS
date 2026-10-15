@@ -406,6 +406,10 @@
     },
     "mountShare": {
       "PLUGIN_NOT_READY": "이 기능에 필요한 플러그인이 아직 다운로드 중입니다. 잠시 후 다시 시도해 주세요."
+    },
+    "sync": {
+      "DEVICE_ID_REQUIRED": "기기 식별자가 없습니다. 클라이언트를 업데이트한 후 다시 시도하세요.",
+      "DEVICE_ID_INVALID": "잘못된 기기 식별자"
     }
   },
   "places365": {

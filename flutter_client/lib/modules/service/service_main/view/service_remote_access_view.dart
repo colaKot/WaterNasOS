@@ -345,7 +345,7 @@ class _ServiceRemoteAccessViewState extends State<ServiceRemoteAccessView> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               SwitchListTile(
-                                activeColor: theme.colorScheme.primary,
+                                activeThumbColor: theme.colorScheme.onPrimary,
                                 contentPadding: EdgeInsets.zero,
                                 title: Text('service_remote_access_toggle'.tr),
                                 subtitle: Text(

@@ -50,11 +50,16 @@ class VideoDetailPeopleSection extends StatelessWidget {
               final role = (p['_role']?.toString() ?? '').trim();
               final tmdbId = (p['tmdbId']?.toString() ?? '').trim();
               final thumb = (p['thumb']?.toString() ?? '').trim();
-              final url = tmdbId.isNotEmpty
+              // ⭐ 日本片演员没有 tmdbId，头像由服务端按「影片 + 演员名」从索引里取
+              //    （NFO 里的 `<thumb>`）；只要求演员名，不再要求 tmdbId 非空，
+              //    否则日本片详情页永远只有占位图。
+              final url = name.isNotEmpty
                   ? ApiController.instance.getVideoPersonImageUrl(
                       tmdbId: tmdbId,
                       size: 240,
                       thumb: thumb.isNotEmpty ? thumb : null,
+                      indexId: ctrl.indexId,
+                      name: name,
                     )
                   : '';
 

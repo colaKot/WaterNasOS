@@ -316,6 +316,17 @@ extension ApiControllerAuth on ApiController {
     }
   }
 
+  /// web「记住登录状态」开关的持久化 key。
+  /// 勾选后下次打开同一地址直接自动登录；登出/取消勾选即失效。
+  static const String rememberLoginKey = 'auth_rememberLogin';
+
+  /// 是否记住了登录状态（只对 web 有意义；原生端本来就按会话保持）。
+  bool get rememberLogin => CacheManager().getBool(rememberLoginKey) ?? false;
+
+  set rememberLogin(bool value) {
+    CacheManager().setBool(rememberLoginKey, value);
+  }
+
   void _saveTokensToStorage() {
     try {
       CacheManager().setString('auth_baseUrl', _state.baseUrl);
@@ -357,6 +368,8 @@ extension ApiControllerAuth on ApiController {
 
   void _clearStoredTokens() {
     try {
+      // 登出即取消「记住登录状态」：下次打开必须重新登录
+      CacheManager().remove(rememberLoginKey);
       CacheManager().remove('auth_accessToken');
       CacheManager().remove('auth_refreshToken');
       CacheManager().remove('auth_expiresIn');

@@ -38,15 +38,33 @@ class AiFacesController extends GetxController {
 
   final ScrollController scrollController = ScrollController();
 
+  /// 识别进度（人脸页顶部展示，2026-10-13）
+  final faceProgress = const AiFaceProgress().obs;
+
+  /// 识别进行中时的轮询定时器（进度变了自动刷新列表）
+  Timer? _progressTimer;
+
   @override
   void onInit() {
     super.onInit();
     scrollController.addListener(_onScroll);
     refreshFaces();
+    _syncProgressTimer();
+  }
+
+  /// 未识别完时每 10 秒刷一次进度，识别完就停
+  void _syncProgressTimer() {
+    _progressTimer?.cancel();
+    if (faceProgress.value.finished) return;
+    _progressTimer = Timer(const Duration(seconds: 10), () async {
+      await refreshFaces();
+      _syncProgressTimer();
+    });
   }
 
   @override
   void onClose() {
+    _progressTimer?.cancel();
     scrollController.removeListener(_onScroll);
     scrollController.dispose();
     searchController.dispose();
@@ -88,6 +106,7 @@ class AiFacesController extends GetxController {
       if (!res.success || res.data == null) return;
       final data = res.data!;
       faceEnabled.value = data.faceEnable;
+      faceProgress.value = data.progress;
       if (!faceEnabled.value) {
         activeFace.value = null;
         exitSelectionMode();
@@ -251,6 +270,11 @@ class AiFacesController extends GetxController {
     await refreshFaces();
   }
 
+  /// 合并选中的人脸（2026-10-13 重写）：
+  /// - 合并期间显示进度弹窗（转圈 + 人数），带「取消」按钮：
+  ///   取消只是不等了/退出选择状态，服务端合并仍会跑完，下次刷新即见结果。
+  /// - 失败时**保留选择状态**，用户可以直接重试，不用重新勾选。
+  /// - 请求超时拉到 120s（大人物组合并是单事务搬几千行，10s 默认值必挂）。
   Future<void> confirmAndMergeSelected() async {
     final ids = selectedFaceIds.toList();
     if (ids.length < 2) return;
@@ -261,14 +285,72 @@ class AiFacesController extends GetxController {
       cancelText: 'cancel'.tr,
     );
     if (ok != true) return;
-    final res = await _api.mergeFaces(faceIds: ids);
-    if (!res.success) {
-      ToastUtil.show('operation_failed'.tr);
-      return;
+
+    final ctx = Get.overlayContext ?? Get.context;
+    if (ctx == null || !ctx.mounted) return;
+
+    // 单线程事件循环内 check-and-set，取消/完成两条路径都不会重复 pop
+    bool dialogClosed = false;
+    void closeDialog() {
+      if (dialogClosed) return;
+      dialogClosed = true;
+      try {
+        final nav = Navigator.of(ctx, rootNavigator: true);
+        if (nav.canPop()) nav.pop();
+      } catch (_) {}
     }
-    exitSelectionMode();
-    await refreshFaces();
-    ToastUtil.show('operation_success'.tr);
+
+    showDialog<void>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return DialogUtil.createAlertDialog(
+          title: Text('face_action_merge'.tr),
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  'face_merge_running'.trParams({'count': '${ids.length}'}),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                // 取消 = 不再等待 + 退出选择态；服务端合并继续，刷新后可见
+                closeDialog();
+                exitSelectionMode();
+                ToastUtil.show('face_merge_background'.tr);
+              },
+              child: Text('cancel'.tr),
+            ),
+          ],
+        );
+      },
+    );
+
+    try {
+      final res = await _api.mergeFaces(faceIds: ids);
+      if (!res.success) {
+        // 失败：保留选择状态便于重试
+        ToastUtil.show(res.message ?? 'operation_failed'.tr);
+        return;
+      }
+      exitSelectionMode();
+      await refreshFaces();
+      ToastUtil.show('operation_success'.tr);
+    } catch (_) {
+      ToastUtil.show('operation_failed'.tr);
+    } finally {
+      closeDialog();
+    }
   }
 
   String faceDisplayName(AiFaceItem face) {
@@ -345,11 +427,27 @@ class AiFacesController extends GetxController {
     );
   }
 
-  Future<void> moveFaceToOther(AiFaceItem face) async {
-    if (!CurrentUserController.instance.isAdmin) {
-      ToastUtil.show('photo_ai_admin_only'.tr);
+  /// 重新扫描「我相册里」的人脸（2026-10-13）：
+  /// 只清掉自己可见照片的人脸框并重新排队识别，别人的相册不受影响。
+  Future<void> confirmAndRescanFaces() async {
+    final confirmed = await DialogUtil.showConfirmDialog(
+      title: 'face_rescan_mine'.tr,
+      content: 'face_rescan_mine_confirm_content'.tr,
+      confirmText: 'ok'.tr,
+      cancelText: 'cancel'.tr,
+    );
+    if (confirmed != true) return;
+    final res = await _api.rescanFaces(showLoading: true);
+    if (!res.success) {
+      ToastUtil.show(res.message ?? 'network_failure'.tr);
       return;
     }
+    ToastUtil.show('face_rescan_mine_started'.tr);
+    await refreshFaces();
+  }
+
+  Future<void> moveFaceToOther(AiFaceItem face) async {
+    // 2026-10-13：人脸相册按归属隔离，移动对所有登录用户开放（服务端校验可见性）
 
     final target = await _pickTargetFace(
       excludeFaceId: face.faceId,
@@ -425,10 +523,7 @@ class AiFacesController extends GetxController {
   }
 
   Future<void> openAutoHideSettings() async {
-    if (!CurrentUserController.instance.isAdmin) {
-      ToastUtil.show('photo_ai_admin_only'.tr);
-      return;
-    }
+    // 2026-10-13：自动隐藏阈值只影响自己可见的人脸列表，对所有登录用户开放
 
     int parseInt(dynamic v) {
       if (v is int) return v;

@@ -33,6 +33,8 @@ class ApiErrorLocalizer {
         'api_code_notes_notebook_folder_not_empty',
     'notes.GROUP_NOT_EMPTY': 'api_code_notes_group_not_empty',
     'mountShare.PLUGIN_NOT_READY': 'mount_share_plugin_not_ready',
+    // 人脸合并事务失败（服务端 faceService.mergeFaces* 抛出，详情见服务端日志）
+    'face.MERGE_FAILED': 'operation_failed',
   };
 
   /// [apiErrorKey] 为响应 JSON 中的 `code` 字段（字符串业务键）。

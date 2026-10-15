@@ -2,7 +2,7 @@ name: nascab_music
 description: "WaterNasOS Music —— 复用主客户端（WaterNasOS）代码的独立客户端"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+3
 
 environment:
   sdk: ^3.10.1

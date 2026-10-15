@@ -18,7 +18,9 @@ class UAUtil {
 
     // 1. 尝试解析自定义Flutter客户端UA格式
     // 格式: AppName/Version (Platform; OS Version; Device Model)
-    // 例如: NasCabOS/1.0.0+1 (macOS; 26.1.0; Mac15,9)
+    // 例如: WaterNasClient/1.0.0+1 (Windows; 10.0; PC)
+    // ⚠️ AppName 取自各端包名（Windows=Runner.rc 的 ProductName，web=version.json 的 app_name），
+    //    所以这里**按名字解析、不认字面量** —— 客户端改名后本函数无需改。
     try {
       const customUARegex = /^([^\/]+)\/([^\s]+)\s+\(([^;]+);\s*([^;]+);\s*([^)]+)\)/;
       const match = userAgent.match(customUARegex);

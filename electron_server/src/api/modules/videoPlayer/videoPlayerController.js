@@ -34,6 +34,63 @@ function _isBitmapSubtitleCodec(codecName) {
   );
 }
 
+// ⭐⭐「按端隔离」的配置读取（2026-10-12）
+//
+// 影视设置页的「音频降混」现在是按 (uid, 客户端类型) 存的（见
+// api/modules/video/config/videoConfigController.js），转码时也必须用同一口径读，
+// 否则直接读无后缀的旧键，安卓端开的降混会串到 web、反之亦然。
+// ⚠️ 归一化白名单与那边保持一致。
+const _CLIENT_TYPE_KEYS = ['web', 'android', 'ios', 'desktop'];
+
+function _normalizeClientType(raw) {
+  const v = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+  if (!v) return '';
+  if (_CLIENT_TYPE_KEYS.includes(v)) return v;
+  if (['windows', 'win', 'mac', 'macos', 'linux', 'pc'].includes(v)) return 'desktop';
+  if (v === 'harmony' || v === 'harmonyos') return 'android';
+  return '';
+}
+
+// 逐级回退：本用户本端 → 本用户无端(旧数据) → 全局本端 → 全局无端(旧数据)
+async function _readScopedAudioDownmix(uid, clientTypeRaw) {
+  const clientType = _normalizeClientType(clientTypeRaw);
+  const baseKey = 'videoAudioDownmix';
+  const chain = [];
+  if (clientType) chain.push([`${baseKey}.${clientType}`, uid]);
+  chain.push([baseKey, uid]);
+  if (uid !== 0 && clientType) chain.push([`${baseKey}.${clientType}`, 0]);
+  if (uid !== 0) chain.push([baseKey, 0]);
+  for (const [key, u] of chain) {
+    const v = await tableConfig.getConfigByKey(key, u);
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
+
+// ⭐ 输出编码方式偏好（2026-10-13）：与「默认播放画质 / 音频降混」同一套按 (uid, 端) 隔离口径。
+// 归一化到 h264/h265/av1，非法或缺失一律回退 h264。
+function _normalizeOutputCodec(raw) {
+  const v = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+  if (v === 'h265' || v === 'hevc' || v === 'h.265') return 'h265';
+  if (v === 'av1') return 'av1';
+  return 'h264';
+}
+
+async function _readScopedVideoCodec(uid, clientTypeRaw) {
+  const clientType = _normalizeClientType(clientTypeRaw);
+  const baseKey = 'videoDefaultVideoCodec';
+  const chain = [];
+  if (clientType) chain.push([`${baseKey}.${clientType}`, uid]);
+  chain.push([baseKey, uid]);
+  if (uid !== 0 && clientType) chain.push([`${baseKey}.${clientType}`, 0]);
+  if (uid !== 0) chain.push([baseKey, 0]);
+  for (const [key, u] of chain) {
+    const v = await tableConfig.getConfigByKey(key, u);
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
+
 async function _fileExistsNonEmpty(p) {
   try {
     const st = await fs.promises.stat(p);
@@ -74,7 +131,7 @@ function normalizeUploadedOriginalName(raw) {
   return _scoreFilenameText(decoded) > _scoreFilenameText(name) ? decoded : name;
 }
 
-function buildStaticVodM3u8({ playId, durationSeconds, seekSeconds, segmentDurationSeconds, baseUrl, querySuffix }) {
+function buildStaticVodM3u8({ playId, durationSeconds, seekSeconds, segmentDurationSeconds, baseUrl, querySuffix, codec }) {
   const segDur = Number(segmentDurationSeconds) > 0 ? Number(segmentDurationSeconds) : 2;
   const total = Number(durationSeconds) > 0 ? Number(durationSeconds) : 0;
   const seek = Number(seekSeconds) > 0 ? Number(seekSeconds) : 0;
@@ -83,21 +140,30 @@ function buildStaticVodM3u8({ playId, durationSeconds, seekSeconds, segmentDurat
   const lastDuration = segmentCount <= 1 ? remaining || segDur : remaining - (segmentCount - 1) * segDur;
   const targetDuration = Math.ceil(segDur);
 
+  // ⭐ 输出编码决定分片容器（2026-10-13）：H.264 用传统 MPEG-TS；
+  // H.265/AV1 必须用 fMP4（AV1 in MPEG-TS 实测无法解析），并声明 #EXT-X-MAP。
+  const useFmp4 = _normalizeOutputCodec(codec) !== 'h264';
+  const segExt = useFmp4 ? 'm4s' : 'ts';
+
   const prefix = `/api/videoPlayer/hls/${playId}/`;
   // 分片路由已启用鉴权，这里把 accessToken 注入每个分片 URL，播放器请求分片时才能通过校验
   const suffix = typeof querySuffix === 'string' ? querySuffix : '';
 
   let m3u8 = `#EXTM3U
 #EXT-X-PLAYLIST-TYPE:VOD
-#EXT-X-VERSION:3
+#EXT-X-VERSION:${useFmp4 ? 7 : 3}
 #EXT-X-TARGETDURATION:${targetDuration}
 #EXT-X-MEDIA-SEQUENCE:0
 `;
+  if (useFmp4) {
+    m3u8 += `#EXT-X-MAP:URI="${prefix}init.mp4${suffix}"
+`;
+  }
 
   for (let i = 0; i < segmentCount; i++) {
     const isLast = i === segmentCount - 1;
     const d = isLast ? (lastDuration > 0 ? lastDuration : segDur) : segDur;
-    const name = `segment_${String(i).padStart(3, '0')}.ts`;
+    const name = `segment_${String(i).padStart(3, '0')}.${segExt}`;
     m3u8 += `#EXTINF:${Number(d).toFixed(3)},
 ${prefix}${name}${suffix}
 `;
@@ -434,7 +500,7 @@ async function _streamMp4CopySubtitlePlan(db, filePath, noSubtitle, subtitleStre
 
 function _parseSegmentIndex(filename) {
   const name = _normalizeText(filename).toLowerCase();
-  const m = name.match(/^segment_(\d+)\.ts$/);
+  const m = name.match(/^segment_(\d+)\.(ts|m4s)$/);
   if (!m) return null;
   const n = Number(m[1]);
   if (!Number.isFinite(n) || n < 0) return null;
@@ -700,7 +766,7 @@ class VideoPlayerController {
   async transcode(req, res) {
     try {
       await tableVideoTranscodeSession.deleteOlderThanMs(24 * 60 * 60 * 1000, req.dbVideo).catch(() => null);
-      const { filePath, playId, seek, width, resolution, bitrate, audioIndex, subtitleIndex, subtitlePath, subtitleBurn, videoCopy, audioDownmix: audioDownmixQuery, client, device_id, deviceId } = req.query;
+      const { filePath, playId, seek, width, resolution, bitrate, audioIndex, subtitleIndex, subtitlePath, subtitleBurn, videoCopy, audioDownmix: audioDownmixQuery, client, device_id, deviceId, codec: codecQuery } = req.query;
 
       if (!filePath || !playId) {
         return ResponseUtil.error(req, res, 'videoPlayer.INVALID_PARAMS');
@@ -737,10 +803,13 @@ class VideoPlayerController {
           }
         }
       }
-      // 音频降混：请求显式传入的 audioDownmix 优先（如 TV 端本地开关，需独立于全局配置）；未携带时回退到影视设置里的全局开关
+      // 音频降混：请求显式传入的 audioDownmix 优先（如 TV 端本地开关，需独立于全局配置）；
+      // 未携带时回退到影视设置里的开关 —— ⭐ 按「用户 + 客户端类型」逐级回退读
+      // （2026-10-12 起该设置按端隔离，直接读无后缀键会串味）。
       let audioDownmix = false;
       try {
-        const downmixRaw = await tableConfig.getConfigByKey('videoAudioDownmix');
+        const uidOfReq = req.user && req.user.id ? Number(req.user.id) : 0;
+        const downmixRaw = await _readScopedAudioDownmix(uidOfReq, client);
         audioDownmix = downmixRaw === 1 || downmixRaw === '1' || downmixRaw === true;
       } catch (_) {
         audioDownmix = false;
@@ -761,6 +830,22 @@ class VideoPlayerController {
       const audioLoudness = audioNormalize
         ? await _readCachedAudioLoudness(req.dbVideo, playbackSource.logicalFilePath)
         : null;
+      // ⭐ 输出编码方式（2026-10-13）：请求显式传入 codec 优先（播放器切编码会带上）；
+      // 未携带时回退到影视设置里按 (uid, 端) 存的偏好；再不行默认 h264。
+      // ⚠️ videoCopy（原画直通）时视频流是 copy，编码参数不生效，保持原文件编码。
+      let outputCodec = null;
+      const hasCodecQuery = codecQuery !== undefined && codecQuery !== null && String(codecQuery).trim() !== '';
+      if (hasCodecQuery) {
+        outputCodec = _normalizeOutputCodec(codecQuery);
+      } else {
+        try {
+          const uidOfReq = req.user && req.user.id ? Number(req.user.id) : 0;
+          const preferred = await _readScopedVideoCodec(uidOfReq, client);
+          outputCodec = _normalizeOutputCodec(preferred);
+        } catch (_) {
+          outputCodec = 'h264';
+        }
+      }
       const baseOptions = {
         seek: seekSeconds,
         width: Number.isFinite(w) && w > 0 ? w : undefined,
@@ -772,6 +857,8 @@ class VideoPlayerController {
         subtitleBurn: effectiveSubtitleBurn,
         // 视频是否原画直通（仅转音频）。Worker 会再校验 HDR/字幕烧录等不适用场景后回退重编。
         videoCopy: videoCopy === 'true',
+        // 输出视频编码族：h264 / h265 / av1（worker 内部按它选软编或硬件编码器）
+        codec: outputCodec,
         audioDownmix,
         audioNormalize,
         audioLoudness: audioLoudness || undefined,
@@ -837,6 +924,7 @@ class VideoPlayerController {
         segmentDurationSeconds: 2,
         baseUrl: '',
         querySuffix: _buildHlsTokenQuery(req),
+        codec: outputCodec,
       });
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Cache-Control', 'no-store');
@@ -881,11 +969,17 @@ class VideoPlayerController {
       const lower = filename.toLowerCase();
       const isM3u8 = lower.endsWith('.m3u8');
       const isTs = lower.endsWith('.ts');
+      // ⭐ fMP4 分片（H.265/AV1 走这条路）：init.mp4 + segment_XXX.m4s，容器是 MP4
+      const isM4s = lower.endsWith('.m4s');
+      const isInitMp4 = lower === 'init.mp4' || lower.endsWith('_init.mp4');
       if (isM3u8) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         res.setHeader('Cache-Control', 'no-store');
       } else if (isTs) {
         res.setHeader('Content-Type', 'video/mp2t');
+        res.setHeader('Cache-Control', 'no-store');
+      } else if (isM4s || isInitMp4) {
+        res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Cache-Control', 'no-store');
       }
 
@@ -896,7 +990,7 @@ class VideoPlayerController {
         if (stat.size > 0) ok = true;
       }
 
-      if (!ok && isTs) {
+      if (!ok && (isTs || isM4s)) {
         const segmentIndex = _parseSegmentIndex(filename);
         if (segmentIndex !== null) {
           const row = await tableVideoTranscodeSession.getByPlayId(playId, req.dbVideo);
@@ -982,6 +1076,15 @@ class VideoPlayerController {
           .map(line => {
             const trimmed = line.trim();
             if (!trimmed) return line;
+            if (trimmed.startsWith('#EXT-X-MAP')) {
+              // fMP4 初始化段：ffmpeg 可能把绝对路径写进 URI，这里统一归一为文件名再拼完整分片 URL
+              const mm = trimmed.match(/URI="([^"]*)"/);
+              if (mm && mm[1]) {
+                const initName = String(mm[1]).replace(/\\/g, '/').split('/').pop();
+                return trimmed.replace(/URI="[^"]*"/, `URI="${hlsBasePath}${initName}${tokenQuery}"`);
+              }
+              return line;
+            }
             if (trimmed.startsWith('#')) return line;
             if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
               return line;
@@ -1125,6 +1228,8 @@ class VideoPlayerController {
           } else if (noSubtitle) {
             outputOptions.unshift('-sn');
           }
+          // ⚠️ 这里**故意固定 libx264**（2026-10-13）：/stream-mp4 是相册 Live Photo
+          // 等场景的兜底单文件直出，没有客户端解码能力校验，不能受影视「编码方式」偏好影响。
           cmd.videoCodec('libx264').audioCodec('aac').outputOptions(outputOptions);
         }
 

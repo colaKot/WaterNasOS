@@ -334,10 +334,6 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
   Future<void> setFaceCoverItem(TimelinePhotoItem item) async {
     final fid = faceId.value;
     if (fid == null || fid <= 0) return;
-    if (!CurrentUserController.instance.isAdmin) {
-      ToastUtil.show('operation_failed'.tr);
-      return;
-    }
     final hash = item.fileHash;
     if (hash.trim().isEmpty) return;
 
@@ -356,6 +352,13 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
       if (res.isOk) {
         ApiController.instance.refreshFaceImageTimestamp();
         ToastUtil.show('operation_success'.tr);
+        return;
+      }
+      // ⭐ 2026-10-13：区分「这张照片里没有该人脸」（服务端 404）与其它失败，
+      // 否则用户点了没反应也不知道为什么。
+      final status = res.response?.statusCode ?? 0;
+      if (status == 404 || (res.error ?? '').contains('NOT_FOUND')) {
+        ToastUtil.show('face_cover_not_in_photo'.tr);
         return;
       }
     } catch (_) {}
@@ -493,10 +496,6 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
       );
       return;
     }
-    if (!CurrentUserController.instance.isAdmin) {
-      ToastUtil.show('operation_failed'.tr);
-      return;
-    }
 
     final hashes = _selectedFileHashes();
     if (hashes.isEmpty) return;
@@ -538,10 +537,6 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
         title: 'tip'.tr,
         content: 'server_version_too_low'.tr,
       );
-      return;
-    }
-    if (!CurrentUserController.instance.isAdmin) {
-      ToastUtil.show('operation_failed'.tr);
       return;
     }
 
