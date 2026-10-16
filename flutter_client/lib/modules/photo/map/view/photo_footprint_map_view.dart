@@ -49,6 +49,11 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
 
   /// 足迹 marker 的尺寸：**同屏内所有 marker 一样大**。
   ///
+  /// ⚠️ 2026-10-16：尺寸表已收口到 [PhotoFootprintMapController.markerDiameterForTier]，
+  /// 因为客户端的**聚合阈值就是按这个直径算的**（1.15 × 直径），两处必须同源 ——
+  /// 各写一份会出现「聚合算出来不重叠、画出来却压着」。
+  /// 见同文件 `_markerSizeForTier`。
+  ///
   /// ⭐ 2026-10-09 改：以前按 `photoCount` 从 85px（≤5 张）线性缩到 35px（≥200 张），
   /// 结果同一屏里大大小小混在一起，照片多的点缩到 35px 连缩略图都看不清。
   /// 现在只保留「随缩放档位收缩」这一层（缩得太小时必须让位，否则 marker 互相压盖），
@@ -56,18 +61,8 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
   ///
   /// ⚠️ 入参是**档位**而不是原始 zoom（见 `PhotoFootprintMapController.markerSizeTierOf`）：
   /// 直接读连续 zoom 会让 marker 层在拖动/缩放的每一帧重建，那是卡顿的主因。
-  double _markerSizeForTier(int tier) {
-    switch (tier) {
-      case 0:
-        return 40.0;
-      case 1:
-        return 60.0;
-      case 2:
-        return 70.0;
-      default:
-        return 85.0;
-    }
-  }
+  double _markerSizeForTier(int tier) =>
+      PhotoFootprintMapController.markerDiameterForTier(tier);
 
   void _scheduleInitialFetch(PhotoFootprintMapController ctrl) {
     if (_initialFetchTriggered || !_mapReady) return;
@@ -202,8 +197,8 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
                   // 拖动时不会重建 marker（原来每帧重建 N 个 marker 是卡顿主因）。
                   Obx(
                     () => MarkerLayer(
-                      markers: ctrl.items
-                          .map((e) => _markerFor(context, ctrl, e))
+                      markers: ctrl.clusters
+                          .map((e) => _markerForCluster(context, ctrl, e))
                           .toList(),
                     ),
                   ),
@@ -357,12 +352,13 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
     return '${d.year}/${d.month}';
   }
 
-  Marker _markerFor(
+  Marker _markerForCluster(
     BuildContext context,
     PhotoFootprintMapController ctrl,
-    PhotoMapIndexItem item,
+    PhotoMapCluster cluster,
   ) {
-    final p = ctrl.markerPosition(item);
+    final item = cluster.seed;
+    final p = ctrl.clusterPosition(cluster);
     final fullpath = item.fullpath ?? '';
     final imageUrl = fullpath.isNotEmpty
         ? ApiController.instance.getTinyUrl(fullpath)
@@ -387,7 +383,14 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: () => _openMarkerDetail(context, item),
+          // ⭐ 把该簇聚合到的**全部 geohash 格**传下去，保证「点开后列出的照片」
+          //   和「地图上这个 marker 角标显示的张数」是同一批（精确集合匹配）。
+          onTap: () => _openMarkerDetail(
+            context,
+            item,
+            precisionOverride: cluster.clickPrecision,
+            cells: cluster.cells,
+          ),
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -460,15 +463,17 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
                     ),
                   ),
                 ),
-                // ⭐ 聚合角标：本格内有多张照片时，在右上角挂一个数字气泡。
-                // 缩小时同一个区域会合并成一个大点并显示总数，放大后数字变 1、角标自动消失
+                // ⭐ 聚合角标：这个 marker 代表的照片数 > 1 时挂一个数字气泡。
+                // 缩小时一整片会合成一个大点并显示总数，放大后拆开、数字变 1、角标自动消失
                 // —— 这就是「随缩放自动合并/拆分」在 UI 上的落点。
-                if (item.isCluster)
+                // ⚠️ 数字来自 `cluster.photoCount`（被合并进来的所有格子之和），
+                //    不是单格的 photo_count。
+                if (cluster.showBadge)
                   Positioned(
                     top: 0,
                     right: 0,
                     child: _ClusterCountBadge(
-                      count: item.photoCount ?? 1,
+                      count: cluster.photoCount,
                       markerSize: markerSize,
                     ),
                   ),
@@ -482,26 +487,39 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
 
   Future<void> _openMarkerDetail(
     BuildContext context,
-    PhotoMapIndexItem item,
-  ) async {
+    PhotoMapIndexItem item, {
+    /// 该 marker 的 geohash 聚合档位（2~6）。0 = 未知，回退到 [PhotoMapIndexItem.cellPrecision]。
+    /// 仅在拿不到 [cells]（老服务端响应）时才作为兜底判据。
+    int precisionOverride = 0,
+
+    /// ⭐ 该 marker 聚合到的全部 geohash 格（精度 = 服务端 cellPrecision）。
+    /// 非空时优先下发给时间轴做精确集合匹配。
+    List<String> cells = const <String>[],
+  }) async {
+    // ⭐ 带上真实坐标：服务端按「离照片最近」取地名。
+    // 不给坐标时会退化成用 geohash 格中心反查 —— 市区里几公里的偏差就足以选错地名
+    // （林和西被标成 11km 外的「鱼珠」就是这么来的）。
     final geoRes = await PhotoMapApiService.instance.getLocationStr(
       geohash: item.geohash,
+      latitude: item.latitude,
+      longitude: item.longitude,
     );
     final geoName = geoRes.success ? geoRes.data?.toString() ?? '' : null;
     if (!context.mounted) return;
 
     final title =
         "${'location'.tr}-${(geoName ?? '').isNotEmpty ? geoName : 'photo_map_location'.tr}";
-    // ⭐ 把该 marker 的聚合档位透传下去。
-    // 不传的话，时间轴会用默认 nearbyRangeKm=2 → geohash 前 6 位（约1.2km）反查，
-    // 而低缩放档的 marker 可能代表 150km 见方 ⇒ 点开后列出来的照片只是这个大范围的一小部分，
-    // 看着就像「点进去照片怎么变少了 / 跟缩放无关」。
+    // ⭐ 把该 marker 的聚合范围内下发给时间轴。
+    // 有格集合就传格集合（逗号分隔，服务端精确匹配）；没有才退回 seed 的 geohash 前缀。
+    final geohashParam = cells.isNotEmpty ? cells.join(',') : item.geohash;
     if (DeviceUtils.isMobile) {
       await Get.to(
         () => AppPhotoFootprintNearbyTimelinePage(
           title: title,
-          geohash: item.geohash,
-          precisionOverride: item.cellPrecision ?? 0,
+          geohash: geohashParam,
+          precisionOverride: precisionOverride > 0
+              ? precisionOverride
+              : (item.cellPrecision ?? 0),
         ),
       );
       return;
@@ -509,8 +527,11 @@ class _PhotoFootprintMapViewState extends State<PhotoFootprintMapView> {
 
     setState(() {
       _nearbyTitle = geoName ?? '';
-      _nearbyGeohash = item.geohash;
-      _nearbyPrecision = item.cellPrecision ?? 0;
+      _nearbyGeohash = geohashParam;
+      // 优先用客户端聚合算出来的档位，其次才是服务端给的格子档位
+      _nearbyPrecision = precisionOverride > 0
+          ? precisionOverride
+          : (item.cellPrecision ?? 0);
       _nearbyTimelineVisible = true;
       _nearbyTimelineSeed += 1;
     });
@@ -767,9 +788,10 @@ class _InfoBadge extends StatelessWidget {
   }
 }
 
-/// 地图 marker 右��角的聚合数量气泡。
+/// 地图 marker 右上角的聚合数量气泡。
 ///
-/// 只在 [PhotoMapIndexItem.photoCount] > 1 时显示；放大到该网格只剩一张照片时自动消失，
+/// 数字来自 [PhotoMapCluster.photoCount]（被合并进来的所有格子之和），
+/// 只在 > 1 时显示；放大到这一簇只剩一张照片时角标自动消失，
 /// 这就是「缩放时聚合 ↔ 拆分」在视觉上的体现。
 class _ClusterCountBadge extends StatelessWidget {
   final int count;

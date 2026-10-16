@@ -45,22 +45,21 @@ if (!isElectronAvailable) {
 
 // 环境配置
 const env = process.env.NODE_ENV || 'development';
+// ⭐ 2026-10-16 应用清单（唯一真源，各端都从服务端取）：
+// 按用户要求隐藏 4 个「暂时用不上」的应用 —— 服务(nascab_service)、Docker、加密空间(encrypted)、笔记(note)。
+// 只移除 ID，路由/数据/代码全保留，想恢复把 ID 加回来即可。
 const defaultApps = [
   'folder',
   'photo',
   'movie',
   'book',
   'music',
-  'note',
-  'encrypted',
   'media_tool',
   'user',
   'terminal',
   'mounts',
-  'docker',
   'backup',
   'sync',
-  'nascab_service',
   'security',
   'share',
   'monitor',

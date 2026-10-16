@@ -6,10 +6,10 @@ WaterNasOS is a cross-platform NAS software that lets you remotely manage your p
 
 ## Origin & License
 
-> WaterNasOS is a **modified version** of [NasCabOS](https://github.com/nascab/NasCabOS), released and redistributed under the **GNU GPL v3.0**.
-> The copyright of the original work belongs to Beijing Yunpiao Piao Technology Co., Ltd. (© 2025); the copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026).
-> Since **2026-10** this repository has applied the rename, feature changes and project-wide adjustments listed below to that work; the modifications are licensed under GPL-3.0 as well.
-> The full license text and the original copyright notices are kept unmodified in [LICENSE](LICENSE). Network protocols, device fingerprints and encrypted data formats remain compatible.
+> WaterNasOS is a **modified version** of [NasCabOS](https://github.com/nascab/NasCabOS) and uses **layered licensing**: code forked from upstream stays under **GNU GPL v3.0**, while independent parts newly written in this repository are licensed under **GNU AGPL v3.0**.
+> The copyright of the original work belongs to Beijing Yunpiao Piao Technology Co., Ltd. (© 2025); the copyright of the additions in this repository belongs to **colaKot** (© 2026).
+> Since **2026-10** this repository has applied the rename, feature changes and project-wide adjustments listed below to that work.
+> Both license texts are in [LICENSE](LICENSE) (GPL-3.0) and [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) (AGPL-3.0), with the upstream notices retained verbatim. Network protocols, device fingerprints and encrypted data formats remain compatible.
 
 ## What This Version Changes
 
@@ -23,9 +23,6 @@ Everything changed relative to upstream is listed below: the earlier feature wor
 - **Standalone Photos / Music clients**: `photo_client` and `music_client` build `NasCabPhoto.exe` / `NasCabMusic.exe`. They depend on the main client by path and add **zero duplicated business code** — `main.dart` is three lines that set a launch mode (`AppLaunchMode.photo` / `.music`), so each app boots straight into Photos or Music with its own icon and title.
 - **Theme system**: 26 named color schemes selectable at runtime (Settings → Theme), plus a design-token layer (`app_tokens.dart`) that centralizes spacing / corner-radius / control sizes previously scattered as hard-coded numbers.
 - **Content-level dedup for photo backup**: backup now compares size **and content MD5** against the NAS, so re-uploading an unchanged file is skipped instead of transferred again.
-
-### Recent Updates
-
 - **Browsing experience for photo / mixed media libraries**:
   - A new **sort menu** (Name / Taken / Viewed / Added, defaulting to name ascending), shared by photo and mixed libraries and **remembered per library**.
   - Name sorting now uses **natural order**: `(1) < (2) < (10) < (11)` instead of the textual `1, 10, 11, 2`. This adds a `natural_name` column (with index) to `image_index` / `video_index`, so sorting is served by a covering index.
@@ -41,6 +38,28 @@ Everything changed relative to upstream is listed below: the earlier feature wor
 - **AI and recognition**: the face-recognition model was switched to **EdgeFace**; photo search was enhanced; GPU paths for the footprint map and face processing were optimized.
 - **TV clients**: a new playback-settings guide and persisted playback parameters.
 - **UI**: app icon and home-screen icon assets refreshed across all clients.
+
+### Recent Updates
+
+- **v1.1.0 (current)**:
+  - **Photo map clustering**: overlapping photos are merged into clusters by **Web Mercator world-pixel distance** (threshold `1.15 × marker diameter`), and each cluster is anchored at the **real coordinates of its densest photo** — so clusters can never overlap. Clustering only re-runs on zoom or data change (**never on pan**), and is independent of window size and map centre. Opening a marker queries exactly the set of geohash cells the cluster covers (comma-joined, matched server-side with `WHERE IN`) ⇒ **the badge number always equals the number of photos listed**.
+  - **Reverse geocoding now uses real distance**: stepping back through geohash levels and picking the smallest `geonameid` labelled the whole Tianhe district "Yuzhu" (10.96 km away) even though Wushan was 2.93 km away. Names are now resolved by actual distance (30 km gate) for footprints, timeline date headings and the properties panel alike.
+  - **Two root causes fixed in face recognition**: ① **stall** — after a fully-failed batch the worker found an empty queue and exited, while the clean-exit callback was empty, so it never restarted; it now restarts on demand and recycles parked tasks. ② **marking images as done on failure** — failed inference still flagged the photo as scanned (`gen_faces=1`), so it was never retried; failures now leave the flag untouched and requeue the photo. Face merging no longer swallows errors, migrates samples on merge, and counts `face_count` by de-duplicated rows.
+  - **Timeline media filter**: the control bar gains an all / photos / videos segmented switch (the old type dropdown became a Live Photos toggle).
+  - **License change**: the project now uses **layered GPL-3.0 + AGPL-3.0 licensing** — parts forked from upstream remain GPL-3.0, independently added parts are AGPL-3.0, and the combination is conveyed under GPL-3.0 §13.
+  - **Server**: **development-instance isolation** (the single-instance lock now keys off Electron `userData`), so a dev instance can run alongside the daily one; the file-listing worker falls back to the main thread on failure, fixing occasional "directory listing 400" errors.
+  - **Clients**: all 13 language packs refreshed.
+- **Playback fixes (v1.0.0)**:
+  - Fixed **H.265 / AV1 transcodes that could not play**: the fMP4 init segment `init.mp4` is now written with an absolute path into the transcode directory, and `#EXT-X-MAP` URIs inside the m3u8 are normalized. The relative path previously sent ffmpeg writing it into the process working directory, so the transcode folder held only `.m4s` segments and no `init.mp4` — the client's request for the init segment always returned 404.
+  - A failed transcode now **falls back to H.264 automatically** and resumes from the current position; on Android, HLS / transcode URLs may also take the **FFmpeg software-decode fallback**.
+  - **Quality tiers are grouped by codec**: H.264 and HEVC each get their own list, with 1440p and low-bitrate 4K tiers added for HEVC (at the same bitrate 265 carries far higher resolutions than 264); switching codec refreshes the available bitrates.
+  - The close button on the Android movie detail page is now **aligned to the right edge**.
+- **Subtitles**: a new **default subtitle language** setting (Simplified Chinese / Traditional Chinese / English / Japanese / Korean / none) auto-selects a matching sidecar subtitle during playback. Language detection covers the usual naming — Simplified `cn / chs / chi / sc / hans`, Traditional `tw / hk / cht / hant`, plus `en / ja / ko`.
+- **Sign-in**: desktop and Android clients **sign in automatically** once the server and account are remembered, instead of requiring a manual tap each time; signing out explicitly disables auto sign-in again.
+- **UI fallback**: the desktop home screen now has a default wallpaper, so it is no longer blank on entry.
+- **Photo backup**: the on/off switch and the "choose folders" button now **request photo permission**, guiding to system settings when denied; fixed the "uploaded / skipped" counters that stayed at 0 (content-dedup and already-backed-up skips are now counted); the total is estimated from the actual album item count, avoiding the double counting caused by Android's overlapping albums.
+- **Server stability**: when the file-list worker fails, the request **falls back to the main thread** running the same implementation, fixing the occasional "directory list 400" error.
+- **Releases**: **v1.1.0** is the current version, shipping the Windows server / desktop / sync clients and the Android main / Photos / Music APKs — see [Releases](https://github.com/colaKot/WaterNasOS/releases); the first stable release was v1.0.0.
 
 ### Project-wide
 
@@ -141,12 +160,19 @@ Business cooperation / Contact us: cola23@126.com
 
 ## License
 
-WaterNasOS is released under the [GNU General Public License v3.0](LICENSE).
+This repository is a derivative of [NasCabOS](https://github.com/nascab/NasCabOS), so it uses **layered licensing**:
 
-- The copyright of the original upstream work belongs to **Beijing Yunpiao Piao Technology Co., Ltd.** (© 2025) and is retained verbatim.
-- The copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026).
-- The modifications made in this repository are licensed under GPL-3.0 as well; modification date **2026-10**.
-- Any redistributor must keep the copyright notices above and the full license text, and must make the source available under GPL-3.0.
+| Scope | License | Full text |
+| --- | --- | --- |
+| Code forked from upstream NasCabOS (including files modified here) | **GPL-3.0** | [LICENSE](LICENSE) |
+| Independent parts newly added here, containing no upstream code | **AGPL-3.0** | [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) |
+| The combined work (including binaries packaged as a single exe / APK) | **GPL-3.0 §13 combined work** → AGPL-3.0 §13 applies to the whole | both of the above |
+
+- The copyright of the original upstream work belongs to **Beijing Yunpiao Piao Technology Co., Ltd.** (© 2025) and is retained verbatim; it must not be removed.
+- The copyright of the additions in this repository belongs to **colaKot** (© 2026).
+- The rule is "a file newly written from scratch with no upstream code", e.g. `sync_client/`, `packages/nascab_sync_core/`, `deploy/wnos/` and the self-built scripts under `tool/` fall under AGPL-3.0; everything else (including modified upstream files) is still distributed as a whole under GPL-3.0.
+- **Combined distribution under GPL-3.0 §13**: this distribution (including builds packaged as a single executable) is a combined work of a GPL-3.0 work and an AGPL-3.0 work — the GPL part remains governed by GPL-3.0, while **AGPL-3.0 Section 13 (Remote Network Interaction) applies to the combination as such**: if you run this software or a modified version as a network service, you must offer all users of that service the corresponding complete source code.
+- Any redistributor must keep the copyright notices above and both full license texts.
 
 ## Third-Party Assets & Acknowledgements
 

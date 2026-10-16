@@ -130,13 +130,24 @@ class PhotoMapApiService extends BaseApiService {
     );
   }
 
+  /// 反查地点名（"林和西" 这类）。
+  ///
+  /// ⭐ 带上 [latitude]/[longitude]（照片真实坐标）时，服务端按「离照片最近」挑地名；
+  /// 不给就只能拿 geohash 格中心去猜 —— 市区里几公里的误差足以选错
+  /// （比如林和西被标成 11km 外的「鱼珠」）。
   Future<ApiResponse<String>> getLocationStr({
     String? geohash,
     int? indexId,
+    double? latitude,
+    double? longitude,
   }) async {
     final res = await apiPost<Map<String, dynamic>>(
       '/api/mapApi/getLocationStr',
-      body: {if (geohash != null) 'geohash': geohash},
+      body: {
+        if (geohash != null) 'geohash': geohash,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
+      },
       showLoading: false,
     );
     if (!res.success) {

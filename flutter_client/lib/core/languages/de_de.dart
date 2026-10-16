@@ -733,7 +733,7 @@ class DeDe extends Translations {
       'app_mounts': 'Mounts',
       'app_image_view': 'Bildansicht',
       'app_monitor': 'Monitor',
-      'app_process': 'Prozesse',
+      'app_process': 'Aufgabenprozesse',
       'process.empty': 'Keine laufenden Prozesse',
       'process.name': 'Name',
       'process.pid': 'Prozess-ID',
@@ -2075,7 +2075,7 @@ class DeDe extends Translations {
       'file_operation': 'Dateioperation',
       'file_operation_running_title': 'Dateioperation läuft',
       'file_operation_task_running_hint':
-          'Nach „Im Hintergrund ausführen“ können Sie den Fortschritt unter Task-Center → Dateioperation einsehen.',
+          'Nach „Im Hintergrund ausführen“ können Sie den Fortschritt unter Download-Center → Dateioperation einsehen.',
       'run_in_background': 'Im Hintergrund ausführen',
       'processing': 'Verarbeitung',
       'waiting': 'Wartend',
@@ -2601,7 +2601,7 @@ class DeDe extends Translations {
       'folder_action_confirm_copy': '@count Elemente nach @target kopieren?',
       'folder_action_confirm_move': '@count Elemente nach @target verschieben?',
       'folder_action_queued':
-          'Operation in Warteschlange, Task-Center für Fortschritt prüfen',
+          'Operation in Warteschlange, Download-Center für Fortschritt prüfen',
       'folder_name_strategy': 'Gleicher Name Strategie',
       'file_allready_in_upload_queue': 'Datei bereits in Upload-Warteschlange',
       'file_task_upload_added': 'Datei zur Upload-Warteschlange hinzugefügt',
@@ -2659,7 +2659,7 @@ class DeDe extends Translations {
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
       'app_note': 'Notebook',
-      'app_task_center': 'Task-Center',
+      'app_task_center': 'Download-Center',
       'message_center': 'Nachrichtencenter',
       'app_backup': 'Backup',
       'task_count': 'Gesamt @count Elemente',
@@ -2736,7 +2736,7 @@ class DeDe extends Translations {
       'home_no_message': 'Keine neuesten Nachrichten',
       'monitor_click_to_view': 'Klicken zum Anzeigen der Details',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Task-Center',
+      'home_task_center': 'Download-Center',
       'recycle_bin_empty': 'Keine Dateien im Papierkorb',
 
       // Message Center

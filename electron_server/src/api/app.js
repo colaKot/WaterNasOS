@@ -8,6 +8,7 @@ const Logger = require('../utils/logger');
 const { initI18nMiddleware } = require('../utils/i18nUtil');
 const config = require('../config/config');
 const path = require('path');
+const fs = require('fs');
 const { authenticateJWT } = require('./middleware/authMiddleware');
 //初始化数据库和链接
 const dbUtil = require('../db/dbUtil');
@@ -141,6 +142,54 @@ app.use(
   },
   express.static(config.getCustomWallpaperPath(), { dotfiles: 'deny' })
 );
+// ⭐ 2026-10-16 离线文档阅读器（PDF / DOCX / PPTX / XLSX / CSV，纯本地渲染、零联网）
+// 依赖 @anohanafes/offline-document-viewer（MIT，已随包发布）此前只装了依赖没接线，这里把它挂出来。
+// 打开方式：/docview/open?url=<文档URL>&accessToken=<JWT>
+//   - txt / md / log / json / xml 走内置 <pre> 纯文本兜底（该阅读器本身不含这些格式）；
+//   - 其余交给 url-viewer.html 本地渲染。
+let docViewerDir = '';
+try {
+  docViewerDir = path.dirname(require.resolve('@anohanafes/offline-document-viewer/package.json'));
+} catch (e) {
+  docViewerDir = '';
+}
+if (docViewerDir && fs.existsSync(docViewerDir)) {
+  const rawController = require('./modules/file/raw/fileRawController');
+  const { requireDownloadViewOrSubtitleUploadFile } = require('./middleware/subtitleUploadRawAccess');
+  // 阅读器（direct-viewer.html）只按 URL pathname 的扩展名判断文档格式，
+  // 而 /api/file/rawFile 的 path 不含文件名 ⇒ 提供一个带文件名的别名路径，
+  // 权限校验与 rawFile 完全一致，实际仍是同一个文件读取实现。
+  app.get('/docview/raw/:name', authenticateJWT, requireDownloadViewOrSubtitleUploadFile, rawController.getRawFile);
+
+  app.get('/docview/open', authenticateJWT, (req, res) => {
+    const url = String(req.query.url || '');
+    const token = String(req.query.accessToken || '');
+    const name = String(req.query.name || '');
+    if (!url) return res.status(400).send('missing url');
+    const ext = ((name || String(url).split('?')[0]).match(/\.([a-z0-9]+)$/i) || []).pop();
+    const extLower = String(ext || '').toLowerCase();
+    const textLike = ['txt', 'md', 'log', 'json', 'xml'].includes(extLower);
+    // 把 rawFile 直链改写成带文件名的别名路径，供阅读器识别扩展名
+    const rawMark = '/api/file/rawFile';
+    const rawIdx = url.indexOf(rawMark);
+    const target =
+      !textLike && name && rawIdx >= 0
+        ? url.slice(0, rawIdx) + '/docview/raw/' + encodeURIComponent(name) + url.slice(rawIdx + rawMark.length)
+        : url;
+    const inner = textLike
+      ? `fetch(u).then(function(r){return r.arrayBuffer()}).then(function(b){var p=document.createElement('pre');p.className='txt';p.textContent=new TextDecoder('utf-8').decode(b);document.getElementById('app').appendChild(p)}).catch(function(e){document.getElementById('app').textContent='加载失败: '+e});`
+      : `var f=document.createElement('iframe');f.src='/docview/direct-viewer.html?url='+encodeURIComponent(target);f.style.cssText='width:100vw;height:100vh;border:0';document.body.appendChild(f);`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(
+      '<!doctype html><html><head><meta charset="utf-8"><title>文档预览</title>' +
+        '<style>body{margin:0;background:#1e1e1e;color:#ddd;font-family:system-ui,"Microsoft YaHei",monospace}' +
+        'pre.txt{padding:16px;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.6}#app{min-height:100vh}</style>' +
+        '</head><body><div id="app"></div><script>var u=' + JSON.stringify(url) + ',t=' + JSON.stringify(token) + ',target=' + JSON.stringify(target) + ';' + inner + '</script></body></html>'
+    );
+  });
+  app.use('/docview', authenticateJWT, express.static(docViewerDir, { dotfiles: 'deny' }));
+}
+
 app.use('/', express.static(path.join(config.appRootPath, 'web', 'main'), { dotfiles: 'deny' }));
 app.use('/quickshare', express.static(path.join(config.appRootPath, 'web', 'quickshare'), { dotfiles: 'deny' }));
 

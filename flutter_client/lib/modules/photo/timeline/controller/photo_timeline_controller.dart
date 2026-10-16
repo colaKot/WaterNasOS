@@ -266,6 +266,10 @@ class PhotoTimelineController extends GetxController {
   String? get geohashForRequest {
     final gh = baseGeohash.value.trim();
     if (gh.isEmpty) return null;
+    // ⭐ 2026-10-16 足迹地图点开时下发的是「逗号分隔的 geohash 格集合」
+    // （该 marker 聚合到的每一格，精度一致）。服务端会做精确集合匹配（whereIn），
+    // 这里必须原样透传 —— 一旦拿去截前缀，就会把邻居格整片捞进来。
+    if (gh.contains(',')) return gh;
     // ⭐ 地图传入的聚合档位优先。它和地图 marker 的聚合范围是同一套口径，
     // 不用就会出现「marker 代表一大片、点开只列很小一块」的错位。
     if (precisionOverride >= 2 && precisionOverride <= 6) {
@@ -286,6 +290,13 @@ class PhotoTimelineController extends GetxController {
 
   void setNearbyRangeKm(int km) {
     nearbyRangeKm.value = km;
+    // ⭐ 用户手动调范围 = 明确放弃「地图那个 marker 的范围」，退化成按前缀查。
+    // 否则格集合会一直优先于用户选择，范围选择器看起来像失灵。
+    final gh = baseGeohash.value.trim();
+    final comma = gh.indexOf(',');
+    if (comma > -1) {
+      baseGeohash.value = gh.substring(0, comma);
+    }
     refreshTimeline();
   }
 

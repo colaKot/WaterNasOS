@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://wnos.gexuan.net/sitemap.xml

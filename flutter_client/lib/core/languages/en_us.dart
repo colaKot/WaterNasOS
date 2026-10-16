@@ -721,7 +721,7 @@ class EnUs extends Translations {
       'app_mounts': 'Mounts',
       'app_image_view': 'Image View',
       'app_monitor': 'Monitor',
-      'app_process': 'Process',
+      'app_process': 'Task Processes',
       'process.empty': 'No running process',
       'process.name': 'Name',
       'process.pid': 'PID',
@@ -2042,7 +2042,7 @@ class EnUs extends Translations {
       'file_operation': 'File Operation',
       'file_operation_running_title': 'File Operation in Progress',
       'file_operation_task_running_hint':
-          "After tapping \"Run in background\", you can view task progress in Task Center → File Operation.",
+          "After tapping \"Run in background\", you can view task progress in Download Center → File Operation.",
       'run_in_background': 'Run in background',
       'processing': 'Processing',
       'waiting': 'Waiting',
@@ -2559,7 +2559,7 @@ class EnUs extends Translations {
       'folder_action_confirm_move':
           'Are you sure to move @count items to @target?',
       'folder_action_queued':
-          'Operation queued, check task center for progress',
+          'Operation queued, check download center for progress',
       'folder_name_strategy': 'Same Name Strategy',
       'file_allready_in_upload_queue': 'File already in upload queue',
       'file_task_upload_added': 'File added to upload queue',
@@ -2613,7 +2613,7 @@ class EnUs extends Translations {
       'my_account': "My Account",
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
-      'app_task_center': 'Task Center',
+      'app_task_center': 'Download Center',
       'message_center': 'Message Center',
       'app_backup': 'Backup',
       'task_count': 'Total @count items',
@@ -2689,7 +2689,7 @@ class EnUs extends Translations {
       'home_no_message': 'No latest message',
       'monitor_click_to_view': 'Click to view details',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Task Center',
+      'home_task_center': 'Download Center',
       'recycle_bin_empty': 'No files in recycle bin',
       'app_help_docker': 'Manage Docker images, containers, tasks on the host',
       'docker_header_subtitle':

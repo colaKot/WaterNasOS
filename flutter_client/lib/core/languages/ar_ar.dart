@@ -696,7 +696,7 @@ class ArAr extends Translations {
       'app_mounts': 'تحميلات',
       'app_image_view': 'عرض الصور',
       'app_monitor': 'مراقب',
-      'app_process': 'العمليات',
+      'app_process': 'عمليات المهام',
       'process.empty': 'لا توجد عمليات قيد التشغيل',
       'process.name': 'الاسم',
       'process.pid': 'معرّف العملية',
@@ -1994,7 +1994,7 @@ class ArAr extends Translations {
       'file_operation': 'عملية الملف',
       'file_operation_running_title': 'عملية الملف قيد التنفيذ',
       'file_operation_task_running_hint':
-          "بعد النقر على «تشغيل في الخلفية»، يمكنك عرض التقدم في مركز المهام → عملية الملف.",
+          "بعد النقر على «تشغيل في الخلفية»، يمكنك عرض التقدم في مركز التنزيل → عملية الملف.",
       'run_in_background': 'تشغيل في الخلفية',
       'processing': 'جارٍ المعالجة',
       'waiting': 'انتظار',
@@ -2493,7 +2493,7 @@ class ArAr extends Translations {
       'folder_action_confirm_move':
           'هل أنت متأكد أنك تريد نقل @count عناصر إلى @target؟',
       'folder_action_queued':
-          'تمت إضافة العملية إلى قائمة الانتظار، تحقق من مركز المهام للتقدم',
+          'تمت إضافة العملية إلى قائمة الانتظار، تحقق من مركز التنزيل للتقدم',
       'folder_name_strategy': 'استراتيجية الاسم نفسه',
       'file_allready_in_upload_queue':
           'الملف موجود بالفعل في قائمة انتظار التحميل',
@@ -2543,7 +2543,7 @@ class ArAr extends Translations {
       'monitor_device_monitor': 'مراقب الجهاز',
       'monitor_storage_device': 'أجهزة التخزين',
       'my_account': 'حسابي',
-      'app_task_center': 'مركز المهام',
+      'app_task_center': 'مركز التنزيل',
       'message_center': 'مركز الرسائل',
       'app_backup': 'نسخ احتياطي',
       'task_count': 'الإجمالي @count عناصر',
@@ -2618,7 +2618,7 @@ class ArAr extends Translations {
       'home_no_message': 'لا توجد رسالة أحدث',
       'monitor_click_to_view': 'انقر لعرض التفاصيل',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'مركز المهام',
+      'home_task_center': 'مركز التنزيل',
       'recycle_bin_empty': 'لا توجد ملفات في سلة المحذوفات',
       'no_messages': 'لا توجد رسائل',
       'normal': 'عادي',

@@ -78,14 +78,21 @@ class PhotoMapController {
 
   async getLocationStr(req, res) {
     try {
-      const { geohash } = req.body || {};
+      const { geohash, latitude, longitude, lat, lng } = req.body || {};
       let locale = '';
       try {
         locale = typeof req.getLocale === 'function' ? String(req.getLocale() || '') : '';
       } catch (_) {
         locale = '';
       }
-      const geo = await photoMapService.getLocationStr({ dbGeo: req.dbGeo, locale }, geohash);
+      // ⭐ 2026-10-16：带上照片真实坐标，服务端才能按距离取最近的地名
+      // （不给坐标就只能退回「格中心」，市区几公里误差会选错地名）。
+      const geo = await photoMapService.getLocationStr(
+        { dbGeo: req.dbGeo, locale },
+        geohash,
+        latitude !== undefined ? latitude : lat,
+        longitude !== undefined ? longitude : lng
+      );
       return ResponseUtil.success(req, res, { geo }, 'common.SUCCESS', 200);
     } catch (e) {
       return ResponseUtil.error(req, res, 'common.ERROR', 500);

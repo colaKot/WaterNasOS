@@ -62,8 +62,10 @@ class PhotoMapIndexItem {
   final double latitude;
   final double longitude;
 
-  /// 该 marker 代表的几何中心（服务端算好的 geohash 格心）。
-  /// 落在格心而不是某张照片上，缩放换挡时位置才不会跳。
+  /// ⚠️ 2026-10-16 起**服务端不再下发**这两个字段。
+  /// 试过「marker 吸附格心」，用户否掉了：位置必须落在真实照片上；
+  /// 「重叠的合成一个」改由客户端按世界像素距离做（见 [PhotoMapCluster]）。
+  /// 字段保留只为兼容老的本地缓存响应。
   final double? cellLat;
   final double? cellLng;
 
@@ -120,3 +122,58 @@ class PhotoMapIndexItem {
     );
   }
 }
+
+/// 足迹地图上「聚合后」的一个 marker。
+///
+/// ⭐ 2026-10-16 方案：marker 落在**代表照片的真实坐标**上，把屏幕上互相压盖的合成一个。
+/// 落点用的是**簇种子**（簇内 photo_count 最大的那一格）的真实坐标 —— 不是几何中心。
+/// 这样有两个性质：
+///   1. marker 永远落在真实照片上，不会像「吸附格心」那样换缩放档时整体平移一次；
+///   2. 贪心合并时各簇的种子两两必然 ≥ 阈值 ⇒ **聚合后数学上不可能再互相压盖**。
+class PhotoMapCluster {
+  /// 落点依据的那张照片（簇内 photo_count 最大的格子）。
+  final PhotoMapIndexItem seed;
+
+  /// 簇内所有格子的 photo_count 之和 —— 就是角标要显示的数字。
+  final int photoCount;
+
+  /// 被合并进来的格子数。1 = 自己一个人，没有合并。
+  final int cellCount;
+
+  /// 点开这个簇时传给周边时间轴的 geohash 前缀长度（2~6）。
+  /// 不传的话会按默认 2km 反查 ⇒ 「地图上一个点代表一大片、点开只列一小块」。
+  ///
+  /// ⚠️ 2026-10-16 起不再是「点开范围」的判据（改用 [cells] 精确集合），
+  /// 只作为拿到老服务端响应（没有 [cellPrecision]）时的兜底档位保留。
+  final int clickPrecision;
+
+  /// ⭐ 2026-10-16：簇内**所有成员格**在 [cellPrecision] 精度下的 geohash（去重 + 排序）。
+  ///
+  /// 点开这个 marker 时原样下发给服务端做**精确集合匹配**：
+  /// 「地图角标显示多少张」==「点进去列出来多少张」。
+  ///
+  /// 为什么不用 single seed + 前缀 LIKE：一个簇可能合并了屏幕上互相压盖的多个格，
+  /// 而 seed 只是其中一张数最大的格；只要按 seed 的前缀去 LIKE，就会把邻居格一起捞进来。
+  /// 实测林和西附近：geohash6 一格 68 张，按 geohash5 前缀查是 1389 张，按 geohash4 是 10090 张
+  /// —— 这正是「地图上 21 张、点进去几百张」的来源。
+  final List<String> cells;
+
+  /// [cells] 里各格的精度（2~7）。0 = 未知（老服务端响应）。
+  final int cellPrecision;
+
+  const PhotoMapCluster({
+    required this.seed,
+    required this.photoCount,
+    required this.cellCount,
+    required this.clickPrecision,
+    this.cells = const <String>[],
+    this.cellPrecision = 0,
+  });
+
+  double get latitude => seed.latitude;
+  double get longitude => seed.longitude;
+
+  /// 角标是否显示数字。
+  bool get showBadge => photoCount > 1;
+}
+

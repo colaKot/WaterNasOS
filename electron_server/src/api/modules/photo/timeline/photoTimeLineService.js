@@ -31,6 +31,10 @@ const indexFields = [
   'geohash5',
   'ext',
   'file_hash',
+  // ⭐ 2026-10-16：时间轴每个日期要显示地点名，反查时带上照片真实坐标才能取到
+  // 「离这儿最近」的地名（只拿 geohash 格中心去猜，市区里会差出几公里，选错地名）。
+  'latitude',
+  'longitude',
 ];
 
 function tokenizeForOcrMatch(text) {
@@ -213,13 +217,36 @@ class PhotoTimeLineService {
     }
 
     // 搜索过滤
+    let searchRankExpr = null;
     if (params.search) {
       const search = params.search.trim();
       if (search) {
         const aiOcrEnable = await tableConfig.getConfigByKey('ai_ocr_enable');
         // ⭐ 场景识别开关：标签是 places365 的 115 类场景（已中文化）。
-        // 注意：builder 回调是同步的，开关必须在这里先查好。
+        // 注意：builder 回调是同步的，开关与语义解析必须在这里先做好。
         const aiPlaceEnable = await tableConfig.getConfigByKey('ai_place_enable').catch(() => null);
+
+        // ⭐ 2026-10-16 语义搜索接线（A）：
+        // 旧版只把「标签名子串」并进主搜索框，于是「夕阳下的沙滩」逐字匹配不到任何标签 ⇒ 结果恒为空。
+        // 这里先用 placesQuery 把自然语言解析成场景标签（「夕阳下的沙滩」→ 落日 + 海滩），再按标签精确命中。
+        let semanticTags = [];
+        if (aiPlaceEnable === '1') {
+          try {
+            const placesQuery = require('../../../../workers/ai/places/placesQuery');
+            if (placesQuery.isAvailable()) {
+              await placesQuery.ensureReady();
+              const parsed = placesQuery.analyze(search, { topTags: 12 });
+              if (parsed && parsed.ok && Array.isArray(parsed.tags)) {
+                semanticTags = parsed.tags
+                  .map(t => (t && t.label ? String(t.label).trim() : ''))
+                  .filter(Boolean);
+              }
+            }
+          } catch (err) {
+            semanticTags = [];
+          }
+        }
+
         query.where(builder => {
           builder.where('photo_index.path', 'like', `%${search}%`).orWhere('photo_index.filename', 'like', `%${search}%`).orWhere('photo_index.camera', 'like', `%${search}%`);
           if (aiOcrEnable === '1') {
@@ -245,15 +272,64 @@ class PhotoTimeLineService {
               'photo_index.file_hash IN (SELECT file_hash FROM photo_places2filehash WHERE place_name LIKE ? OR alt_place_name LIKE ?)',
               [`%${search}%`, `%${search}%`]
             );
+            // ⭐ 2026-10-16 语义标签精确命中：主场景 / 次场景 / alt_labels(JSON 多标签) 任一命中即算
+            if (semanticTags.length > 0) {
+              const inList = semanticTags.map(() => '?').join(',');
+              const likeList = semanticTags.map(() => 'alt_labels LIKE ?').join(' OR ');
+              builder.orWhereRaw(
+                `photo_index.file_hash IN (SELECT file_hash FROM photo_places2filehash WHERE place_name IN (${inList}) OR alt_place_name IN (${inList}) OR ${likeList})`,
+                [
+                  ...semanticTags,
+                  ...semanticTags,
+                  ...semanticTags.map(t => `%"label":"${t}"%`),
+                ]
+              );
+            }
           }
         });
+
+        // ⭐ 2026-10-16 排序优化（B）：多标签命中排前（「又夕又沙」先出），再按时间倒序。
+        // 复用同一个标签集合算「本图命中了几个查询标签」，语义命中天然排在仅字面命中的前面。
+        if (semanticTags.length > 0) {
+          const qs = semanticTags.map(() => '?').join(',');
+          searchRankExpr = knex.raw(
+            `COALESCE((SELECT (CASE WHEN p2.place_name IN (${qs}) THEN 1 ELSE 0 END) + (CASE WHEN p2.alt_place_name IN (${qs}) THEN 1 ELSE 0 END) FROM photo_places2filehash p2 WHERE p2.file_hash = photo_index.file_hash), 0)`,
+            [...semanticTags, ...semanticTags]
+          );
+        }
       }
     }
 
     if (params.geohash) {
-      const geohashPrefix = String(params.geohash).trim();
-      if (geohashPrefix) {
-        query.where('photo_index.geohash', 'like', `${geohashPrefix}%`);
+      const rawGeohash = String(params.geohash).trim();
+      // ⭐ 2026-10-16 修复「足迹点开数量暴增」：
+      // 足迹地图点开一个 marker 时，客户端传的是「该 marker 聚合到的**全部 geohash 格**」，
+      // 用逗号分隔（各格同长度 ⇒ 同精度）。必须按格集合做**精确**匹配。
+      // 旧写法把它当成一个前缀去做 LIKE，例如把 'ws0edu' 这一格当成 'ws0ed%' 去捞，
+      // 范围一下子放大 32 倍 ⇒ 地图上 21 张、点进去几百张。
+      if (rawGeohash.indexOf(',') > -1) {
+        const cells = [];
+        const seenCells = new Set();
+        for (const piece of rawGeohash.split(',')) {
+          const c = piece.trim();
+          // geohash 字符集：0-9 b c d e f g h j k m n p q r s t u v w x y z（不含 a i l o）
+          if (!c || !/^[0-9bcdefghjkmnpqrstuvwxyz]+$/.test(c)) continue;
+          if (seenCells.has(c)) continue;
+          seenCells.add(c);
+          cells.push(c);
+          // SQLite 变量上限 999，留足余量；一屏 marker 的格数远小于此
+          if (cells.length >= 500) break;
+        }
+        // 所有格必须是同一精度，否则列对不上，直接不匹配（返回空列表好过返回错范围）
+        const precision = cells.length > 0 ? cells[0].length : 0;
+        const uniform = cells.length > 0 && cells.every(c => c.length === precision);
+        if (uniform && precision >= 2 && precision <= 7) {
+          query.whereIn(`photo_index.geohash${precision}`, cells);
+        } else {
+          query.whereRaw('1 = 0');
+        }
+      } else if (rawGeohash) {
+        query.where('photo_index.geohash', 'like', `${rawGeohash}%`);
       }
     }
 
@@ -302,7 +378,8 @@ class PhotoTimeLineService {
       smartAlbumFilterUtil.applySmartAlbumFilter(query, smartAlbum.type, filterContent, 'photo_index');
     }
 
-    return { query };
+    // ⭐ 2026-10-16：searchRankExpr 供列表排序用（语义命中数），其余调用方只取 query 不受影响
+    return { query, searchRankExpr };
   }
 
   async getTimelineYearList(params, user) {
@@ -401,7 +478,7 @@ class PhotoTimeLineService {
 
     const knex = this.getKnex();
     const uid = user.id;
-    const { query } = await this.buildBaseQuery(params, validPaths, user);
+    const { query, searchRankExpr } = await this.buildBaseQuery(params, validPaths, user);
 
     const startTime = this.parseTimeInput(params.startTime);
     const endTime = this.parseTimeInput(params.endTime);
@@ -415,6 +492,10 @@ class PhotoTimeLineService {
 
     // 排序：普通列表按拍摄时间排，收藏列表按收藏时间排（与影音库一致）
     const sortOrder = params.sort === 'asc' ? 'asc' : 'desc';
+    // ⭐ 2026-10-16 语义搜索排序：命中查询标签数多的照片排前面（必须加在时间排序之前）
+    if (searchRankExpr) {
+      query.orderByRaw(`${searchRankExpr.toQuery()} DESC`);
+    }
     if (params.list_type === 'favorite') {
       // 收藏列表：优先按收藏时间排序，其次按拍摄时间作为辅助排序
       query.orderBy('photo_favorite.create_time', sortOrder).orderBy('photo_index.original_time', sortOrder);

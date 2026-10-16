@@ -13,6 +13,9 @@ class SingletonWorkerManager {
   constructor() {
     this.workers = new Map(); // 存储所有单例worker
     this.workerConfigs = new Map(); // worker配置信息
+    // ⭐ 2026-10-16：关服务期间置 true。worker 被 SIGKILL 时会触发 onError，
+    // 各 worker 的「按需重启」必须先看这个标志，否则关服务后人脸/OCR worker 会被重新拉起。
+    this.shuttingDown = false;
     this.init();
   }
 
@@ -307,6 +310,7 @@ class SingletonWorkerManager {
    * @returns {Promise} 所有worker关闭完成
    */
   async gracefulShutdown() {
+    this.shuttingDown = true;
     Logger.info('📡 Shutting down all singleton workers...');
 
     const stopPromises = [];

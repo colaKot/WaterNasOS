@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>风格 C · 渐变光晕 | WaterNasOS</title>
+<style>
+  :root{
+    --bg:#fbfbfd; --ink:#111114; --ink-2:#4b4b57; --muted:#8b8b99;
+    --line:rgba(17,17,20,.08); --line-2:rgba(17,17,20,.14);
+    --v:#7c5cff; --p:#ff5cae; --c:#33ccff; --g:#2ee6a8; --wrap:1120px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink-2);font-size:16px;line-height:1.72;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:var(--ink);text-decoration:none}
+  .wrap{width:100%;max-width:var(--wrap);margin:0 auto;padding:0 28px}
+
+  header{position:sticky;top:0;z-index:20;background:rgba(251,251,253,.72);backdrop-filter:blur(16px) saturate(160%);border-bottom:1px solid var(--line)}
+  header .wrap{display:flex;align-items:center;justify-content:space-between;min-height:66px}
+  .brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:600;font-size:15.5px}
+  .brand i{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--v),var(--p) 55%,var(--c));display:grid;place-items:center;font-style:normal;font-size:13px;font-weight:700;color:#fff;box-shadow:0 4px 14px rgba(124,92,255,.4)}
+  nav{display:flex;gap:26px;font-size:14px}
+  nav a{color:var(--ink-2)} nav a:hover{color:var(--ink)}
+
+  .aurora{position:absolute;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+  .aurora span{position:absolute;border-radius:50%;filter:blur(105px);opacity:.42}
+  .aurora .s1{width:520px;height:520px;background:var(--v);top:-180px;left:6%}
+  .aurora .s2{width:460px;height:460px;background:var(--p);top:-140px;right:8%}
+  .aurora .s3{width:420px;height:420px;background:var(--c);top:40px;left:44%}
+  .aurora .s4{width:380px;height:380px;background:var(--g);top:120px;right:26%;opacity:.35}
+
+  .hero{position:relative;padding:118px 0 96px;text-align:center;overflow:hidden}
+  .hero .wrap{position:relative;z-index:1}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);background:rgba(255,255,255,.7);border:1px solid var(--line-2);border-radius:100px;padding:6px 16px;margin-bottom:26px;backdrop-filter:blur(8px)}
+  .eyebrow b{width:7px;height:7px;border-radius:50%;background:linear-gradient(135deg,var(--v),var(--p))}
+  h1{font-size:66px;line-height:1.12;letter-spacing:-.012em;font-weight:700;color:var(--ink);margin:0 0 26px}
+  h1 em{font-style:normal;background:linear-gradient(100deg,var(--v),var(--p) 45%,var(--c));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lead{font-size:18.5px;color:var(--ink-2);max-width:620px;margin:0 auto 40px}
+  .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-block;padding:13px 28px;border-radius:100px;font-size:15px;font-weight:500;transition:.2s;position:relative}
+  .btn--grad{color:#fff;background:linear-gradient(100deg,var(--v),var(--p));box-shadow:0 10px 30px rgba(124,92,255,.35)}
+  .btn--grad:hover{transform:translateY(-1px);box-shadow:0 14px 38px rgba(124,92,255,.45)}
+  .btn--glass{background:rgba(255,255,255,.72);border:1px solid var(--line-2);color:var(--ink);backdrop-filter:blur(8px)}
+  .btn--glass:hover{border-color:var(--ink);background:#fff}
+  .facts{display:flex;justify-content:center;gap:14px;margin-top:64px;flex-wrap:wrap}
+  .facts li{list-style:none;background:rgba(255,255,255,.66);border:1px solid var(--line);border-radius:16px;padding:18px 30px;backdrop-filter:blur(10px);min-width:150px}
+  .facts b{display:block;font-size:28px;font-weight:700;color:var(--ink);letter-spacing:-.03em;background:linear-gradient(100deg,var(--v),var(--c));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .facts span{font-size:13px;color:var(--muted)}
+
+  section{padding:88px 0;position:relative}
+  .head{text-align:center;max-width:640px;margin:0 auto 56px}
+  .head .k{font-size:12.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;background:linear-gradient(100deg,var(--v),var(--p));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .head h2{color:var(--ink);font-size:38px;line-height:1.24;letter-spacing:-.012em;font-weight:700;margin:14px 0 14px}
+  .head p{margin:0;font-size:16.5px;color:var(--ink-2)}
+
+  .grid{display:grid;gap:20px;grid-template-columns:repeat(3,1fr)}
+  .card{background:rgba(255,255,255,.72);border:1px solid var(--line);border-radius:22px;padding:30px;backdrop-filter:blur(14px);transition:.25s;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0;opacity:0;transition:.25s;background:linear-gradient(140deg,rgba(124,92,255,.06),rgba(255,92,174,.05))}
+  .card:hover{transform:translateY(-4px);border-color:transparent;box-shadow:0 20px 48px rgba(124,92,255,.16)}
+  .card:hover::before{opacity:1}
+  .card>*{position:relative}
+  .card .ico{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:17px;color:#fff;margin-bottom:20px}
+  .i1{background:linear-gradient(140deg,var(--v),#a78bfa)}
+  .i2{background:linear-gradient(140deg,var(--p),#ff9a8b)}
+  .i3{background:linear-gradient(140deg,var(--c),#60a5fa)}
+  .i4{background:linear-gradient(140deg,var(--g),#34d399)}
+  .i5{background:linear-gradient(140deg,#fbbf24,#fb923c)}
+  .i6{background:linear-gradient(140deg,#a78bfa,var(--c))}
+  .card h3{color:var(--ink);font-size:18px;font-weight:650;letter-spacing:-.02em;margin:0 0 10px}
+  .card p{margin:0;font-size:14.8px}
+
+  .dl{background:rgba(255,255,255,.72);border:1px solid var(--line);border-radius:22px;overflow:hidden;backdrop-filter:blur(14px)}
+  .dl-row{display:grid;grid-template-columns:1.4fr 2fr .7fr 84px;gap:16px;align-items:center;padding:18px 26px;border-bottom:1px solid var(--line);font-size:14.5px}
+  .dl-row:last-child{border-bottom:0}
+  .dl-row:hover{background:linear-gradient(100deg,rgba(124,92,255,.05),rgba(51,204,255,.05))}
+  .dl-row em{font-style:normal;color:var(--muted);font-size:13px}
+  .dl-row .fn{font-family:ui-monospace,Consolas,monospace;font-size:12.8px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dl-row a{font-weight:600;font-size:14px;background:linear-gradient(100deg,var(--v),var(--p));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+  footer{border-top:1px solid var(--line);padding:56px 0 40px;font-size:14px;background:rgba(255,255,255,.5)}
+  .fcols{display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:40px;margin-bottom:44px}
+  footer h4{color:var(--ink);font-size:13.5px;font-weight:600;margin:0 0 14px}
+  footer ul{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+  footer a{color:var(--ink-2)} footer a:hover{color:var(--v)}
+  footer p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.8}
+  .fbottom{display:flex;justify-content:space-between;gap:16px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;flex-wrap:wrap}
+  @media(max-width:900px){
+    h1{font-size:40px} .grid{grid-template-columns:1fr} .fcols{grid-template-columns:1fr}
+    .dl-row{grid-template-columns:1fr auto} .dl-row .fn,.dl-row em{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="#"><i>W</i>WaterNasOS</a>
+    <nav><a href="#">首页</a><a href="#">Windows NAS</a><a href="#">功能特性</a><a href="#">全端覆盖</a><a href="#">下载</a><a href="#">GitHub</a></nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="aurora"><span class="s1"></span><span class="s2"></span><span class="s3"></span><span class="s4"></span></div>
+  <div class="wrap">
+    <span class="eyebrow"><b></b>开源 · GPL-3.0 / AGPL-3.0 · 基于 NasCabOS 二次开发</span>
+    <h1>把数据<em>搬回自己家</em></h1>
+    <p class="lead">一台跑在 Windows 上的自托管 NAS 服务端，手机、电脑、电视与网页全打通。照片、影音、音乐、图书、文件全都跑在你自己的机器上。</p>
+    <div class="actions">
+      <a class="btn btn--grad" href="#">下载 v1.1.0</a>
+      <a class="btn btn--glass" href="#">GitHub 仓库</a>
+    </div>
+    <ul class="facts">
+      <li><b>22</b><span>个内置应用</span></li>
+      <li><b>4 类</b><span>终端覆盖</span></li>
+      <li><b>GPL-3.0 / AGPL-3.0</b><span>开源许可</span></li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="head">
+      <div class="k">核心能力</div>
+      <h2>一台自己的 NAS，能做什么</h2>
+      <p>每一项功能都是独立的 App：有自己的图标、独立页面栈和独立的服务端 API。</p>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="ico i1">照</div><h3>照片管理</h3><p>时间线、自建相册、智能相册、照片合集；人脸与场景识别、相似照片、GPS 补录、足迹地图、那年今日、回收站。按用户隔离。</p></div>
+      <div class="card"><div class="ico i2">影</div><h3>影视库</h3><p>电影 / 电视剧 / 图片 / 混合媒体多库管理；自然序排序、瀑布流与网格视图；H.264 / HEVC / AV1 转码、响度归一化。</p></div>
+      <div class="card"><div class="ico i3">音</div><h3>音乐与图书馆</h3><p>歌曲、专辑、歌手、播放列表、合集与收藏，内置全屏播放器；EPUB / MOBI / AZW3 / PDF / TXT 电子书即点即读。</p></div>
+      <div class="card"><div class="ico i4">件</div><h3>文件与分享</h3><p>文件浏览、上传下载、AES 加密空间；WebDAV / FTP / SFTP 分享磁盘，远程挂载网络磁盘，查看系统监控。</p></div>
+      <div class="card"><div class="ico i5">同</div><h3>多端同步</h3><p>Windows 同步端与主端共用同一引擎：双向 / 仅下载 / 仅上传与过滤规则；手机相册自动备份，内容 MD5 去重。</p></div>
+      <div class="card"><div class="ico i6">权</div><h3>进阶与权限</h3><p>Transmission BT 下载、Docker 管理、远程终端；子账号权限体系：应用级白名单 + 路径级细粒度权限。</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="head"><div class="k">下载</div><h2>WaterNasOS v1.1.0</h2><p>首个正式版本。安装包托管在 GitHub Releases，点击包名直达下载页。</p></div>
+    <div class="dl">
+      <div class="dl-row"><span>Windows 服务端 x64</span><span class="fn">WaterNasOS-Server-win-x64-20261015.zip</span><em>1.05 GB</em><a href="#">下载</a></div>
+      <div class="dl-row"><span>Windows 桌面端 x64</span><span class="fn">WaterNasClient-win-x64-20261015.zip</span><em>110.9 MB</em><a href="#">下载</a></div>
+      <div class="dl-row"><span>Windows 同步端 x64</span><span class="fn">WaterNasSync-win-x64-20261015.zip</span><em>38.2 MB</em><a href="#">下载</a></div>
+      <div class="dl-row"><span>Android 主端 arm64</span><span class="fn">WaterNasOS-Android-arm64-1.0.0.apk</span><em>87.6 MB</em><a href="#">下载</a></div>
+      <div class="dl-row"><span>Android 相册端 arm64</span><span class="fn">WaterNasOS-Photo-Android-arm64-1.0.0.apk</span><em>95.7 MB</em><a href="#">下载</a></div>
+      <div class="dl-row"><span>Android 音乐端 arm64</span><span class="fn">WaterNasOS-Music-Android-arm64-1.0.0.apk</span><em>101.8 MB</em><a href="#">下载</a></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fcols">
+      <div><h4>WaterNasOS</h4><p>开源跨平台 NAS 系统，照片、影音、音乐、图书、文件一套服务端多端共用。由广州番禺粤饮越泳软件开发工作室维护。</p></div>
+      <div><h4>本站导航</h4><ul><li><a href="#">首页</a></li><li><a href="#">Windows NAS</a></li><li><a href="#">功能特性</a></li><li><a href="#">下载</a></li></ul></div>
+      <div><h4>相关链接</h4><ul><li><a href="#">GitHub 仓库</a></li><li><a href="#">Releases 下载</a></li><li><a href="#">工作室官网</a></li></ul></div>
+    </div>
+    <div class="fbottom"><span>广州番禺粤饮越泳软件开发工作室 · 粤ICP备18009785号</span><span>© 2026 colaKot · GPL-3.0 / AGPL-3.0</span></div>
+  </div>
+</footer>
+
+</body>
+</html>

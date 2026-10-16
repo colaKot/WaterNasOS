@@ -43,6 +43,6 @@ for %%F in ("%OUT%\win-unpacked\*.exe") do (
   rem Task Manager (processes page) shows the exe FileDescription; without these
   rem strings it stays "Electron". PRODUCT=package.json build.productName.
   echo [ver] set-version-string %%~nxF >> "%LOG%"
-  "%RCEDIT%" "%%~fF" --set-version-string CompanyName "NasCab" --set-version-string FileDescription "WaterNasOSServer" --set-version-string ProductName "WaterNasOSServer" --set-version-string InternalName "WaterNasOSServer" --set-version-string OriginalFilename "%%~nxF" --set-version-string LegalCopyright "Copyright (C) NasCab. GPL-3.0." >> "%LOG%" 2>&1
+  "%RCEDIT%" "%%~fF" --set-version-string CompanyName "NasCab" --set-version-string FileDescription "WaterNasOSServer" --set-version-string ProductName "WaterNasOSServer" --set-version-string InternalName "WaterNasOSServer" --set-version-string OriginalFilename "%%~nxF" --set-version-string LegalCopyright "Copyright (C) NasCab. GPL-3.0 / AGPL-3.0." >> "%LOG%" 2>&1
 )
 goto :eof

@@ -186,7 +186,9 @@ class PhotoPropertiesController {
       if (hasGps) {
         const hash = (indexRow && indexRow.geohash ? String(indexRow.geohash) : '') || geohash.encode(gpsFinal.latitude, gpsFinal.longitude, 8);
         if (hash) {
-          geo = await photoMapService.getLocationStr({ dbGeo: req.dbGeo, locale }, hash).catch(() => '');
+          geo = await photoMapService
+            .getLocationStr({ dbGeo: req.dbGeo, locale }, hash, gpsFinal.latitude, gpsFinal.longitude)
+            .catch(() => '');
         }
       }
 

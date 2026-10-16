@@ -119,6 +119,10 @@ router.post('/face/photo/remove', authenticateJWT, faceController.removePhotoFro
 router.post('/face/photo/move', authenticateJWT, faceController.movePhotoToFace);
 // 只重建「调用者可见范围内」照片的人脸（普通用户可用）；/face/reset 全库重建仍限管理员
 router.post('/face/rescan', authenticateJWT, faceController.rescanFaces);
+// ⭐ 2026-10-16 存量补扫：只把「已标记完成但无任何脸行」的照片重新入队（不清已有分组）
+router.post('/face/rescan-missing', authenticateJWT, faceController.rescanMissingFaces);
+// ⭐ 2026-10-16 全库「合并相似人物」：一次性归并分裂的碎片组（限超管，支持 dry_run）
+router.post('/face/merge-similar', authenticateJWT, requireSuperAdmin, faceController.mergeSimilarFaces);
 // 清理历史误检人脸（全局维护，限管理员）
 router.post('/face/purge', authenticateJWT, requireSuperAdmin, faceController.purgeSuspiciousFaces);
 router.get('/face/image', authenticateJWT, faceController.faceImageGet);

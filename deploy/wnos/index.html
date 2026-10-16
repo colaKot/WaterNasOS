@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WaterNasOS - 开源 NAS 系统 | Windows 私有云存储 · 照片影音文件管理</title>
+<meta name="description" content="WaterNasOS 是一款开源跨平台 NAS 系统（基于 NasCabOS，GPL-3.0 / AGPL-3.0 双许可）：Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，覆盖 Windows、Android、TV 与网页端，数据全部保存在自己机器上，v1.1.0 已发布。">
+<meta name="keywords" content="WaterNasOS,NAS系统,开源NAS,Windows NAS,私有云存储,家庭NAS,照片管理,影视库,音乐库,文件同步,NasCabOS,GPL-3.0,AGPL-3.0">
+<meta name="author" content="colaKot">
+<link rel="canonical" href="https://wnos.gexuan.net/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="WaterNasOS - 开源跨平台 NAS 系统">
+<meta property="og:description" content="Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在自己机器上。">
+<meta property="og:url" content="https://wnos.gexuan.net/">
+<meta property="og:site_name" content="WaterNasOS">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="WaterNasOS - 开源跨平台 NAS 系统">
+<meta name="twitter:description" content="Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在自己机器上。">
+<!-- 百度搜索资源平台验证：添加站点后把 code 填进来（ziyuan.baidu.com → 站点管理 → 验证） -->
+<meta name="baidu-site-verification" content="PLACEHOLDER-BAIDU-CODE">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "WaterNasOS",
+  "alternateName": ["WaterNasOS NAS 系统", "Windows NAS"],
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Windows, Android, Android TV, Apple TV, Web",
+  "description": "开源跨平台 NAS 系统：Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在本地。",
+  "softwareVersion": "1.1.0",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "url": "https://wnos.gexuan.net/",
+  "downloadUrl": "https://github.com/colaKot/WaterNasOS/releases",
+  "sameAs": ["https://github.com/colaKot/WaterNasOS"],
+  "author": {
+    "@type": "Organization",
+    "name": "广州番禺粤饮越泳软件开发工作室"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "CNY"
+  }
+}
+</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <span class="brand__mark">W</span>
+      <span class="brand__text">
+        <span class="brand__name">WaterNasOS</span>
+        <span class="brand__sub">Open-source NAS</span>
+      </span>
+    </a>
+    <nav class="site-nav">
+      <a class="active" href="index.html">首页</a>
+      <a href="#server">Windows NAS</a>
+      <a href="#features">功能特性</a>
+      <a href="#clients">全端覆盖</a>
+      <a href="#download">下载</a>
+      <a href="#github">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <span class="hero__eyebrow"><b></b>开源 · GPL-3.0 / AGPL-3.0 · 基于 NasCabOS 二次开发</span>
+    <h1>把数据搬回自己家</h1>
+    <p class="hero__lead">
+      一台跑在 Windows 上的自托管 NAS 服务端，手机、电脑、电视与网页全打通。照片、影音、音乐、图书、文件，
+      全都跑在你自己的机器上——不依赖任何公有云，数据始终属于你自己。
+    </p>
+    <div class="hero__actions">
+      <a class="btn btn--primary" href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载 v1.1.0</a>
+      <a class="btn btn--ghost" href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
+    </div>
+    <ul class="hero__facts">
+      <li><b>22</b><span>个内置应用</span></li>
+      <li><b>4 类</b><span>终端覆盖</span></li>
+      <li><b>GPL-3.0 / AGPL-3.0</b><span>开源许可</span></li>
+    </ul>
+  </div>
+</section>
+
+<main>
+
+  <section class="section section--alt" id="server">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">Windows NAS · 服务端</span>
+        <h2>一台 Windows 电脑，就是你的 NAS</h2>
+        <p>WaterNasOS 属于 Windows NAS 范畴：服务端常驻运行在 Windows 上，不用刷机、不用折腾群晖，一台普通电脑就能变成全家共用的私有云存储。</p>
+      </div>
+
+      <div class="server-split">
+        <div class="server-split__text">
+          <h3>它是什么</h3>
+          <p>服务端（electron_server）是整套系统的心脏，基于 Electron + Express 实现，常驻 Windows x64 运行，
+             负责照片与影视索引、ffmpeg 转码、AI 识别、同步通道和全部 API。桌面端、安卓、TV 与网页端，连的都是同一个它。</p>
+          <h3>数据只在你自己家</h3>
+          <p>所有数据落在本地磁盘与 SQLite，不经过任何公有云；多用户账号、相册按用户隔离、AES 加密空间全部在本地完成。
+             对外拔掉网线，内网照用不误。</p>
+          <div class="tag-row">
+            <span class="tag">Windows x64</span>
+            <span class="tag">Electron + Express</span>
+            <span class="tag">SQLite 本地库</span>
+            <span class="tag">网页端内置</span>
+            <span class="tag">多用户隔离</span>
+          </div>
+        </div>
+        <div class="spec-card">
+          <div class="spec-card__title">服务端速览</div>
+          <div class="spec-row"><span>运行环境</span><b>Windows 10 / 11 x64</b></div>
+          <div class="spec-row"><span>技术栈</span><b>Electron + Express + SQLite</b></div>
+          <div class="spec-row"><span>数据位置</span><b>本地磁盘，不上公有云</b></div>
+          <div class="spec-row"><span>网页端</span><b>服务端内置，浏览器直连</b></div>
+          <div class="spec-row"><span>视频能力</span><b>ffmpeg 转码 · 多档画质</b></div>
+          <div class="spec-row"><span>识别能力</span><b>onnx 模型 · 人脸 / 场景 / OCR</b></div>
+        </div>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <h3>下载服务端</h3>
+          <p>GitHub Releases 获取 Windows x64 服务端包（v1.1.0），第三方依赖与识别模型已内置，解压即用。</p>
+        </div>
+        <div class="step">
+          <h3>一键启动</h3>
+          <p>双击运行、常驻托盘，局域网内的其他设备即可发现并连接这台 Windows NAS。</p>
+        </div>
+        <div class="step">
+          <h3>各端连接</h3>
+          <p>桌面端、安卓、TV 与网页端填写同一个服务端地址，照片影音实时同步、各看各的。</p>
+        </div>
+        <div class="step">
+          <h3>建库开始用</h3>
+          <p>添加照片与影视目录、创建子账号分配权限，一套 Windows NAS 就正式服役了。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">核心能力</span>
+        <h2>一台自己的 NAS，能做什么</h2>
+        <p>每一项功能都是独立的 App：有自己的图标、独立页面栈和独立的服务端 API，可在设置中隐藏或重新排序。</p>
+      </div>
+
+      <div class="bento">
+        <article class="b b--wide b--tall b--dark">
+          <span class="tag">照片管理</span>
+          <div class="ph-grid" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <h3>按用户隔离的照片库</h3>
+          <p>时间线、自建相册、智能相册、照片合集；人脸与场景识别、相似照片、GPS 补录、足迹地图、那年今日、回收站。
+             每个人只看自己的照片。</p>
+        </article>
+
+        <article class="b b--dark">
+          <span class="tag">服务端</span>
+          <div class="term-mini">
+            <div>$ waternas serve --port 6789</div>
+            <div class="g">✓ 服务端就绪 · v1.1.0</div>
+            <div class="g">✓ 照片索引 21,847 项</div>
+            <div class="g">✓ 影视库 3 个 · 转码就绪</div>
+            <div class="g">✓ 同步通道 2 台设备在线</div>
+          </div>
+        </article>
+
+        <article class="b">
+          <span class="tag">影视库</span>
+          <h3>H.264 / HEVC / AV1</h3>
+          <p>电影 / 电视剧 / 图片 / 混合媒体多库管理；自然序排序、瀑布流与网格视图；多档画质转码、音频响度归一化、默认字幕自动匹配。</p>
+        </article>
+
+        <article class="b b--accent">
+          <span class="tag">全端</span>
+          <div class="stat">4 类<small>终端覆盖</small></div>
+          <p>Windows 服务端 / 桌面端<br>Android 三端 · TV · 网页端</p>
+        </article>
+
+        <article class="b">
+          <span class="tag">音乐与图书</span>
+          <h3>播放器 + 阅读器</h3>
+          <p>歌曲、专辑、歌手、播放列表与收藏，内置全屏播放器（动态歌词、后台播放）；EPUB / MOBI / AZW3 / PDF / TXT 即点即读。</p>
+        </article>
+
+        <article class="b b--wide">
+          <span class="tag">文件与分享</span>
+          <h3>把磁盘分享出去</h3>
+          <p>文件浏览、上传下载、加密空间（AES）；通过 WebDAV / FTP / SFTP 等协议把磁盘分享出去，远程挂载网络磁盘，随时查看系统监控与后台任务。</p>
+        </article>
+
+        <article class="b">
+          <span class="tag">多端同步</span>
+          <h3>三种同步方向</h3>
+          <p>Windows 独立同步客户端与主客户端共用同一套引擎；手机相册自动备份，按「大小 + 内容 MD5」去重。</p>
+        </article>
+
+        <article class="b">
+          <span class="tag">进阶与权限</span>
+          <h3>子账号细粒度权限</h3>
+          <p>Transmission BT 下载、Docker 管理、远程终端；子账号应用级白名单 + 路径级细粒度权限。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt" id="clients">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">全端覆盖</span>
+        <h2>同一套服务端，四种终端</h2>
+        <p>手机、电脑、电视与网页端共用同一套服务端与数据，各端专注自己的场景。</p>
+      </div>
+
+      <div class="tiles">
+        <div class="tile">
+          <div class="tile__ico">服</div>
+          <h3>Windows 服务端</h3>
+          <p>常驻运行的服务核心，提供全部 API、任务队列与存储管理，是整套系统的心脏。</p>
+        </div>
+        <div class="tile">
+          <div class="tile__ico">桌</div>
+          <h3>Windows 桌面端 / 同步端</h3>
+          <p>WaterNasClient 主客户端 + WaterNasSync 独立同步端，一个管全家桶应用，一个专心同步目录。</p>
+        </div>
+        <div class="tile">
+          <div class="tile__ico">端</div>
+          <h3>Android 三端</h3>
+          <p>主端、相册端、音乐端三个 APK 各自独立，图标与启动模式分离，按需安装。</p>
+        </div>
+        <div class="tile">
+          <div class="tile__ico">视</div>
+          <h3>TV 与网页端</h3>
+          <p>Android TV / Apple TV 大屏播放；浏览器直接访问网页端，零安装即可管理。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="download">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">下载</span>
+        <h2>WaterNasOS v1.1.0</h2>
+        <p>v1.1.0：足迹地图聚合、地名反查与人脸识别修复。安装包托管在 GitHub Releases，点击包名直达下载页。</p>
+      </div>
+
+      <div class="dl-table">
+        <div class="dl-table__head">
+          <span>终端</span><span>安装包</span><span>大小</span><span></span>
+        </div>
+        <div class="dl-row">
+          <span>Windows 服务端 x64</span>
+          <span>WaterNasOS-Server-win-x64-20261015.zip</span>
+          <span>1.05 GB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Windows 桌面端 x64</span>
+          <span>WaterNasClient-win-x64-20261015.zip</span>
+          <span>110.9 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Windows 同步端 x64</span>
+          <span>WaterNasSync-win-x64-20261015.zip</span>
+          <span>38.2 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Android 主端 arm64</span>
+          <span>WaterNasOS-Android-arm64-1.0.0-20261015-2211.apk</span>
+          <span>87.6 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Android 相册端 arm64</span>
+          <span>WaterNasOS-Photo-Android-arm64-1.0.0-20261015-2211.apk</span>
+          <span>95.7 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Android 音乐端 arm64</span>
+          <span>WaterNasOS-Music-Android-arm64-1.0.0-20261015-2230.apk</span>
+          <span>101.8 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+      </div>
+
+      <div class="note">
+        安装包统一发布在 GitHub Releases：<a href="https://github.com/colaKot/WaterNasOS/releases" target="_blank" rel="noopener noreferrer">github.com/colaKot/WaterNasOS/releases</a>。
+        历史版本、更新日志与校验信息都在该页面；国内网络访问 GitHub 较慢时，可复制链接使用下载工具或多线程加速。
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt" id="github">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">开源</span>
+        <h2>代码与 issue，都在 GitHub</h2>
+        <p>WaterNasOS 以 GNU GPL v3.0 / AGPL v3.0 分层授权发布，欢迎 Star、提交 Issue 与 PR。</p>
+      </div>
+
+      <div class="repo-card">
+        <div class="repo-card__head">
+          <svg viewBox="0 0 16 16" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <a href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">colaKot / WaterNasOS</a>
+        </div>
+        <p>跨平台 NAS 软件：照片、影音、音乐、图书、文件一套服务端多端共用，支持文件分享、Transmission 下载、Docker 管理、远程终端与多端目录同步。</p>
+        <div class="repo-card__links">
+          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">仓库主页</a>
+          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">许可证</a>
+        </div>
+      </div>
+
+      <div class="note">
+        WaterNasOS 基于 <a href="https://github.com/nascab/NasCabOS" target="_blank" rel="noopener noreferrer">NasCabOS</a> 二次开发：
+        上游原始版权归 Beijing Yunpiao Piao Technology Co., Ltd. 所有（© 2025），
+        本仓库新增与修改部分的版权归 colaKot 所有（© 2026），整体以 GPL-3.0 与 AGPL-3.0 分层授权发布（组合分发依据 GPL-3.0 §13）。
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-cols">
+      <div>
+        <div class="footer-brand">
+          <span class="footer-brand__mark">W</span>
+          <span class="footer-brand__name">WaterNasOS</span>
+        </div>
+        <p>
+          开源跨平台 NAS 系统，照片、影音、音乐、图书、文件一套服务端多端共用。
+          由广州番禺粤饮越泳软件开发工作室维护。
+        </p>
+      </div>
+      <div>
+        <h4>本站导航</h4>
+        <ul class="footer-links">
+          <li><a href="index.html">首页</a></li>
+          <li><a href="#server">Windows NAS</a></li>
+          <li><a href="#features">功能特性</a></li>
+          <li><a href="#download">下载</a></li>
+          <li><a href="#github">GitHub</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>相关链接</h4>
+        <ul class="footer-links">
+          <li><a href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">GitHub 仓库</a></li>
+          <li><a href="https://github.com/colaKot/WaterNasOS/releases" target="_blank" rel="noopener noreferrer">Releases 下载</a></li>
+          <li><a href="https://www.gexuan.net/" target="_blank" rel="noopener noreferrer">工作室官网</a></li>
+          <li><a href="mailto:cola23@126.com">cola23@126.com</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <div class="icp">
+        广州番禺粤饮越泳软件开发工作室
+        <span class="sep">|</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备18009785号</a>
+      </div>
+      <div class="copyright">© 2026 colaKot　·　GPL-3.0 / AGPL-3.0</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

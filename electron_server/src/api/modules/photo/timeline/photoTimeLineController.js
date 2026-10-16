@@ -118,7 +118,14 @@ class PhotoTimeLineController {
 
         let meta = dateToMeta.get(date);
         if (!meta) {
-          meta = { geohash5List: [], geohash5Set: new Set(), cameraList: [], cameraSet: new Set() };
+          meta = {
+            geohash5List: [],
+            geohash5Set: new Set(),
+            cameraList: [],
+            cameraSet: new Set(),
+            // ⭐ 每个 geohash5 记一个代表坐标，供地名反查按「离得最近」挑名字
+            geohash5Point: new Map(),
+          };
           dateToMeta.set(date, meta);
           dateOrder.push(date);
         }
@@ -129,6 +136,11 @@ class PhotoTimeLineController {
         if (geohash5 && meta.geohash5List.length < maxPerDate && !meta.geohash5Set.has(geohash5)) {
           meta.geohash5Set.add(geohash5);
           meta.geohash5List.push(geohash5);
+          const la = Number(row.latitude);
+          const lo = Number(row.longitude);
+          if (Number.isFinite(la) && Number.isFinite(lo) && !(la === 0 && lo === 0)) {
+            meta.geohash5Point.set(geohash5, { lat: la, lng: lo });
+          }
         }
 
         const camera = row && row.camera ? String(row.camera).trim() : '';
@@ -148,10 +160,25 @@ class PhotoTimeLineController {
         }
       }
 
+      // 同一个 geohash5 可能出现在多个日期里，收集一份「代表坐标」即可
+      const geohash5Point = new Map();
+      for (const [, meta] of dateToMeta.entries()) {
+        if (!meta || !meta.geohash5Point) continue;
+        for (const [h, p] of meta.geohash5Point.entries()) {
+          if (!geohash5Point.has(h)) geohash5Point.set(h, p);
+        }
+      }
+
       const geohash5ToGeo = new Map();
       await Promise.all(
         allGeohash5.map(async h => {
-          const geo = await photoMapService.getLocationStr({ dbGeo: req.dbGeo, locale }, h);
+          const p = geohash5Point.get(h);
+          const geo = await photoMapService.getLocationStr(
+            { dbGeo: req.dbGeo, locale },
+            h,
+            p ? p.lat : undefined,
+            p ? p.lng : undefined
+          );
           geohash5ToGeo.set(h, geo || '');
         })
       );

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+32
+version: 1.1.0+33
 environment:
   sdk: ^3.10.1
 
@@ -120,6 +120,10 @@ dependency_overrides:
     path: packages/audio_service
   dchs_motion_sensors:
     path: packages/dchs_motion_sensors
+  # image 4.11.0 的 png_decoder 用了 dart:io ZLibDecoder.decodeLazy，
+  # 当前 Flutter 3.47.5 / Dart 3.13.4 没有该方法 ⇒ Windows 端编译报错。
+  # 锁回 4.10.1（该版本此前可正常构建，pub 缓存中已存在）。
+  image: 4.10.1
 
 dev_dependencies:
   flutter_test:

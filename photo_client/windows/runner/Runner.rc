@@ -93,7 +93,7 @@ BEGIN
             VALUE "FileDescription", "WaterNasPhoto" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "NasCabPhoto" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 WaterNasOS. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 Beijing Yunpiao Piao Technology Co., Ltd.; Modifications (C) 2026 colaKot. GPL-3.0 / AGPL-3.0." "\0"
             VALUE "OriginalFilename", "NasCabPhoto.exe" "\0"
             VALUE "ProductName", "WaterNasPhoto" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

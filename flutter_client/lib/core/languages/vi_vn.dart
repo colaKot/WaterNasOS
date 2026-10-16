@@ -675,7 +675,7 @@ class ViVn extends Translations {
       'app_mounts': 'Gắn kết từ xa',
       'app_image_view': 'Duyệt ảnh',
       'app_monitor': 'Giám sát hệ thống',
-      'app_process': 'Tiến trình',
+      'app_process': 'Tiến trình tác vụ',
       'process.empty': 'Không có tiến trình đang chạy',
       'process.name': 'Tên',
       'process.pid': 'ID tiến trình',
@@ -2072,7 +2072,7 @@ class ViVn extends Translations {
       'file_operation': 'Thao tác tệp',
       'file_operation_running_title': 'Đang thao tác tệp',
       'file_operation_task_running_hint':
-          "Sau khi nhấn \"Chạy nền\", bạn có thể xem tiến trình trong Trung tâm tác vụ → Thao tác tệp.",
+          "Sau khi nhấn \"Chạy nền\", bạn có thể xem tiến trình trong Trung tâm tải xuống → Thao tác tệp.",
       'run_in_background': 'Chạy nền',
       'processing': 'Đang xử lý',
       'waiting': 'Đang chờ',
@@ -2580,7 +2580,7 @@ class ViVn extends Translations {
       'folder_action_confirm_move':
           'Xác nhận di chuyển @count mục đến @target ?',
       'folder_action_queued':
-          'Thao tác đã thêm vào hàng đợi thực thi, có thể xem tiến độ trong trung tâm nhiệm vụ',
+          'Thao tác đã thêm vào hàng đợi thực thi, có thể xem tiến độ trong trung tâm tải xuống',
       'folder_name_strategy': 'Chiến lược cùng tên',
       'file_allready_in_upload_queue': 'Tệp đã ở trong hàng đợi',
       'file_task_upload_added': 'Tệp đã thêm vào hàng đợi tải lên',
@@ -2637,7 +2637,7 @@ class ViVn extends Translations {
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
       'app_note': 'Ghi chú',
-      'app_task_center': 'Trung tâm nhiệm vụ',
+      'app_task_center': 'Trung tâm tải xuống',
       'message_center': 'Trung tâm tin nhắn',
       'app_backup': 'Sao lưu',
       'task_count': 'Tổng @count nhiệm vụ',
@@ -2714,7 +2714,7 @@ class ViVn extends Translations {
       'home_no_message': 'Không có tin nhắn mới',
       'monitor_click_to_view': 'Nhấp để xem chi tiết',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Trung tâm nhiệm vụ',
+      'home_task_center': 'Trung tâm tải xuống',
       'recycle_bin_empty': 'Thùng rác không có tệp',
 
       // 消息中心

@@ -18,6 +18,42 @@ function md5(text) {
     .digest('hex');
 }
 
+/** 两点球面距离（km）。用于地名反查时比较「谁离照片更近」。 */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/**
+ * geohash 前缀格的几何中心。
+ * ⚠️ ngeohash 的 decode() 返回的是标量对象 { latitude, longitude }，不是数组，
+ *    这里两种形态都兼容一下，避免上游换版本时静默返回空。
+ */
+function ghCenter(prefix) {
+  try {
+    const d = geohash.decode(prefix);
+    if (Array.isArray(d)) {
+      const lat = Number(d[0]);
+      const lng = Number(d[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+      return null;
+    }
+    if (d) {
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    }
+  } catch (_) {
+    // 前缀非法（长度不足 / 含非法字符）时直接放弃这一级
+  }
+  return null;
+}
+
 function normalizeTileServer(input) {
   const obj = input && typeof input === 'object' ? input : null;
   if (!obj) return null;
@@ -57,32 +93,6 @@ function pickEvenly(list, maxCount) {
     out.push(arr[idx]);
   }
   return out;
-}
-
-/**
- * 算 geohash 网格的中心坐标。
- *
- * 为什么需要：marker 之前直接落在「代表照片」的坐标上，而代表照片是该网格里
- * id 最大（最新）的那一张，位置是随机的。缩放换挡时同一个区域的 marker 会
- * 跳来跳去，看着像bug。落到格心之后位置稳定，视觉上才是真正的「聚合点」。
- *
- * 解不出来时返回空对象，由调用方回退到代表照片坐标。
- */
-function _cellCenter(cell) {
-  const raw = String(cell || '').trim();
-  if (!raw) return {};
-  try {
-    const box = geohash.decode(raw); // {latitude:[minLat,maxLat], longitude:[minLng,maxLng]}
-    const latArr = box && box.latitude;
-    const lngArr = box && box.longitude;
-    if (!Array.isArray(latArr) || !Array.isArray(lngArr)) return {};
-    const lat = (Number(latArr[0]) + Number(latArr[1])) / 2;
-    const lng = (Number(lngArr[0]) + Number(lngArr[1])) / 2;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return {};
-    return { cell_lat: lat, cell_lng: lng };
-  } catch (_) {
-    return {};
-  }
 }
 
 function thinPhotosByGrid(photos, bounds, maxCount) {
@@ -355,34 +365,36 @@ class PhotoMapService {
   }
 
   /**
-   * zoom → geohash 聚合精度。
+   * 可视范围 → geohash 聚合精度：取「格子数 <= cellTarget」的**最细**精度。
    *
-   * ⭐ 判据：**格心在屏幕上的间距 ≥ 1.7 × marker 直径**。
-   * marker 直径当前固定 85px（客户端 `photo_footprint_map_view.dart` 的 `_markerSizeForTier`）。
-   * 在赤道（最保守，纬度越高经度方向格子间距越大）：
-   *   km/px = 40075 / (256 * 2^z)
-   *   要求 cellLonKm / (km/px) ≥ 145px
-   * ⇒ pre-5（4.9km）要 z ≥ 11.9；pre-4（39km）要 z ≥ 8.9；pre-6（1.2km）要 z ≥ 14.2。
+   * ⭐⭐ 2026-10-16 改（用户拍板）：**聚合搬到客户端**做 —— 按世界像素距离把互相压盖的
+   * marker 合成一个，落点仍是某张真实照片的坐标。所以服务端**不需要**再保证
+   * 「格心间距 ≥ marker 直径」：那会让返回的点太粗，客户端反而没东西可聚、
+   * 角标上的张数也失真。现在服务端只负责一件事：这一屏最多给 cellTarget 个格子。
    *
-   * ⚠️⚠️ 2026-10-09 修（铁柱报「10.5 / 11 / 11.5 全叠在一起，到 12 才能看清」）：
-   * 原实现是 `z <= 14 → 5`，于是 8 < z < 12 这段也用 4.9km 的格子。
-   * 算出格心间距：z=10.5 → 49px、z=11 → 70px、z=11.5 → 99px，
-   * 而 marker 直径 85px ⇒ 前两档**必然重叠**（11.5 只剩 14px 缝，看着也像叠着）。
-   * z=12 时间距 139px 刚好够 ⇒ 所以他觉得 12 是能看清的。完全对得上。
-   * 现在把 8 < z < 12 降到 4（39km），间距变成 130~960px，彻底分开。
-   * ⛔ 改这张表请先按上面公式算间距，别凭感觉调。
+   * ⛔ 别改回「先 geohash.bboxes() 试算、超了就降精度」：视野大时 6 位会生成几十万个
+   *    格子（z=7 时 ≈ 84 万个），那个数组直接打爆内存。这里用解析式先算格子数，
+   *    bboxes() 只会在最终精度上调用一次。
+   *
+   * geohash 每字符 5 bit、经度占偶数位 ⇒ 精度 p 的经度位 = ceil(5p/2)、纬度位 = floor(5p/2)。
    */
-  getBoundsPhotoPrecision(zoom) {
-    const z = Number(zoom);
-    if (!Number.isFinite(z)) return 2;
-    if (z <= 4) return 2;
-    if (z <= 6) return 3;
-    if (z < 12) return 4;
-    if (z <= 14) return 5;
-    return 6;
+  getBoundsPhotoPrecision(minLa, minLo, maxLa, maxLo, cellTarget) {
+    const latSpan = Math.abs(Number(maxLa) - Number(minLa));
+    const lngSpan = Math.abs(Number(maxLo) - Number(minLo));
+    const target = parsePositiveInt(cellTarget, 600);
+    if (!Number.isFinite(latSpan) || !Number.isFinite(lngSpan)) return 2;
+    for (let p = 6; p > 2; p -= 1) {
+      const latBits = Math.floor((5 * p) / 2);
+      const lngBits = Math.ceil((5 * p) / 2);
+      const cellLat = 180 / Math.pow(2, latBits);
+      const cellLng = 360 / Math.pow(2, lngBits);
+      const cells = Math.ceil(latSpan / cellLat + 1) * Math.ceil(lngSpan / cellLng + 1);
+      if (cells <= target) return p;
+    }
+    return 2;
   }
 
-  async getLocationStr({ dbGeo, locale }, geohash) {
+  async getLocationStr({ dbGeo, locale }, geohash, lat, lng) {
     const rawHash = String(geohash || '').trim();
     if (!rawHash) return '';
     const hash8 = rawHash.length > 8 ? rawHash.slice(0, 8) : rawHash;
@@ -393,6 +405,22 @@ class PhotoMapService {
     } else if (locale) {
       lang = locale.toLowerCase();
     }
+
+    // ⭐ 2026-10-16 修复「地点对不上」：
+    // 旧实现每一级都是 `ORDER BY g.geonameid ASC LIMIT 1`，等于「谁录入得早就归谁」。
+    // geonames 里只有城市/村镇级点位，市区（如林和西，geohash5='ws0ed'）根本没有记录，
+    // 于是逐级回退到 geohash4='ws0e'（36km×19.5km）后，永远命中 geonameid 最小的
+    // 「鱼珠」——而鱼珠实际在 11km 外，最近的「五山」只有 2.9km。
+    // 现在改为：按「与查询点的真实距离」升序取最近的一条，并加最大距离闸门。
+    const qLat = Number(lat);
+    const qLng = Number(lng);
+    const hasPoint =
+      Number.isFinite(qLat) &&
+      Number.isFinite(qLng) &&
+      Math.abs(qLat) <= 90 &&
+      Math.abs(qLng) <= 180 &&
+      !(qLat === 0 && qLng === 0);
+
     const geoColumnMap = {
       8: 'geohash',
       7: 'geohash7',
@@ -401,33 +429,64 @@ class PhotoMapService {
       4: 'geohash4',
       3: 'geohash3',
     };
+    // 最近的地名点也超出这个距离 ⇒ 不采用（宁可显示通用的「位置」，也别显示 11km 外的错地名）
+    const MAX_DISTANCE_KM = 30;
+
     for (let len = Math.min(8, hash8.length); len >= 3; len -= 1) {
       const prefix = hash8.slice(0, len);
       const geoColumn = geoColumnMap[len] || geoColumnMap[3];
+
+      // 目标点：优先用调用方给的真实坐标；没给就用该前缀格的几何中心兜底
+      let tLat = qLat;
+      let tLng = qLng;
+      if (!hasPoint) {
+        const center = ghCenter(prefix);
+        if (!center) continue;
+        tLat = center.lat;
+        tLng = center.lng;
+      }
+
+      // 平方距离排序（本地尺度足够，不追求大圆精确）；经度按 cos²(lat) 折算成等长
+      const lngWeight = Math.cos((tLat * Math.PI) / 180) ** 2;
       const rows = await dbGeo
         .raw(
           `
           SELECT
             COALESCE(i_req.name, i_def.name) AS local_name,
-            COALESCE(i_en.name, i_def.name, i_req.name) AS en_name
+            COALESCE(i_en.name, i_def.name, i_req.name) AS en_name,
+            g.latitude AS latitude,
+            g.longitude AS longitude,
+            ((g.latitude - ?) * (g.latitude - ?) + (g.longitude - ?) * (g.longitude - ?) * ?) AS dist2
           FROM geonames g
           LEFT JOIN geoname_i18n i_req ON i_req.geonameid = g.geonameid AND i_req.lang = ?
           LEFT JOIN geoname_i18n i_en ON i_en.geonameid = g.geonameid AND i_en.lang = 'en'
           LEFT JOIN geoname_i18n i_def ON i_def.geonameid = g.geonameid AND i_def.lang = 'und'
           WHERE g.${geoColumn} = ?
-          ORDER BY g.geonameid ASC
-          LIMIT 1
+          ORDER BY dist2 ASC
+          LIMIT 5
           `,
-          [lang, prefix]
+          [tLat, tLat, tLng, tLng, lngWeight, lang, prefix]
         )
         .catch(() => null);
-      const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-      const localName = row && row.local_name ? String(row.local_name).trim() : '';
-      const enName = row && row.en_name ? String(row.en_name).trim() : '';
-      if (localName || enName) {
+
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+
+      let rejectedByDistance = false;
+      for (const row of rows) {
+        const localName = row && row.local_name ? String(row.local_name).trim() : '';
+        const enName = row && row.en_name ? String(row.en_name).trim() : '';
+        if (!localName && !enName) continue;
+
+        const dKm = haversineKm(tLat, tLng, Number(row.latitude), Number(row.longitude));
+        if (Number.isFinite(dKm) && dKm > MAX_DISTANCE_KM) {
+          rejectedByDistance = true;
+          break;
+        }
         if (localName && enName && localName !== enName) return `${localName} ${enName}`;
         return localName || enName;
       }
+      // 这一级最近的一条都太远 ⇒ 更粗的格只会更远，不必再回退
+      if (rejectedByDistance) break;
     }
 
     return '';
@@ -452,8 +511,14 @@ class PhotoMapService {
     const requestedMax = parsePositiveInt((params && (params.maxReturnCount ?? params.maxCount ?? params.limit)) || 0, 150);
     const maxReturnCount = Math.max(1, Math.min(requestedMax, 2000));
 
-    let precision = this.getBoundsPhotoPrecision(z);
+    // 这一屏允许返回多少个 geohash 格子（客户端会再按屏幕距离把它们聚合成更少的 marker）
+    // 允许的格子数上限。比 maxReturnCount 宽一个量级是有意的：先拿到足够细的格子，
+    // 再由 thinPhotosByGrid 抽稀到 maxReturnCount；格子给得太粗，客户端就聚不出有意义的点。
+    // ⚠️ geohash4/5/6 上都有索引（idx_photo_index_geohashN），单批 500 个 whereIn 没问题。
+    const cellTarget = Math.max(maxReturnCount * 14, 2000);
+    let precision = this.getBoundsPhotoPrecision(minLa, minLo, maxLa, maxLo, cellTarget);
     let boxes = [];
+    // 兜底循环：正常情况下上面的解析式已经选对了精度，第一次就会 break。
     while (precision >= 2) {
       try {
         boxes = geohash.bboxes(minLa, minLo, maxLa, maxLo, precision) || [];
@@ -461,7 +526,6 @@ class PhotoMapService {
         boxes = [];
       }
       if (Array.isArray(boxes) && boxes.length > 0) {
-        const cellTarget = Math.max(maxReturnCount * 8, 600);
         if (boxes.length <= cellTarget || precision === 2) break;
       }
       precision -= 1;
@@ -564,7 +628,11 @@ class PhotoMapService {
             ...row,
             photo_count: Number.isFinite(count) && count > 0 ? count : 1,
             cell_precision: precision,
-            ..._cellCenter(cell),
+            // ⭐ 2026-10-16：**不再**下发 cell_lat / cell_lng。
+            // marker 一律用上面 row 里代表照片真实的 latitude/longitude，
+            // 「重叠的合成一个」交给客户端按世界像素距离做（见 photo_footprint_map_controller.dart）。
+            // ⛔ 别再拿 geohash.decode() 当数组解构去算格心：ngeohash 的 decode() 返回的是
+            //    标量 {latitude,longitude}，那样写恒为空对象。
           });
         }
       } catch (_) {

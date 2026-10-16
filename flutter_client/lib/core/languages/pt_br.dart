@@ -734,7 +734,7 @@ class PtBr extends Translations {
       'app_mounts': 'Montagens',
       'app_image_view': 'Visualização de Imagem',
       'app_monitor': 'Monitor',
-      'app_process': 'Processos',
+      'app_process': 'Processos de Tarefas',
       'process.empty': 'Nenhum processo em execução',
       'process.name': 'Nome',
       'process.pid': 'ID do processo',
@@ -2086,7 +2086,7 @@ class PtBr extends Translations {
       'file_operation': 'Operação de Arquivo',
       'file_operation_running_title': 'Operação de arquivo em andamento',
       'file_operation_task_running_hint':
-          "Após tocar em \"Executar em segundo plano\", você pode ver o progresso em Centro de Tarefas → Operação de Arquivo.",
+          "Após tocar em \"Executar em segundo plano\", você pode ver o progresso em Centro de Downloads → Operação de Arquivo.",
       'run_in_background': 'Executar em segundo plano',
       'processing': 'Processando',
       'waiting': 'Aguardando',
@@ -2619,7 +2619,7 @@ class PtBr extends Translations {
       'folder_action_confirm_move':
           'Tem certeza de que deseja mover @count itens para @target?',
       'folder_action_queued':
-          'Operação enfileirada, verifique o centro de tarefas para progresso',
+          'Operação enfileirada, verifique o centro de downloads para progresso',
       'folder_name_strategy': 'Estratégia de Mesmo Nome',
       'file_allready_in_upload_queue': 'Arquivo já está na fila de upload',
       'file_task_upload_added': 'Arquivo adicionado à fila de upload',
@@ -2675,7 +2675,7 @@ class PtBr extends Translations {
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
       'app_note': 'Notebook',
-      'app_task_center': 'Centro de Tarefas',
+      'app_task_center': 'Centro de Downloads',
       'message_center': 'Centro de Mensagens',
       'app_backup': 'Backup',
       'task_count': 'Total @count itens',
@@ -2752,7 +2752,7 @@ class PtBr extends Translations {
       'home_no_message': 'Sem mensagens',
       'monitor_click_to_view': 'Clique para ver detalhes',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Centro de Tarefas',
+      'home_task_center': 'Centro de Downloads',
       'recycle_bin_empty': 'Sem arquivos na lixeira',
 
       // Message Center

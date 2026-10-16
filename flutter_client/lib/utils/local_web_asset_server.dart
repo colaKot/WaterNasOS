@@ -309,8 +309,13 @@ class LocalWebAssetServer {
         await req.response.close();
         return;
       }
-      if (path.startsWith('/api/')) {
-        if (isVideoRawFilePath(path) &&
+      // 服务端接口与内置文档阅读器（/docview）统一转发到上游，
+      // 保证 P2P 模式下浏览器 / WebView 也能拿到服务端页面与文档字节。
+      if (path.startsWith('/api/') ||
+          path == '/docview' ||
+          path.startsWith('/docview/')) {
+        if (path.startsWith('/api/') &&
+            isVideoRawFilePath(path) &&
             VideoRangeCacheManager.instance.options.enabled &&
             !isNascabNoRangeCacheRequest(req.uri)) {
           final served = await _tryServeRawFileWithCache(req);

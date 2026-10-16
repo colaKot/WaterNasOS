@@ -118,13 +118,57 @@ extension FileControllerOpen on FileController {
 
   String _officeTypeForItem(Map<String, dynamic> item) {
     if (item['type']?.toString() == 'dir') return '';
+    const officeExts = <String>{'docx', 'xlsx', 'pptx', 'csv'};
     final rawType = item['type']?.toString().trim().toLowerCase() ?? '';
-    if (rawType == 'docx' || rawType == 'xlsx') {
+    if (officeExts.contains(rawType)) {
       return rawType;
     }
     final ext = _extForItem(item);
-    if (ext == 'docx' || ext == 'xlsx') return ext;
+    if (officeExts.contains(ext)) return ext;
     return '';
+  }
+
+  /// 服务端内置离线文档阅读器（/docview）承担的格式：
+  /// 本地已有 docx / xlsx 渲染器，这里只补 pptx / csv 缺口。
+  bool _usesDocViewer(String officeType) {
+    const exts = <String>{'pptx', 'csv'};
+    return exts.contains(officeType.trim().toLowerCase());
+  }
+
+  /// 构造服务端 `/docview/open` 打开地址。
+  /// Web 端直接用服务器基址；桌面端经 LocalWebAssetServer 本地代理（P2P 场景同样可用）。
+  Future<({String url, bool needsRelease})> _buildDocViewerUrl({
+    required String filePath,
+    required String remoteFileUrl,
+  }) async {
+    final base = ApiController.instance.baseUrl.trim();
+    final remote = remoteFileUrl.trim();
+    if (base.isEmpty || remote.isEmpty) {
+      return (url: '', needsRelease: false);
+    }
+    final token = ApiController.instance.accessToken?.trim() ?? '';
+    final fileName = _basenameFromPath(filePath.trim());
+    final qp = <String, String>{
+      'url': remote,
+      if (fileName.isNotEmpty) 'name': fileName,
+      if (token.isNotEmpty) 'accessToken': token,
+    };
+    if (DeviceUtils.isWeb) {
+      return (
+        url: Uri.parse(
+          '$base/docview/open',
+        ).replace(queryParameters: qp).toString(),
+        needsRelease: false,
+      );
+    }
+    final localBase = await LocalWebAssetServer.instance.acquire();
+    qp['url'] = _proxyUrlToLocal(localBase, remote);
+    return (
+      url: localBase
+          .replace(path: '/docview/open', queryParameters: qp)
+          .toString(),
+      needsRelease: true,
+    );
   }
 
   bool _isPdfItem(Map<String, dynamic> item) {
@@ -440,10 +484,12 @@ extension FileControllerOpen on FileController {
       withAccessToken: true,
       isRawFile: true,
     );
-    final built = await _buildOfficeViewerUrl(
-      officeType: officeType,
-      remoteFileUrl: fileUrl,
-    );
+    final built = _usesDocViewer(officeType)
+        ? await _buildDocViewerUrl(filePath: filePath, remoteFileUrl: fileUrl)
+        : await _buildOfficeViewerUrl(
+            officeType: officeType,
+            remoteFileUrl: fileUrl,
+          );
     if (built.url.isEmpty) {
       toast('operation_failed'.tr);
       return;

@@ -679,7 +679,7 @@ class IdId extends Translations {
       'app_mounts': 'Mount Remote',
       'app_image_view': 'Penjelajahan Gambar',
       'app_monitor': 'Pemantauan Sistem',
-      'app_process': 'Proses',
+      'app_process': 'Proses Tugas',
       'process.empty': 'Tidak ada proses yang berjalan',
       'process.name': 'Nama',
       'process.pid': 'ID proses',
@@ -2102,7 +2102,7 @@ class IdId extends Translations {
       'file_operation': 'Operasi File',
       'file_operation_running_title': 'Operasi file sedang berjalan',
       'file_operation_task_running_hint':
-          "Setelah mengetuk \"Jalankan di latar belakang\", Anda dapat melihat progres di Pusat Tugas → Operasi File.",
+          "Setelah mengetuk \"Jalankan di latar belakang\", Anda dapat melihat progres di Pusat Unduhan → Operasi File.",
       'run_in_background': 'Jalankan di latar belakang',
       'processing': 'Sedang Diproses',
       'waiting': 'Menunggu',
@@ -2620,7 +2620,7 @@ class IdId extends Translations {
       'folder_action_confirm_move':
           'Yakin ingin memindahkan @count item ke @target?',
       'folder_action_queued':
-          'Operasi telah ditambahkan ke antrian eksekusi, dapat melihat progres di pusat tugas',
+          'Operasi telah ditambahkan ke antrian eksekusi, dapat melihat progres di pusat unduhan',
       'folder_name_strategy': 'Strategi Nama Sama',
       'file_allready_in_upload_queue': 'File sudah ada dalam antrian',
       'file_task_upload_added': 'File telah ditambahkan ke antrian unggah',
@@ -2677,7 +2677,7 @@ class IdId extends Translations {
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
       'app_note': 'Notebook',
-      'app_task_center': 'Pusat Tugas',
+      'app_task_center': 'Pusat Unduhan',
       'message_center': 'Pusat Pesan',
       'app_backup': 'Backup',
       'task_count': 'Total @count Tugas',
@@ -2756,7 +2756,7 @@ class IdId extends Translations {
       'home_no_message': 'Tidak Ada Pesan Terbaru',
       'monitor_click_to_view': 'Klik untuk Lihat Detail',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Pusat Tugas',
+      'home_task_center': 'Pusat Unduhan',
       'recycle_bin_empty': 'Tidak Ada File di Tempat Sampah',
 
       // 消息中心

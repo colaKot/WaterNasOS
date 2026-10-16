@@ -191,6 +191,47 @@ class FaceController {
     }
   };
 
+  /**
+   * ⭐ 2026-10-16 存量补扫：只把「已标记完成、但实际没有任何人脸行」的照片重新入队。
+   * 与 /face/rescan 不同 —— 不清已有分组，只补跑被「烧掉」的照片（普通用户可用）。
+   */
+  rescanMissingFaces = async (req, res) => {
+    try {
+      const body = req.body || {};
+      const service = new FaceService(req.dbPhoto);
+      const validPaths = await this._validPathsOf(req);
+      const result = await service.rescanMissingFaces({
+        validPaths,
+        dryRun: body.dry_run ?? body.dryRun,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('rescanMissingFaces error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  /**
+   * ⭐ 2026-10-16 全库「合并相似人物」（限超管）：一次性把分裂的碎片组归并。
+   * 可传 dry_run 先预览要合并多少对。
+   */
+  mergeSimilarFaces = async (req, res) => {
+    try {
+      const body = req.body || {};
+      const service = new FaceService(req.dbPhoto);
+      const result = await service.mergeSimilarFaces({
+        threshold: body.threshold,
+        margin: body.margin,
+        limit: body.limit,
+        dryRun: body.dry_run ?? body.dryRun,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('mergeSimilarFaces error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
   resetFaces = async (req, res) => {
     try {
       const service = new FaceService(req.dbPhoto);

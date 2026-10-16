@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WaterNasOS 官网 · 风格候选对比</title>
+<style>
+  :root{
+    --bg:#f2f3f5; --card:#fff; --ink:#111114; --ink-2:#55555f; --muted:#8b8b96;
+    --line:#e3e4e8; --accent:#3b6ef5;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink-2);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{text-decoration:none;color:inherit}
+
+  .top{background:#fff;border-bottom:1px solid var(--line);padding:34px 0 30px}
+  .top .wrap{max-width:1400px;margin:0 auto;padding:0 32px}
+  h1{margin:0 0 8px;font-size:26px;letter-spacing:-.02em;color:var(--ink);font-weight:700}
+  .sub{margin:0;font-size:14.5px;color:var(--muted);line-height:1.8}
+  .sub b{color:var(--ink-2)}
+
+  .wrap{max-width:1400px;margin:0 auto;padding:0 32px}
+  .list{display:grid;grid-template-columns:repeat(2,1fr);gap:26px;padding:30px 0 60px}
+
+  .item{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;
+    transition:.22s;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .item:hover{box-shadow:0 16px 40px rgba(0,0,0,.1);transform:translateY(-3px)}
+  .meta{padding:20px 22px 16px;display:flex;align-items:flex-start;gap:14px;border-bottom:1px solid var(--line)}
+  .num{flex:none;width:34px;height:34px;border-radius:10px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:700;font-size:15px}
+  .meta h2{margin:0 0 5px;font-size:17px;font-weight:650;letter-spacing:-.015em;color:var(--ink)}
+  .meta p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.65}
+  .meta .note{margin-top:7px;font-size:12.5px;color:#9a6b1f;background:#fff8e8;border:1px solid #f3e2bd;border-radius:7px;padding:5px 10px;display:inline-block}
+
+  .frame{position:relative;width:100%;background:#e9eaee;overflow:hidden}
+  .frame iframe{position:absolute;top:0;left:0;border:0;transform-origin:top left;background:#fff}
+  .frame::after{content:"";position:absolute;inset:auto 0 0 0;height:56px;background:linear-gradient(transparent,rgba(233,234,238,.96));pointer-events:none}
+
+  .bar{padding:13px 22px 17px;display:flex;gap:10px;align-items:center;border-top:1px solid var(--line)}
+  .btn{font-size:13.5px;padding:8px 16px;border-radius:9px;font-weight:500;transition:.16s;cursor:pointer}
+  .btn--fill{background:var(--ink);color:#fff}
+  .btn--fill:hover{background:#333}
+  .btn--line{border:1px solid var(--line);color:var(--ink-2)}
+  .btn--line:hover{border-color:var(--ink);color:var(--ink)}
+  .hint{margin-left:auto;font-size:12.5px;color:var(--muted)}
+
+  .tip{margin:0 0 6px;padding:16px 20px;background:#fff;border:1px solid var(--line);border-radius:12px;font-size:13.5px;line-height:1.8;color:var(--ink-2)}
+  .tip b{color:var(--ink)}
+
+  @media(max-width:1080px){ .list{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wrap">
+    <h1>WaterNasOS 官网 · 5 个风格候选</h1>
+    <p class="sub">下面每一屏都是<b>用你现有文案做的真实首页</b>（可滚动、可点开完整版）。左边编号对应风格，选一个你顺眼的报编号给我就行。<br>
+       当前线上风格是「深色 + 紫罗兰／品红渐变」——也是这次要替换掉的那个。</p>
+  </div>
+</div>
+
+<div class="wrap">
+  <p class="tip" style="margin-top:24px">
+    <b>对比建议：</b>先看配色气质（我是卖「数据在自己家」的安全感，还是卖「技术极客」），再看信息密度（A/C 疏、B/D 密）。<br>
+    点 <b>打开完整页</b> 可以在新标签里全屏滚一遍，感受真实观感。
+  </p>
+
+  <p class="tip" style="border-color:#f3d9a8;background:#fffbf0">
+    <b>⚠️ 有个坑要避开：</b>工作室官网 www.gexuan.net 是「浅色底 + 蓝青主色（#1e7be8 → #12d1c4）」，上次 wnos 就是因为跟它长得一样才改成深色紫的。<br>
+    所以按「跟官网拉开距离」排：<b>D（苹果灰+黑卡）≈ A（黑白灰）＞ C（紫粉渐变）＞ B（同为蓝色系，有撞车风险）＞ E（青绿 #2dd4bf，跟官网青色最像，风险最高）</b>。
+  </p>
+
+  <div class="list" id="list">
+
+    <div class="item">
+      <div class="meta">
+        <div class="num">A</div>
+        <div>
+          <h2>素白极简</h2>
+          <p>白底 + 近黑字 + 超大标题，零彩色装饰。苹果 / Vercel / Linear 那一脉。</p>
+          <span class="note">最"高级"也最"冷淡"，靠留白和字重撑场</span>
+        </div>
+      </div>
+      <div class="frame" data-src="a-minimal.html"></div>
+      <div class="bar">
+        <a class="btn btn--fill" href="a-minimal.html" target="_blank">打开完整页</a>
+        <span class="hint">干净、克制、不挑人群</span>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="meta">
+        <div class="num">B</div>
+        <div>
+          <h2>沉静深蓝</h2>
+          <p>深海军蓝 Hero + 白底内容区 + 蓝色主色，带网格纹理和数据面板。</p>
+          <span class="note">最贴合"私有云 / 数据安全"的商业可信感</span>
+          <span class="note" style="color:#9a3d1f;background:#fff1ea;border-color:#f3cdbd">⚠️ 同为蓝色系，跟工作室官网有撞车风险</span>
+        </div>
+      </div>
+      <div class="frame" data-src="b-bluepro.html"></div>
+      <div class="bar">
+        <a class="btn btn--fill" href="b-bluepro.html" target="_blank">打开完整页</a>
+        <span class="hint">稳重、专业、像正经产品</span>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="meta">
+        <div class="num">C</div>
+        <div>
+          <h2>渐变光晕</h2>
+          <p>白底 + 顶部柔和彩色光斑 + 玻璃拟态卡片，Stripe / Linear 现代 SaaS 味。</p>
+          <span class="note">最有"现代感"，但彩度高，比现在那套更柔和</span>
+        </div>
+      </div>
+      <div class="frame" data-src="c-aurora.html"></div>
+      <div class="bar">
+        <a class="btn btn--fill" href="c-aurora.html" target="_blank">打开完整页</a>
+        <span class="hint">轻快、年轻、有点格调</span>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="meta">
+        <div class="num">D</div>
+        <div>
+          <h2>Bento 格栅</h2>
+          <p>苹果发布会风：浅灰底 + 大圆角卡片拼图，深浅卡片交错，信息密度最高。</p>
+          <span class="note">最"产品化"，一屏能塞完所有卖点</span>
+        </div>
+      </div>
+      <div class="frame" data-src="d-bento.html"></div>
+      <div class="bar">
+        <a class="btn btn--fill" href="d-bento.html" target="_blank">打开完整页</a>
+        <span class="hint">现代、饱满、转化力强</span>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="meta">
+        <div class="num">E</div>
+        <div>
+          <h2>青蓝极客</h2>
+          <p>保留现在的深色 + 终端窗口，但把紫粉换成<b>青绿／湖蓝</b>，去掉赛博味。</p>
+          <span class="note">如果你只是嫌紫色丑、想留极客感，选这个</span>
+          <span class="note" style="color:#9a3d1f;background:#fff1ea;border-color:#f3cdbd">⚠️ 青绿跟官网青色最接近，撞车风险最高</span>
+        </div>
+      </div>
+      <div class="frame" data-src="e-teal.html"></div>
+      <div class="bar">
+        <a class="btn btn--fill" href="e-teal.html" target="_blank">打开完整页</a>
+        <span class="hint">改动最小，只换配色体系</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  var VW = 1300, VH = 900;
+  function fit(){
+    document.querySelectorAll('.frame').forEach(function(f){
+      var w = f.clientWidth;
+      var s = w / VW;
+      var ifr = f.querySelector('iframe');
+      if(!ifr){
+        ifr = document.createElement('iframe');
+        ifr.src = f.getAttribute('data-src');
+        ifr.setAttribute('scrolling','no');
+        ifr.setAttribute('loading','lazy');
+        ifr.style.width = VW + 'px';
+        ifr.style.height = VH + 'px';
+        f.appendChild(ifr);
+      }
+      ifr.style.transform = 'scale(' + s + ')';
+      f.style.height = Math.round(VH * s) + 'px';
+    });
+  }
+  window.addEventListener('resize', fit);
+  document.addEventListener('DOMContentLoaded', fit);
+</script>
+
+</body>
+</html>

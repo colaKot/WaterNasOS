@@ -64,7 +64,7 @@ const MAINTENANCE_EVERY_IMAGES = Math.max(1, Math.min(1000000, Number(process.en
 // 维护触发频率（按时间）：距离上次维护超过该毫秒数，也会触发维护，避免长时间不重建导致分裂持续存在。
 const MAINTENANCE_EVERY_MS = Math.max(1000, Math.min(7 * 24 * 60 * 60 * 1000, Number(process.env.FACE_MAINTENANCE_EVERY_MS ?? 10 * 60 * 1000)));
 // 单次维护处理的 face 数量上限：越大越全面但更耗时；建议结合库规模调整。
-const MAINTENANCE_FACE_LIMIT = Math.max(1, Math.min(500, Number(process.env.FACE_MAINTENANCE_FACE_LIMIT ?? 200)));
+const MAINTENANCE_FACE_LIMIT = Math.max(1, Math.min(500, Number(process.env.FACE_MAINTENANCE_FACE_LIMIT ?? 500)));
 
 // 原型重建 TopN：从 photo_face_samples 中挑选该 face 的高质量前 N 个样本重算原型向量。
 // N 太小：原型容易偏；N 太大：容易把边缘样本/噪声引入，且维护耗时上升。
@@ -84,9 +84,10 @@ let SECOND_MERGE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SECOND
 // 二次合并阈值（最佳样本-最佳样本）：用于修复“原型被历史噪声拉偏”但最佳高质样本仍很像的情况。
 const SECOND_MERGE_BEST_SAMPLE_THRESH = Math.max(0, Math.min(1, Number(process.env.FACE_SECOND_MERGE_BEST_SAMPLE_THRESH ?? 0.45)));
 // 单次维护最多合并多少对 face：避免一次维护做太多合并造成长事务/卡顿，也降低误合并的爆炸半径。
-const SECOND_MERGE_MAX = Math.max(0, Math.min(200, Number(process.env.FACE_SECOND_MERGE_MAX ?? 20)));
+const SECOND_MERGE_MAX = Math.max(0, Math.min(2000, Number(process.env.FACE_SECOND_MERGE_MAX ?? 200)));
 // 参与二次合并的最小 face_count：低样本 face 往往更不稳定，限制参与可降低误合并。
-const SECOND_MERGE_MIN_FACE_COUNT = Math.max(1, Math.min(1000, Number(process.env.FACE_SECOND_MERGE_MIN_FACE_COUNT ?? 3)));
+// ⭐ 2026-10-16：1~2 张的「碎片组」正是分裂的主因（旧值 3 把它们永久排除在合并之外），改为 1。
+const SECOND_MERGE_MIN_FACE_COUNT = Math.max(1, Math.min(1000, Number(process.env.FACE_SECOND_MERGE_MIN_FACE_COUNT ?? 1)));
 
 // ⭐ 2026-10-14 防误合护栏（用户报「好多人的人脸混在了一起」）
 // 1) 认领裕度：最近原型必须比**第二名（另一个人）**明显更像，否则宁可新建人脸组。
@@ -94,6 +95,19 @@ const SECOND_MERGE_MIN_FACE_COUNT = Math.max(1, Math.min(1000, Number(process.en
 let ASSIGN_MARGIN = Math.max(0, Math.min(0.3, Number(process.env.FACE_ASSIGN_MARGIN ?? 0.04)));
 // 2) 二次合并要求「互为最近邻」：掐掉 A~B、B~C 把三个人串成一组的链式合并。
 const SECOND_MERGE_MUTUAL = Number(process.env.FACE_SECOND_MERGE_MUTUAL ?? 1) ? true : false;
+
+// ⭐ 2026-10-16 修「烧图」bug（用户报「2000 张只剩 300 多」）：
+// 旧逻辑里推理失败直接 markIndexDone（gen_faces=1），这张照片永远不会重试，
+// 线程池集体死亡时一次性烧掉上千张真人脸照片。现在的策略是「失败留队列、下轮再来」。
+const INFER_MAX_ATTEMPTS = Math.max(1, Math.min(10, Number(process.env.FACE_INFER_MAX_ATTEMPTS ?? 3)));
+const INFER_RETRY_BACKOFF_MS = Math.max(0, Math.min(10000, Number(process.env.FACE_INFER_RETRY_BACKOFF_MS ?? 300)));
+// 线程池连续失败达到该值 ⇒ 判定线程池坏死，主动 terminate + 重建一次。
+const THREAD_FAILURE_REBUILD_THRESHOLD = Math.max(2, Math.min(50, Number(process.env.FACE_THREAD_REBUILD_THRESHOLD ?? 5)));
+
+// ⭐ 2026-10-16 停摆修复：被 park 的图（推理彻底失败、保留 gen_faces=0）多久重新入队重试。
+const PARK_REQUEUE_MS = Math.max(30000, Math.min(60 * 60 * 1000, Number(process.env.FACE_PARK_REQUEUE_MS ?? 10 * 60 * 1000)));
+// 队列里只剩 parked 时每轮空转的间隔。
+const PARK_IDLE_SLEEP_MS = Math.max(500, Math.min(60000, Number(process.env.FACE_PARK_IDLE_MS ?? 3000)));
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -228,6 +242,10 @@ class FaceWorker {
     this.inferSeq = 0;
     this.inferPending = new Map(); // seq -> { resolve, reject, thread }
     this.threadsFailed = false; // 线程池整体不可用 ⇒ 回退 coordinator 内联推理
+    // ⭐ 2026-10-16 烧图修复：已经放弃（留待下轮）的行 id / 线程池连续失败计数
+    this.parkedIds = new Set(); // 本轮推理彻底失败的行，跳过不再取，保留 gen_faces=0
+    this.parkedRetryAt = 0; // 下次允许把 parkedIds 清空重试的时间点（见 startLoop）
+    this.consecutiveThreadFailures = 0;
     this.init();
   }
 
@@ -324,7 +342,13 @@ class FaceWorker {
     if (msg.ok) {
       pending.resolve(msg.faces || []);
     } else {
-      pending.reject(new Error(msg.error || 'infer_failed'));
+      // ⭐ 2026-10-16：把推理线程里的真实 name / stack 带出来。
+      // 旧实现只取 msg.error，而 onnx 这类库抛的 message 可能就一个字 "Error"，
+      // 日志里只剩 `Error: Error`，完全无法定位（实测就是这么被吞掉的）。
+      const err = new Error(msg.error || 'infer_failed');
+      if (msg.name) err.name = String(msg.name);
+      if (msg.stack) err.stack = `[infer thread] ${String(msg.stack)}`;
+      pending.reject(err);
     }
   }
 
@@ -386,6 +410,53 @@ class FaceWorker {
       };
       dispatch();
     });
+  }
+
+  /**
+   * ⭐ 2026-10-16 烧图修复：带重试的推理。
+   * - 单张失败最多重试 INFER_MAX_ATTEMPTS 次（间隔退避）；
+   * - 若是「线程死亡」类错误，累计 consecutiveThreadFailures，达到阈值就主动重建线程池；
+   * - 全部重试仍失败则抛出，由调用方把该行留在队列（不再 markIndexDone 烧掉）。
+   */
+  async inferWithRetry(imagePath) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= INFER_MAX_ATTEMPTS; attempt++) {
+      try {
+        const faces = await this.inferViaThread(imagePath);
+        this.consecutiveThreadFailures = 0;
+        return faces;
+      } catch (err) {
+        lastErr = err;
+        const msg = err && err.message ? String(err.message) : String(err);
+        const isThreadDeath = /thread|died|terminate|exited|worker/i.test(msg);
+        if (isThreadDeath) {
+          this.consecutiveThreadFailures += 1;
+          if (this.consecutiveThreadFailures >= THREAD_FAILURE_REBUILD_THRESHOLD) {
+            Logger.warn(
+              `⚠️ [faceWorker] 线程池连续失败 ${this.consecutiveThreadFailures} 次，主动重建推理线程`
+            );
+            this.consecutiveThreadFailures = 0;
+            await this.rebuildInferThreads().catch(e => {
+              Logger.error(`❌ [faceWorker] 重建线程池失败: ${e && e.message ? e.message : e}`);
+            });
+          }
+        }
+        if (attempt < INFER_MAX_ATTEMPTS) {
+          await sleep(INFER_RETRY_BACKOFF_MS * attempt);
+        }
+      }
+    }
+    throw lastErr || new Error('infer_failed');
+  }
+
+  /** 重建推理线程池：terminate 现有线程后重新拉起（一次性，避免抖动） */
+  async rebuildInferThreads() {
+    await this.terminateInferThreads();
+    this.threadsFailed = false;
+    await this.ensureInferThreads();
+    if (this.threadsFailed || this.inferThreads.length === 0) {
+      Logger.warn('[faceWorker] 重建后仍无可用线程，回退 coordinator 内联推理');
+    }
   }
 
   async terminateInferThreads() {
@@ -562,6 +633,24 @@ class FaceWorker {
         const rows = await this.getNextBatch();
         if (!rows || rows.length === 0) {
           await this.maybeRunMaintenance(true);
+
+          // ⭐⭐ 2026-10-16 停摆修复（人肉实测：60,363 张待处理却没人跑）。
+          // 旧实现在这里无条件 process.exit(0)，而 singletonWorkerManager 的 exit 监听只在
+          // 「有 signal」时才走 onError 重启逻辑，干净退出走的是 onStop —— faceWorker 的 onStop
+          // 是空函数 ⇒ 只要线程池系统性失败、整批被 park，取空一次就**永久停摆**。
+          // 现在：只要还有 parked，就先空转等待；超过 PARK_REQUEUE_MS 把 parked 清空整轮重试。
+          // parked 会从 getNextBatch 的 whereNotIn 里排除 ⇒ 队列仍能继续往后推进，不会饿死。
+          if (this.parkedIds.size > 0) {
+            const now = Date.now();
+            if (now >= this.parkedRetryAt) {
+              Logger.warn(`⚠️ [faceWorker] 重新入队 ${this.parkedIds.size} 张上轮 park 的图片，整轮重试`);
+              this.parkedIds.clear();
+              this.parkedRetryAt = now + PARK_REQUEUE_MS;
+            }
+            await sleep(PARK_IDLE_SLEEP_MS);
+            continue;
+          }
+
           Logger.info('✅ No pending face tasks, worker exiting');
           await this.terminateInferThreads();
           try {
@@ -585,6 +674,10 @@ class FaceWorker {
    */
   async processBatch(rows) {
     const prepared = await Promise.all((rows || []).map(row => this.prepareInfer(row)));
+    // ⭐ 2026-10-16：失败**只汇总成一行**日志。
+    // 旧实现每张失败打一行（实测单个日志文件里 586 行全来自这里），配合 placesWorker 的
+    // 逐张报错，把日志刷到「几分钟滚一次盘」，既是磁盘 IO 噪音也让真正的问题被淹没。
+    const failed = [];
     for (const item of prepared) {
       if (!this.isRunning) break;
       if (item.skip) {
@@ -592,8 +685,13 @@ class FaceWorker {
         continue;
       }
       if (item.error) {
-        Logger.error(`❌  face infer failed: ${item.imagePath || item.row.path}`, item.error);
-        await this.markIndexDone(item.row.id);
+        // ⭐ 2026-10-16 烧图修复：不再 markIndexDone。
+        // 旧行为会把推理失败的照片直接置 gen_faces=1，永久不再重扫（线程池死亡时一次烧掉上千张）。
+        // 现在保留 gen_faces=0，并把 id 暂存到 parkedIds（本轮内跳过以免死循环），
+        // startLoop 在队列取空后会按 PARK_REQUEUE_MS 重新入队重试。
+        const rid = item.row && item.row.id ? Number(item.row.id) : 0;
+        failed.push({ rid, name: item.imagePath || (item.row && item.row.path) || '', err: item.error });
+        if (rid) this.parkedIds.add(rid);
         continue;
       }
       try {
@@ -602,6 +700,14 @@ class FaceWorker {
         Logger.error('❌  face DB write failed:', err);
       }
       this.processedImages += 1;
+    }
+    if (failed.length > 0) {
+      if (!this.parkedRetryAt) this.parkedRetryAt = Date.now() + PARK_REQUEUE_MS;
+      const sample = failed.slice(0, 3).map(f => f.name).join(' | ');
+      Logger.error(
+        `❌  face infer failed (parked, will retry): ${failed.length}/${prepared.length} 张，例：${sample}`,
+        failed[0].err
+      );
     }
   }
 
@@ -641,7 +747,7 @@ class FaceWorker {
       return { row, skip: true };
     }
     try {
-      const faces = await this.inferViaThread(imagePath);
+      const faces = await this.inferWithRetry(imagePath);
       return { row, faces: Array.isArray(faces) ? faces : [] };
     } catch (err) {
       return { row, error: err, imagePath };
@@ -682,10 +788,15 @@ class FaceWorker {
   }
 
   async getNextBatch() {
-    return this.knex('photo_index')
+    const q = this.knex('photo_index')
       .select('id', 'path', 'filename', 'file_hash', 'type')
       .where({ gen_faces: 0, is_file: 1, in_trash: 0 })
-      .whereIn('type', [1, 2])
+      .whereIn('type', [1, 2]);
+    // ⭐ 2026-10-16 烧图修复：本轮已放弃的行不再重复取，保证队列能继续往前推进。
+    if (this.parkedIds.size > 0) {
+      q.whereNotIn('id', Array.from(this.parkedIds));
+    }
+    return q
       .orderBy('original_time', 'asc')
       .limit(this.batchSize)
       .catch(() => []);
@@ -1413,7 +1524,13 @@ async function startInferThread() {
       parentPort.postMessage({ id: msg.id, ok: true, faces: out });
     } catch (e) {
       try {
-        parentPort.postMessage({ id: msg.id, ok: false, error: String((e && e.message) || e) });
+        parentPort.postMessage({
+          id: msg.id,
+          ok: false,
+          error: String((e && e.message) || e),
+          name: e && e.name ? String(e.name) : '',
+          stack: e && e.stack ? String(e.stack) : '',
+        });
       } catch (_) {}
     }
   });

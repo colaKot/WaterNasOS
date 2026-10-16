@@ -453,6 +453,270 @@ class FaceService {
     return { clearedHashes: cleared, queuedPhotos: Number(queued || 0) };
   }
 
+  /**
+   * ⭐ 2026-10-16 存量补扫（F2，修「烧图」遗留，用户报「2000 张只剩 300 多」）：
+   * 把「可见范围内、已被标记 gen_faces=1、但 photo_face2filehash 里没有任何人脸行」的照片
+   * 重新置为 gen_faces=0，交给后台 worker 重新检测。
+   *
+   * 与 rescanFaces 的区别：**只动这些疑似被烧掉的行**，不动任何已有的人脸数据，
+   * 成本低（只重跑没有脸的图），也不会重置已分好的组。
+   *
+   * @param {Object} params {validPaths, dryRun} dryRun 时只统计不写入
+   * @returns {{queuedPhotos:number, wouldQueue?:number, dryRun:boolean}}
+   */
+  async rescanMissingFaces(params = {}) {
+    const validPaths = (Array.isArray(params.validPaths) ? params.validPaths : []).filter(Boolean);
+    const dryRun = params.dryRun === true || params.dry_run === true || params.dry_run === '1';
+    if (validPaths.length === 0) {
+      return { queuedPhotos: 0, wouldQueue: 0, dryRun };
+    }
+    const base = () => {
+      const q = this.knex('photo_index as p')
+        .where('p.is_file', 1)
+        .andWhere('p.in_trash', 0)
+        .andWhere('p.gen_faces', 1)
+        .whereIn('p.type', [1, 2])
+        .andWhereRaw("p.file_hash IS NOT NULL AND p.file_hash <> ''")
+        .whereNotExists(function () {
+          this.select(1).from('photo_face2filehash as f2').whereRaw('f2.file_hash = p.file_hash');
+        });
+      photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+      return q;
+    };
+    if (dryRun) {
+      const row = await base().clone().count({ total: 'p.id' }).first().catch(() => null);
+      const total = Number(row && row.total ? row.total : 0) || 0;
+      return { queuedPhotos: 0, wouldQueue: total, dryRun: true };
+    }
+    const queued = await base().clone().update({ gen_faces: 0 }).catch(() => 0);
+    return { queuedPhotos: Number(queued || 0), wouldQueue: 0, dryRun: false };
+  }
+
+  /**
+   * ⭐ 2026-10-16 全库「合并相似人物」（F3，用户报「同一个人裂成几百个组」）。
+   *
+   * 维护任务里的二次合并每轮只处理有限数量，这里提供一个**一次性全库归并**动作
+   * （管理员在 AI 设置页触发，可先 dryRun 预览）。
+   *
+   * 判定规则（与计划一致）：
+   *   1) 只对「根人脸」（belong_face_id 为 NULL/0）且 feature 有效的组参与；
+   *   2) 组原型余弦相似度 ≥ threshold（默认 0.60）；
+   *   3) 互为最近邻（掐掉 A~B、B~C 的链式合并）；
+   *   4) 任一侧与其「第二名」的裕度 < margin（默认 0.01）⇒ 不并（两个组难分伯仲，宁可分）；
+   *   5) **两侧都已命名的组不自动并**（只计入 suggested，交人工）；
+   *   6) 本轮一对一匹配（同一个人脸本轮最多参与一次合并，多轮逐步收敛）。
+   *
+   * @param {{threshold?:number, margin?:number, limit?:number, dryRun?:boolean}} params
+   */
+  async mergeSimilarFaces(params = {}) {
+    const DIM = 512;
+    // 注意：不能用 `Number(x) || 默认值` —— 显式传 0（如 margin=0）会被当成空值吞掉。
+    const numOr = (v, def) => {
+      if (v === undefined || v === null || v === '') return def;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : def;
+    };
+    const threshold = Math.max(0.3, Math.min(0.95, numOr(params.threshold, 0.6)));
+    // 裕度默认 0.01 而非 0.05：实测 0.05 会「互相卡死」——同一人被碎成几百个近乎副本的原型，
+    // 彼此互为近邻且差距极小，裕度判定几乎全被否掉（4254 组里只剩 45 对可并）。
+    // 真正防误合的是「0.60 阈值 + 互为最近邻 + 本轮一对一」，裕度只需一点点兜底。
+    const margin = Math.max(0, Math.min(0.3, numOr(params.margin, 0.01)));
+    const limit = Math.max(0, Math.min(5000, numOr(params.limit, 1000)));
+    const dryRun = params.dryRun === true || params.dry_run === true || params.dry_run === '1';
+
+    const rows = await this.knex('photo_faces')
+      .select('face_id', 'feature', 'face_count', 'name')
+      .where(qb => {
+        qb.whereNull('belong_face_id').orWhere('belong_face_id', 0);
+      })
+      .andWhere('face_count', '>=', 1)
+      .catch(() => []);
+
+    const ids = [];
+    const counts = [];
+    const named = [];
+    const vecs = [];
+    for (const r of rows || []) {
+      const buf = r && r.feature ? Buffer.from(r.feature) : null;
+      if (!buf || buf.length !== DIM * 4) continue;
+      const view = new Float32Array(buf.buffer, buf.byteOffset, DIM);
+      let sum = 0;
+      for (let d = 0; d < DIM; d++) sum += view[d] * view[d];
+      const inv = 1 / Math.sqrt(sum || 1);
+      const out = new Float32Array(DIM);
+      for (let d = 0; d < DIM; d++) out[d] = view[d] * inv;
+      const id = Number(r.face_id) || 0;
+      if (!id) continue;
+      const nameBuf = r && r.name ? r.name : null;
+      const hasName = Buffer.isBuffer(nameBuf)
+        ? nameBuf.length > 0
+        : typeof nameBuf === 'string'
+          ? nameBuf.trim().length > 0
+          : false;
+      ids.push(id);
+      counts.push(Math.max(0, Number(r && r.face_count ? r.face_count : 0) || 0));
+      named.push(hasName);
+      vecs.push(out);
+    }
+
+    const n = ids.length;
+    const emptyResult = {
+      dryRun,
+      threshold,
+      margin,
+      faceTotal: n,
+      pairCount: 0,
+      adoptable: 0,
+      suggestedPairs: 0,
+      merged: 0,
+      samples: [],
+    };
+    if (n < 2) return emptyResult;
+
+    // 扁平矩阵 + 后缀能量：只用于剪枝（剩余维度即使完全同向也够不到阈值就提前跳出），不会误判
+    const mat = new Float32Array(n * DIM);
+    const rem = new Float32Array(n * (DIM + 1));
+    for (let i = 0; i < n; i++) {
+      const v = vecs[i];
+      mat.set(v, i * DIM);
+      let acc = 0;
+      for (let d = DIM - 1; d >= 0; d--) {
+        acc += v[d] * v[d];
+        rem[i * (DIM + 1) + d] = acc;
+      }
+    }
+
+    const bestSim = new Float64Array(n).fill(-Infinity);
+    const secondSim = new Float64Array(n).fill(-Infinity);
+    const bestPartner = new Int32Array(n).fill(-1);
+    const pairs = [];
+    for (let i = 0; i < n; i++) {
+      const oi = i * DIM;
+      const ri = i * (DIM + 1);
+      for (let j = i + 1; j < n; j++) {
+        const oj = j * DIM;
+        const rj = j * (DIM + 1);
+        let s = 0;
+        for (let d = 0; d < DIM; d++) {
+          s += mat[oi + d] * mat[oj + d];
+          if (s + Math.sqrt(rem[ri + d + 1] * rem[rj + d + 1]) < threshold) {
+            s = -Infinity;
+            break;
+          }
+        }
+        if (!Number.isFinite(s) || s < threshold) continue;
+        pairs.push({ ai: i, bi: j, sim: s });
+        if (s > bestSim[i]) {
+          secondSim[i] = bestSim[i];
+          bestSim[i] = s;
+          bestPartner[i] = j;
+        } else if (s > secondSim[i]) {
+          secondSim[i] = s;
+        }
+        if (s > bestSim[j]) {
+          secondSim[j] = bestSim[j];
+          bestSim[j] = s;
+          bestPartner[j] = i;
+        } else if (s > secondSim[j]) {
+          secondSim[j] = s;
+        }
+      }
+    }
+
+    const gapOk = i => {
+      const b = bestSim[i];
+      const sec = secondSim[i];
+      if (!Number.isFinite(b)) return false;
+      if (!Number.isFinite(sec)) return true;
+      return b - sec >= margin;
+    };
+
+    let suggestedPairs = 0;
+    const candidates = [];
+    for (const p of pairs) {
+      // 规则 5：两侧都已命名 ⇒ 不自动并
+      if (named[p.ai] && named[p.bi]) {
+        suggestedPairs += 1;
+        continue;
+      }
+      // 规则 4：互为最近邻 + 双方裕度达标
+      if (bestPartner[p.ai] !== p.bi || bestPartner[p.bi] !== p.ai) continue;
+      if (!gapOk(p.ai) || !gapOk(p.bi)) continue;
+      candidates.push(p);
+    }
+
+    candidates.sort((x, y) => y.sim - x.sim);
+    const used = new Set();
+    const chosen = [];
+    for (const p of candidates) {
+      if (chosen.length >= limit) break;
+      if (used.has(p.ai) || used.has(p.bi)) continue;
+      used.add(p.ai);
+      used.add(p.bi);
+      // 保留张数多的那一组（并列取 id 大的，稳定）；没名字的一侧会被继承名字
+      const keepIsA = counts[p.ai] > counts[p.bi] || (counts[p.ai] === counts[p.bi] && ids[p.ai] > ids[p.bi]);
+      const keepFaceId = keepIsA ? ids[p.ai] : ids[p.bi];
+      const dropFaceId = keepIsA ? ids[p.bi] : ids[p.ai];
+      chosen.push({ keepFaceId, dropFaceId, sim: p.sim });
+    }
+
+    const samples = chosen.slice(0, 20).map(c => ({
+      keep: c.keepFaceId,
+      drop: c.dropFaceId,
+      sim: Number(c.sim.toFixed(4)),
+    }));
+
+    if (dryRun) {
+      return {
+        dryRun: true,
+        threshold,
+        margin,
+        faceTotal: n,
+        pairCount: pairs.length,
+        adoptable: chosen.length,
+        suggestedPairs,
+        merged: 0,
+        samples,
+      };
+    }
+
+    let merged = 0;
+    const CHUNK = 25;
+    for (let i = 0; i < chosen.length; i += CHUNK) {
+      const slice = chosen.slice(i, i + CHUNK);
+      try {
+        await this.knex.transaction(async trx => {
+          for (const c of slice) {
+            await this.mergeTwoFacesInTrx(trx, c.dropFaceId, c.keepFaceId);
+          }
+        });
+        merged += slice.length;
+      } catch (_) {
+        // 整块失败 ⇒ 退化成逐对提交，保证能并多少并多少
+        for (const c of slice) {
+          try {
+            await this.knex.transaction(async trx => {
+              await this.mergeTwoFacesInTrx(trx, c.dropFaceId, c.keepFaceId);
+            });
+            merged += 1;
+          } catch (_) {}
+        }
+      }
+    }
+
+    return {
+      dryRun: false,
+      threshold,
+      margin,
+      faceTotal: n,
+      pairCount: pairs.length,
+      adoptable: chosen.length,
+      suggestedPairs,
+      merged,
+      samples,
+    };
+  }
+
   async setFaceCover(params = {}) {
     const rawFaceId = Number(params.faceId ?? params.face_id);
     const fileHash = params.fileHash ?? params.file_hash;

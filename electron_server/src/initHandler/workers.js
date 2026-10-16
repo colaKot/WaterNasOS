@@ -344,6 +344,49 @@ module.exports = {
 
   startFaceWorker() {
     let that = this;
+
+    // ⭐⭐ 2026-10-16 停摆修复：把「按需重启」抽成公共函数，onStop / onError 两个出口都走它。
+    // 旧实现只在 onError（worker 带 signal 退出）里重启，而 faceWorker 把队列取空时是
+    // `process.exit(0)` **干净退出**，只会触发 onStop（原本是个空函数）⇒ 一旦线程池系统性
+    // 失败、整批被 park，人脸识别就永久停摆（实测 60,363 张 gen_faces=0 却没有任何
+    // faceWorker 进程在跑）。
+    const scheduleRestartIfNeeded = () => {
+      if (that._faceRestartTimer) return;
+      that._faceRestartTimer = setTimeout(() => {
+        that._faceRestartTimer = null;
+        Promise.resolve()
+          .then(async () => {
+            // 服务正在关闭 ⇒ 绝对不要再把 worker 拉起来
+            if (singletonWorkerManager.shuttingDown) return;
+            // 读开关：关掉了就不重启
+            try {
+              if (!knexUtil.hasConnection(dbUtil.DB_PATHS.MAIN_DB)) {
+                await knexUtil.init(dbUtil.DB_PATHS.MAIN_DB);
+              }
+            } catch (_) {}
+            const enabled = await tableConfig.getConfigByKey('ai_face_enable').catch(() => '0');
+            if (enabled !== '1') return;
+            if (singletonWorkerManager.isWorkerRunning('faceWorker')) return;
+
+            if (!knexUtil.hasConnection(dbUtil.DB_PATHS.PHOTO_DB)) {
+              await knexUtil.init(dbUtil.DB_PATHS.PHOTO_DB);
+            }
+            const knex = knexUtil.getInstance(dbUtil.DB_PATHS.PHOTO_DB);
+            const pending = await knex('photo_index')
+              .where({ gen_faces: 0, is_file: 1, in_trash: 0 })
+              .whereIn('type', [1, 2])
+              .count('* as total')
+              .first()
+              .then(r => Number((r && r.total) || 0))
+              .catch(() => 0);
+            if (pending <= 0) return;
+            Logger.info('🔄 face worker auto-restart, pending:', pending);
+            that.startFaceWorker();
+          })
+          .catch(e => Logger.error('❌ face worker auto-restart failed:', e));
+      }, 15000);
+    };
+
     return singletonWorkerManager.startWorker('faceWorker', `ai${path.sep}faces${path.sep}faceWorker.js`, {
       env: {
         WORKER_TYPE: 'aiFace',
@@ -356,9 +399,14 @@ module.exports = {
 
       },
       onStop: (code, signal) => {
-
+        // ⭐ 干净退出（code=0 且无 signal）也要按需重启，见函数头注释。
+        const normalExit = !signal && Number(code) === 0;
+        if (normalExit) scheduleRestartIfNeeded();
       },
       onError: error => {
+        if (error) Logger.error('❌ face worker error:', error);
+        // 崩溃退出：老逻辑是「把当前队首那张标记为已处理再重启」，用来跳过会把 worker 搞崩的图片。
+        // 保留该行为，但只在真崩溃路径里跑（推理失败已经不会让进程崩了）。
         async function check() {
           const knex = knexUtil.getInstance(dbUtil.DB_PATHS.PHOTO_DB);
 
@@ -367,26 +415,14 @@ module.exports = {
             const nextItem = await knex('photo_index').select('id', 'path').where({ gen_faces: 0, is_file: 1, in_trash: 0 }).whereIn('type', [1, 2]).orderBy('original_time', 'asc').first();
 
             if (nextItem) {
-              console.log(`⚠️ 检测到Worker异常退出，跳过可能导致崩溃的图片: id=${nextItem.id}, path=${nextItem.path}/${nextItem.filename}`);
+              console.log(`⚠️ 检测到Worker异常退出，跳过可能导致崩溃的图片: id=${nextItem.id}, path=${nextItem.path}`);
               await knex('photo_index').where({ id: nextItem.id }).update({ gen_faces: 1 });
             }
           } catch (e) {
             console.error('Skip corrupt image failed:', e);
           }
 
-          let result = await knex('photo_index')
-            .where({ gen_faces: 0, is_file: 1, in_trash: 0 })
-            .whereIn('type', [1, 2])
-            .count('* as total') // 用 as 给计数结果起别名 total
-            .first(); // 只取第一条结果（count 结果只有一行）
-
-          if (result && result.total > 0) {
-            console.log('人脸检测正在重启,待处理数量：', result.total);
-
-            setTimeout(() => {
-              that.startFaceWorker();
-            }, 10 * 1000);
-          }
+          scheduleRestartIfNeeded();
         }
         check();
       },

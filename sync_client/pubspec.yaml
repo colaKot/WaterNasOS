@@ -1,7 +1,7 @@
 name: nascab_sync
 description: "WaterNasOS 目录同步客户端 —— 电脑 <-> NAS 目录同步的 Windows 独立程序"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

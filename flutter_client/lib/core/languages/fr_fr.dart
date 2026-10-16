@@ -740,7 +740,7 @@ class FrFr extends Translations {
       'app_mounts': 'Montages',
       'app_image_view': 'Visionneuse d\'images',
       'app_monitor': 'Moniteur',
-      'app_process': 'Processus',
+      'app_process': 'Processus de tâches',
       'process.empty': 'Aucun processus en cours',
       'process.name': 'Nom',
       'process.pid': 'ID du processus',
@@ -2096,7 +2096,7 @@ class FrFr extends Translations {
       'file_operation': 'Opération fichier',
       'file_operation_running_title': 'Opération fichier en cours',
       'file_operation_task_running_hint':
-          "Après avoir appuyé sur « Exécuter en arrière-plan », vous pouvez consulter la progression dans Centre des tâches → Opération fichier.",
+          "Après avoir appuyé sur « Exécuter en arrière-plan », vous pouvez consulter la progression dans Centre de téléchargement → Opération fichier.",
       'run_in_background': 'Exécuter en arrière-plan',
       'processing': 'En cours',
       'waiting': 'En attente',
@@ -2629,7 +2629,7 @@ class FrFr extends Translations {
       'folder_action_confirm_move':
           'Voulez-vous vraiment déplacer @count éléments vers @target ?',
       'folder_action_queued':
-          'Opération mise en file d\'attente, vérifiez le centre de tâches pour la progression',
+          'Opération mise en file d\'attente, vérifiez le centre de téléchargement pour la progression',
       'folder_name_strategy': 'Stratégie même nom',
       'file_allready_in_upload_queue':
           'Fichier déjà dans file d\'attente upload',
@@ -2687,7 +2687,7 @@ class FrFr extends Translations {
       'app_docker': 'Docker',
       'app_transmission': 'Transmission',
       'app_note': 'Notebook',
-      'app_task_center': 'Centre tâches',
+      'app_task_center': 'Centre de téléchargement',
       'message_center': 'Centre messages',
       'app_backup': 'Sauvegarde',
       'task_count': 'Total @count éléments',
@@ -2765,7 +2765,7 @@ class FrFr extends Translations {
       'home_no_message': 'Aucun message',
       'monitor_click_to_view': 'Cliquez pour voir détails',
       'home_title': 'WaterNasOS',
-      'home_task_center': 'Centre tâches',
+      'home_task_center': 'Centre de téléchargement',
       'recycle_bin_empty': 'Aucun fichier dans corbeille',
 
       // Centre messages
