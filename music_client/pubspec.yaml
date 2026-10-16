@@ -23,6 +23,10 @@ dependency_overrides:
     path: ../flutter_client/packages/audio_service
   dchs_motion_sensors:
     path: ../flutter_client/packages/dchs_motion_sensors
+  # image 4.11.0 的 png_decoder 用了 dart:io ZLibDecoder.decodeLazy，
+  # 当前 Flutter 3.47.5 / Dart 3.13.4 没有该方法 ⇒ 编译报错。锁回 4.10.1
+  # （该版本此前可正常构建，pub 缓存中已存在）。与主客户端保持一致。
+  image: 4.10.1
 
 dev_dependencies:
   flutter_lints: ^6.0.0
