@@ -13,6 +13,7 @@ class PhotoAiSettingsController extends GetxController {
   final RxBool petEnabled = false.obs;
   final RxBool faceEnabled = false.obs;
   final RxBool placeEnabled = false.obs;
+  final RxBool activityEnabled = true.obs;
   final RxBool similarEnabled = false.obs;
   final RxBool gpuPrefer = true.obs; // 默认开启
   final RxInt faceMinShowCount = 0.obs;
@@ -26,6 +27,7 @@ class PhotoAiSettingsController extends GetxController {
 
   final RxInt ocrProgress = 0.obs;
   final RxInt placeProgress = 0.obs;
+  final RxInt activityProgress = 0.obs;
   final RxInt faceProgress = 0.obs;
   final RxInt similarScanProgress = 0.obs;
   final RxInt similarCompareProgress = 0.obs;
@@ -63,6 +65,9 @@ class PhotoAiSettingsController extends GetxController {
       faceEnabled.value = data['faceEnable'] == 1 || data['faceEnable'] == '1';
       placeEnabled.value =
           data['placeEnable'] == 1 || data['placeEnable'] == '1';
+      // 活动维度：未设置 = 开（服务端按默认 1 返回）
+      activityEnabled.value =
+          !(data['activityEnable'] == 0 || data['activityEnable'] == '0');
       similarEnabled.value =
           data['similarEnable'] == 1 || data['similarEnable'] == '1';
       gpuPrefer.value =
@@ -76,6 +81,7 @@ class PhotoAiSettingsController extends GetxController {
       if (aiProgress is Map) {
         final face = aiProgress['face'];
         final place = aiProgress['place'];
+        final activity = aiProgress['activity'];
         final ocr = aiProgress['ocr'];
         if (face is Map) {
           faceProgress.value = parseInt(face['percent']).clamp(0, 100);
@@ -83,12 +89,16 @@ class PhotoAiSettingsController extends GetxController {
         if (place is Map) {
           placeProgress.value = parseInt(place['percent']).clamp(0, 100);
         }
+        if (activity is Map) {
+          activityProgress.value = parseInt(activity['percent']).clamp(0, 100);
+        }
         if (ocr is Map) {
           ocrProgress.value = parseInt(ocr['percent']).clamp(0, 100);
         }
       } else {
         faceProgress.value = 0;
         placeProgress.value = 0;
+        activityProgress.value = 0;
         ocrProgress.value = 0;
       }
 
@@ -193,6 +203,55 @@ class PhotoAiSettingsController extends GetxController {
     }
   }
 
+  /// 活动维度开关（与场景共用 placesWorker；只写 config，不启停 worker）
+  Future<void> toggleActivity(bool value) async {
+    if (!canEdit) {
+      ToastUtil.show('photo_ai_admin_only'.tr);
+      return;
+    }
+    final prev = activityEnabled.value;
+    activityEnabled.value = value;
+    try {
+      DialogUtil.showLoading(message: 'loading'.tr);
+      final res = await _api.setAiActivityEnable(value, showLoading: false);
+      if (!res.success) {
+        activityEnabled.value = prev;
+        ToastUtil.show(res.message ?? 'network_failure'.tr);
+      }
+    } finally {
+      DialogUtil.dismissLoading();
+    }
+  }
+
+  /// ⭐ 2026-10-16 只重置活动维度（/place/activity/reset，管理员）。
+  /// 场景结果不受影响；重置后服务端会把 placesWorker 拉起来继续跑。
+  Future<void> resetActivity() async {
+    if (!canEdit) {
+      ToastUtil.show('photo_ai_admin_only'.tr);
+      return;
+    }
+    DialogUtil.showConfirmDialog(
+      title: 'need_confirm'.tr,
+      content: 'photo_ai_activity_reset_confirm'.tr,
+      onConfirm: () async {
+        try {
+          DialogUtil.showLoading(message: 'loading'.tr);
+          final res = await _api.resetActivity(showLoading: false);
+          if (!res.success) {
+            ToastUtil.show(res.message ?? 'network_failure'.tr);
+            return;
+          }
+          ToastUtil.show('operation_success'.tr);
+        } finally {
+          DialogUtil.dismissLoading();
+        }
+      },
+      confirmText: 'ok'.tr,
+      cancelText: 'cancel'.tr,
+    );
+  }
+
+
   Future<void> toggleSimilar(bool value) async {
     if (!canEdit) {
       ToastUtil.show('photo_ai_admin_only'.tr);
@@ -254,6 +313,36 @@ class PhotoAiSettingsController extends GetxController {
         try {
           DialogUtil.showLoading(message: 'loading'.tr);
           final res = await _api.resetPlaces(showLoading: false);
+          if (!res.success) {
+            ToastUtil.show(res.message ?? 'network_failure'.tr);
+            return;
+          }
+          ToastUtil.show('operation_success'.tr);
+        } finally {
+          DialogUtil.dismissLoading();
+        }
+      },
+      confirmText: 'ok'.tr,
+      cancelText: 'cancel'.tr,
+    );
+  }
+
+  /// ⭐ 2026-10-16 OCR 全库重跑（/app_ai/ocr/reset，管理员）
+  ///
+  /// 换 OCR 模型后刷新存量结果用（v6 上线前入库的 gen_ocr=1 仍是 v5 结果）。
+  /// ⚠️ 全库重跑数小时；期间 OCR 搜索命中会逐步恢复。
+  Future<void> resetOcr() async {
+    if (!canEdit) {
+      ToastUtil.show('photo_ai_admin_only'.tr);
+      return;
+    }
+    DialogUtil.showConfirmDialog(
+      title: 'need_confirm'.tr,
+      content: 'photo_ai_ocr_reset_confirm'.tr,
+      onConfirm: () async {
+        try {
+          DialogUtil.showLoading(message: 'loading'.tr);
+          final res = await _api.resetOcr(showLoading: false);
           if (!res.success) {
             ToastUtil.show(res.message ?? 'network_failure'.tr);
             return;

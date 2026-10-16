@@ -610,7 +610,7 @@ python tool/_check_standalone_android.py
 ## 6. 品牌名与对外发行红线
 
 本仓已改名 **WaterNasOS**（379 文件 / 1659 处，备份 `G:/work/_rename_backup_nascab_20261008`）；
-发行仓 `https://github.com/colaKot/WaterNasOS`（GPL-3.0 + AGPL-3.0 分层授权，单提交 `557d809`，4872 文件 / 95.7 MB，无历史）；
+发行仓 `https://github.com/colaKot/WaterNasOS`（GPL-3.0，单提交 `557d809`，4872 文件 / 95.7 MB，无历史）；
 构建脚本 `G:/work/WaterNasOS`，由 `gnascab_pack.py` 从本仓精简复制。
 
 ### 6.1 ⭐⭐ 绝不能改（改了 = 新 App，老用户无法覆盖升级）

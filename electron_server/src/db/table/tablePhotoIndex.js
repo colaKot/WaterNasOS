@@ -36,6 +36,13 @@ class tablePhotoIndex {
     if (!colNames.has('gen_activity')) {
       await addColumn('gen_activity', 'INTEGER DEFAULT 0');
     }
+    // ⭐ 2026-10-16 P0-3 以图搜图：CLIP 图像嵌入（L2 归一化 float32 × 512 = 2048 字节）。
+    // 此前 placesClipUtil.scoreImage 算出的 emb 只用于与标签嵌入点积、**算完即丢**，
+    // 所以「以图搜图」必须先把向量留下来。消费方 = placesService.searchByImage。
+    // 老数据为 NULL ⇒ 由 tool/_backfill_clip_emb.js 回填（按 clip_emb IS NULL 天然可续跑）。
+    if (!colNames.has('clip_emb')) {
+      await addColumn('clip_emb', 'BLOB');
+    }
   }
 
   /**

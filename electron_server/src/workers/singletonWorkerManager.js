@@ -37,6 +37,27 @@ class SingletonWorkerManager {
     if (!keepConfig) this.workerConfigs.delete(workerName);
   }
 
+  /**
+   * ⭐ 2026-10-16 P1-9（写入型控制的第一块）：**AI 流水线全局暂停**标志。
+   *
+   * 语义刻意做窄，避免误伤：
+   *   · 只影响「**自动**重启 / 开机自启」这类后台行为；
+   *   · 不影响任何进程的停止（暂停就是把 worker 停掉，写库不受影响）；
+   *   · ⛔ 不拦显式用户动作（「重新识别」那种是用户明确意图，见 appAiService.rerunAi 的处理）。
+   * ⇒ 用户点「暂停」时，AI 会写完**当前这一张**就退出，不丢数据、随时可恢复。
+   */
+  aiPaused = false;
+
+  setAiPaused(paused) {
+    this.aiPaused = !!paused;
+    Logger.info(`[worker] AI 流水线${this.aiPaused ? '已暂停（后台识别不再自动启动）' : '已恢复'}`);
+    return this.aiPaused;
+  }
+
+  isAiPaused() {
+    return this.aiPaused === true;
+  }
+
   init() {
     Logger.info('🔄 Initializing singleton worker manager');
 

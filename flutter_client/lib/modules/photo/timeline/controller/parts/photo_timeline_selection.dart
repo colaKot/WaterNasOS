@@ -277,7 +277,25 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
     final ids = selectedItems.toList();
     if (ids.isEmpty) return;
     try {
-      final res = await _apiService.batchTrash(ids);
+      // ⭐ 2026-10-16 P0-6：先「预演」再执行。
+      // 批量删除在 NAS 场景下一按就是几百上千张，此前是**直接执行**、删完就没了；
+      // 现在先让用户看到「将移入回收站 N 张 · X MB」，并且执行后 7 天内可撤销。
+      final preview = await _apiService.previewTrash(ids);
+      final pv = preview.success ? (preview.data ?? <String, dynamic>{}) : <String, dynamic>{};
+      final count = (pv['count'] as num?)?.toInt() ?? ids.length;
+      final bytes = (pv['bytes'] as num?)?.toInt() ?? 0;
+      final confirmed = await DialogUtil.showConfirmDialog(
+        title: 'photo_delete_preview_title'.tr,
+        content: [
+          'photo_delete_preview_photos'.tr + '：' + '$count',
+          'photo_delete_preview_size'.tr + '：' + _formatBytes(bytes),
+        ].join('\n'),
+        confirmText: 'ok'.tr,
+        cancelText: 'cancel'.tr,
+      );
+      if (confirmed != true) return;
+
+      final res = await _apiService.batchTrashLogged(ids);
       if (!res.success) {
         ToastUtil.show(
           (res.code == 403 ? 'permission_denied' : 'operation_failed').tr,
@@ -286,14 +304,171 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
       }
 
       final idsSet = selectedItems.toSet();
+      final operationId = (res.data?['operationId'] as num?)?.toInt();
 
       _removeItemsAndCleanUp(idsSet);
-
       exitMultiSelectMode();
-      ToastUtil.show('photo_trashed_success'.tr);
+
+      if (operationId != null && operationId > 0) {
+        // 带「撤销」按钮 —— 这是 NAS 场景最需要的安全网
+        Get.snackbar(
+          'photo_delete_preview_title'.tr,
+          'photo_trashed_success'.tr,
+          mainButton: TextButton(
+            onPressed: () => undoOperation(operationId),
+            child: Text('photo_undo'.tr),
+          ),
+          duration: const Duration(seconds: 8),
+        );
+      } else {
+        ToastUtil.show('photo_trashed_success'.tr);
+      }
     } catch (_) {
       ToastUtil.show('operation_failed'.tr);
     }
+  }
+
+  /// ⭐ 2026-10-16 P0-6：撤销一次操作（按 operation_id 回滚）。
+  Future<void> undoOperation(int operationId) async {
+    try {
+      final res = await _apiService.undoOperation(operationId);
+      if (!res.success) {
+        final code = res.code;
+        if (code == 409) {
+          ToastUtil.show('photo_undo_expired'.tr);
+        } else {
+          ToastUtil.show('photo_undo_failed'.tr);
+        }
+        return;
+      }
+      ToastUtil.show('photo_undo_done'.tr);
+      await refreshTimeline();
+    } catch (_) {
+      ToastUtil.show('photo_undo_failed'.tr);
+    }
+  }
+
+  /// 把字节数格式化成肉眼可读（KB / MB / GB）。
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 KB';
+    const units = <String>['B', 'KB', 'MB', 'GB', 'TB'];
+    double v = bytes.toDouble();
+    int i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i += 1;
+    }
+    return '${v.toStringAsFixed(v >= 100 || i == 0 ? 0 : 1)} ${units[i]}';
+  }
+
+
+  /// ⭐ 2026-10-16 P1-11 时光对照：找**同一个地方、不同年份、长得像**的照片。
+  /// 权重沿用公开口径：视觉相似度 0.7 + GPS 0.15 + 时间跨度 0.15（视觉那一路用 P0-3 落库的 clip_emb）。
+  Future<void> timeCompareSelected() async {
+    final selected = getSelectedPhotoItems();
+    if (selected.length != 1) {
+      ToastUtil.show('photo_search_by_image_need_one'.tr);
+      return;
+    }
+    final src = selected.first;
+    if (src.fileHash.trim().isEmpty) return;
+    final res = await PhotoAiSettingsApiService.instance
+        .getTimeCompare(src.fileHash);
+    if (!res.success) {
+      ToastUtil.show(res.message ?? 'operation_failed');
+      return;
+    }
+    final items = ((res.data?['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    if (items.isEmpty) {
+      ToastUtil.show('photo_insight_no_compare'.tr);
+      return;
+    }
+    exitMultiSelectMode();
+    _openPhotoListByItems(items, title: 'photo_insight_time_compare'.tr);
+  }
+
+  /// ⭐ 2026-10-16 P0-3 以图搜图：拿选中的那张照片，找库里最像的 N 张。
+  Future<void> searchByImageSelected() async {
+    final selected = getSelectedPhotoItems();
+    if (selected.isEmpty) return;
+    if (selected.length > 1) {
+      ToastUtil.show('photo_search_by_image_need_one'.tr);
+      return;
+    }
+    await _searchByImageCore(selected.first);
+  }
+
+  /// ⭐ 2026-10-16 右键菜单：单张照片直接「以图搜图」（与多选栏共用同一实现）。
+  Future<void> searchByImageForItem(TimelinePhotoItem item) async {
+    await _searchByImageCore(item);
+  }
+
+  Future<void> _searchByImageCore(TimelinePhotoItem src) async {
+    if (src.fileHash.trim().isEmpty) return;
+
+    final res = await _apiService.searchByImage(fileHash: src.fileHash);
+    if (!res.success) {
+      ToastUtil.show(res.message ?? 'operation_failed');
+      return;
+    }
+    final items = res.data ?? const <Map<String, dynamic>>[];
+    if (items.isEmpty) {
+      ToastUtil.show('photo_search_by_image_empty'.tr);
+      return;
+    }
+    // 结果里通常含查询图自己（相似度 1.0），先剔除，避免「点开发现自己」
+    final results = items
+        .where((e) => (e['file_hash']?.toString() ?? '') != src.fileHash)
+        .toList();
+    final finalList = results.isEmpty ? items : results;
+    exitMultiSelectMode();
+    _openPhotoListByItems(finalList, title: 'photo_search_by_image'.tr);
+  }
+
+  /// 复用既有看图器（CustomGallery / 桌面看图窗）打开一组「按路径描述的照片」。
+  /// 与相似照片页（ai_similar）打开预览的方式保持一致。
+  void _openPhotoListByItems(
+    List<Map<String, dynamic>> items, {
+    required String title,
+  }) {
+    final images = items
+        .where((e) => (e['fullpath']?.toString() ?? '').isNotEmpty)
+        .map(
+          (e) => <String, dynamic>{
+            'type': (e['type'] as num?)?.toInt() == 2 ? 'video' : 'image',
+            'path': e['fullpath']?.toString() ?? '',
+            'name': e['filename']?.toString() ?? '',
+            'photoId': 0,
+          },
+        )
+        .toList();
+    if (images.isEmpty) {
+      ToastUtil.show('photo_search_by_image_empty'.tr);
+      return;
+    }
+
+    Future<bool> deleteHandler(Map<String, dynamic> item, int _) async => false;
+
+    if (DeviceUtils.isDesktop && Get.isRegistered<PcHomeController>()) {
+      Get.find<PcHomeController>().openImageViewer(
+        images,
+        0,
+        deleteHandler: deleteHandler,
+      );
+      return;
+    }
+    if (!Get.isRegistered<CustomGalleryController>()) {
+      Get.put(CustomGalleryController());
+    }
+    final galleryCtrl = CustomGalleryController.instance;
+    galleryCtrl.configure(deleteHandler: deleteHandler);
+    galleryCtrl.isControlsVisible.value = true;
+    galleryCtrl.galleryItems = images;
+    galleryCtrl.galleryInitialIndex.value = 0;
+    Get.to(() => const CustomGallery());
   }
 
   void removeTrashedFromMemory(Iterable<int> ids) {
@@ -746,6 +921,114 @@ extension PhotoTimelineControllerSelection on PhotoTimelineController {
         }
       }
     }
+  }
+
+  /// ⭐ 2026-10-16 P0-8：对选中照片分项「重新识别」。
+  ///
+  /// 分项而不是「全部重来」：用户大多数时候只是某一张的 OCR 认错了、
+  /// 或者人脸分组不对，没必要把已经跑好的场景/活动一起推翻。
+  Future<void> rerunSelectedAi() async {
+    final selected = getSelectedPhotoItems();
+    if (selected.isEmpty) return;
+    await rerunAiForItems(selected);
+  }
+
+  /// ⭐ 2026-10-16 右键菜单：单张照片「重新识别（人脸 / OCR / 场景 / 活动）」。
+  Future<void> rerunAiForItem(TimelinePhotoItem item) async {
+    await rerunAiForItems(<TimelinePhotoItem>[item]);
+  }
+
+  /// 多选栏与右键菜单共用的实现（弹窗选分项 → 按 file_hash 入队）。
+  Future<void> rerunAiForItems(List<TimelinePhotoItem> items) async {
+    final hashes = items
+        .map((e) => e.fileHash)
+        .where((e) => e.trim().isNotEmpty)
+        .toList();
+    if (hashes.isEmpty) return;
+
+    const kinds = <String>['face', 'ocr', 'place', 'activity'];
+    final picked = <String>{...kinds}; // 默认全选，用户按需取消
+
+    String labelOf(String k) {
+      switch (k) {
+        case 'face':
+          return 'photo_rerun_face'.tr;
+        case 'ocr':
+          return 'photo_rerun_ocr'.tr;
+        case 'place':
+          return 'photo_rerun_place'.tr;
+        default:
+          return 'photo_rerun_activity'.tr;
+      }
+    }
+
+    final ok = await Get.dialog<bool>(
+      AlertDialog(
+        title: Text('photo_rerun_title'.tr),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final theme = Theme.of(ctx);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'photo_rerun_hint'.tr,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                for (final k in kinds)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: picked.contains(k),
+                    title: Text(labelOf(k)),
+                    onChanged: (v) {
+                      setLocal(() {
+                        if (v == true) {
+                          picked.add(k);
+                        } else {
+                          picked.remove(k);
+                        }
+                      });
+                    },
+                  ),
+              ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: Text('cancel'.tr),
+          ),
+          TextButton(
+            onPressed: () => Get.back(result: true),
+            child: Text('photo_rerun_start'.tr),
+          ),
+        ],
+      ),
+      barrierDismissible: true,
+    );
+    if (ok != true) return;
+    if (picked.isEmpty) {
+      ToastUtil.show('photo_rerun_none_selected'.tr);
+      return;
+    }
+
+    final res = await _apiService.rerunAi(
+      fileHashes: hashes,
+      kinds: picked.toList(),
+    );
+    if (!res.success) {
+      ToastUtil.show(res.message ?? 'network_failure');
+      return;
+    }
+    ToastUtil.show('photo_rerun_queued'.tr);
+    exitMultiSelectMode();
   }
 }
 

@@ -605,10 +605,16 @@ class PlacesWorker {
    * 实现体在 placesFusion.recognizeScene（离线校验脚本调的是同一个函数）。
    */
   async recognize(imagePath) {
+    // ⭐ 2026-10-16 P0-3：顺手把 CLIP 图像嵌入留下来（以图搜图要用）。
+    // 只在这一处捕获，并带上「当前照片 id」；写入时校验 id 一致，
+    // 杜绝长驻 worker 里跨张复用字段导致的「上一张的向量写到这一张上」。
+    this._clipEmb = null;
     const scoreClip = this.clipAvailable
       ? async (p) => {
         try {
-          return await placesClipUtil.scoreImage(p, { topK: 1 });
+          const scored = await placesClipUtil.scoreImage(p, { topK: 1 });
+          if (scored && scored.emb) this._clipEmb = { id: this._clipTargetId, emb: scored.emb };
+          return scored;
         } catch (err) {
           Logger.warn(`[placesWorker] CLIP 打分失败，本张只用 Places365: ${err && err.message ? err.message : err}`);
           return null;
@@ -666,6 +672,7 @@ class PlacesWorker {
     }
 
     let result = null;
+    this._clipTargetId = id; // 供 scoreClip 记录「这一张」的向量归属
     try {
       result = await this.recognize(imagePath);
     } catch (err) {
@@ -756,7 +763,8 @@ class PlacesWorker {
           }
         }
 
-        await trx('photo_index').where({ id }).update({ gen_place: 1 });
+        // ⭐ 被可判性 head 拦下的照片不给场景标签，但**向量照样留下** —— 以图搜图不该漏掉这些
+        await trx('photo_index').where({ id }).update({ gen_place: 1, ...this.clipEmbColumn(id) });
       });
     } catch (err) {
       Logger.error('❌  scene DB write failed:', err);
@@ -764,10 +772,26 @@ class PlacesWorker {
     }
   }
 
+  /**
+   * ⭐ 2026-10-16 P0-3：把本轮算出的 CLIP 图像向量转成 update 片段。
+   * 必须校验 id —— `_clipEmb` 是跨张复用的实例字段，不校验就会静默写错数据
+   * （比「没有向量」更糟：以图搜图会返回一张毫不相干的图）。
+   */
+  clipEmbColumn(id) {
+    const cached = this._clipEmb;
+    if (!cached || !cached.emb || Number(cached.id) !== Number(id)) return {};
+    try {
+      const emb = cached.emb;
+      return { clip_emb: Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength) };
+    } catch (_) {
+      return {};
+    }
+  }
+
   async markIndexDone(id) {
     await this.knex('photo_index')
       .where({ id })
-      .update({ gen_place: 1 })
+      .update({ gen_place: 1, ...this.clipEmbColumn(id) })
       .catch(() => {});
   }
 

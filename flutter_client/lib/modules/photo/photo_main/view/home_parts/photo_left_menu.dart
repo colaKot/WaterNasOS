@@ -96,6 +96,14 @@ class PhotoLeftMenu extends StatelessWidget {
             key: 'ai.scene',
             icon: Icons.landscape_outlined,
           ),
+          // ⭐ 2026-10-16 P1/P2 智能发现：一日一帧 / 票据行程 / 记忆 / 重复照片 /
+          //            年度报告 / 旅程回放 / 模型目录 —— 全部只读聚合
+          if (isAdmin)
+            TwoLevelSideMenuItem(
+              title: 'photo_menu_ai_insight'.tr,
+              key: 'ai.insight',
+              icon: Icons.insights_outlined,
+            ),
           if (isAdmin)
             TwoLevelSideMenuItem(
               title: 'photo_menu_ai_similar'.tr,

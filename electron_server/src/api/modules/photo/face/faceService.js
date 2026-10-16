@@ -454,6 +454,278 @@ class FaceService {
   }
 
   /**
+   * ⭐ 2026-10-16 P0-7 人脸重扫「两阶段」之 preview：
+   * **只算差异，不写任何数据**。用户看到「将移除 N 张脸 / 影响 M 个人物组 / 重跑 K 张照片」后再决定是否 apply。
+   *
+   * 为什么需要它：rescanFaces 是**直接执行**的 —— 一按就把可见范围内的
+   * photo_face2filehash 全删、gen_faces 全部置 0、空壳组连样本一起清掉。
+   * 对拥有几万张照片的库来说，这个动作不可逆（分组与命名都保不住），
+   * 用户点之前根本无法判断代价。此处给出精确代价，apply 仍复用 rescanFaces（行为一字不改）。
+   *
+   * @param {Object} params {validPaths}
+   * @returns {Promise<{photos:number, faceRows:number, faces:number, samples:number, emptyGroupsAfter:number, dryRun:boolean}>}
+   */
+  async previewRescan(params = {}) {
+    const validPaths = (Array.isArray(params.validPaths) ? params.validPaths : []).filter(Boolean);
+    const empty = { photos: 0, faceRows: 0, faces: 0, samples: 0, emptyGroupsAfter: 0, dryRun: true };
+    if (validPaths.length === 0) return empty;
+
+    // 可见范围子查询（与 rescanFaces 的 base() 完全同口径：is_file=1 ∧ in_trash=0 ∧ 路径前缀）
+    const scope = this.knex('photo_index as p')
+      .select('p.file_hash')
+      .where('p.is_file', 1)
+      .andWhere('p.in_trash', 0)
+      .andWhereRaw("p.file_hash IS NOT NULL AND p.file_hash <> ''");
+    photoPathQueryUtil.applyPathPrefixFilter(scope, 'p.path', validPaths);
+    // toQuery() 会把绑定值按 knex 规则转义后内联，子查询可直接拼进下面几条统计 SQL。
+    const scopeSql = scope.toQuery();
+
+    const scalar = async (sql) => {
+      try {
+        const raw = await this.knex.raw(sql);
+        const rows = Array.isArray(raw) ? raw : ((raw && raw.rows) || []);
+        const first = rows[0] || {};
+        return Number(first.n !== undefined ? first.n : (Object.values(first)[0] ?? 0)) || 0;
+      } catch (err) {
+        Logger.error('previewRescan 统计失败:', err);
+        return -1; // -1 表示该项统计失败，前端只提示不确定，不阻断
+      }
+    };
+
+    const photos = await scalar(`SELECT COUNT(*) AS n FROM (${scopeSql})`);
+    if (photos === 0) return empty;
+
+    const faceRows = await scalar(`SELECT COUNT(*) AS n FROM photo_face2filehash WHERE file_hash IN (${scopeSql})`);
+    const faces = await scalar(`SELECT COUNT(DISTINCT face_id) AS n FROM photo_face2filehash WHERE file_hash IN (${scopeSql})`);
+    const samples = await scalar(
+      `SELECT COUNT(*) AS n FROM photo_face_samples WHERE face_id IN (SELECT DISTINCT face_id FROM photo_face2filehash WHERE file_hash IN (${scopeSql}))`
+    );
+    // 删除后仍「一条脸行都不剩」的组就是会被清掉的空壳（判定口径与 rescanFaces 的清理一致）
+    const emptyGroupsAfter = await scalar(
+      `SELECT COUNT(*) AS n FROM photo_faces pf WHERE NOT EXISTS (SELECT 1 FROM photo_face2filehash f2 WHERE f2.face_id = pf.face_id AND f2.file_hash NOT IN (${scopeSql}))`
+    );
+
+    return { photos, faceRows, faces, samples, emptyGroupsAfter, dryRun: true };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-2 合影组合相册：按「同框人脸组合」把照片归堆。
+   *
+   * 数据本来就在库里 —— `photo_face2filehash` 一行就是「某张照片里有某张脸」，
+   * 同一 file_hash 下的 face_id 集合就是「这张照片里同时出现了谁」。缺的只是聚合这一层。
+   *
+   * 三个必须守住的点：
+   *   1) 只统计**可见范围内**的照片（可见性零角色例外）；
+   *   2) 合并后的子脸统一折算到**根人脸** —— 否则合并完组合会按旧 face_id 再裂一遍；
+   *   3) 隐藏的人物不参与（`photo_faces.is_hide=1`）。
+   *
+   * @param {Object} params {validPaths, limit, minFaces}
+   * @returns {Promise<{items:Array, total:number}>}
+   */
+  async listPeerGroups(params = {}) {
+    const validPaths = (Array.isArray(params.validPaths) ? params.validPaths : []).filter(Boolean);
+    if (validPaths.length === 0) return { items: [], total: 0 };
+    const limit = Math.max(1, Math.min(200, Number(params.limit) || 60));
+    const minFaces = Math.max(2, Math.min(10, Number(params.minFaces ?? params.min_faces) || 2));
+
+    // 1) 人脸 -> 根人脸 / 姓名 / 隐藏
+    const faceRows = await this.knex('photo_faces').select('face_id', 'belong_face_id', 'name', 'is_hide').catch(() => []);
+    const parentOf = new Map();
+    const nameOf = new Map();
+    const hidden = new Set();
+    const decodeName = buf => {
+      if (Buffer.isBuffer(buf)) return buf.length > 0 ? buf.toString('utf8') : '';
+      return typeof buf === 'string' ? buf : '';
+    };
+    for (const r of Array.isArray(faceRows) ? faceRows : []) {
+      const id = Number(r && r.face_id);
+      if (!Number.isFinite(id)) continue;
+      const belong = Number((r && r.belong_face_id) || 0);
+      parentOf.set(id, belong > 0 ? belong : 0);
+      const root = belong > 0 ? belong : id;
+      const nm = decodeName(r && r.name);
+      if (nm && !nameOf.has(root)) nameOf.set(root, nm);
+      if (Number(r && r.is_hide) === 1) hidden.add(root);
+    }
+    const rootIdOf = id => {
+      let cur = id;
+      for (let i = 0; i < 16; i++) {
+        const p = parentOf.get(cur);
+        if (!p || p === cur) break;
+        cur = p;
+      }
+      return cur;
+    };
+
+    // 2) 可见范围内的「照片 -> 人脸根集合」
+    const q = this.knex('photo_face2filehash as f')
+      .join('photo_index as p', 'p.file_hash', 'f.file_hash')
+      .where('p.is_file', 1)
+      .where('p.in_trash', 0)
+      .select('f.file_hash as file_hash', 'f.face_id as face_id', 'p.original_time as original_time', 'p.path as path');
+    photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+    const rows = await q.catch(() => []);
+
+    const perHash = new Map();
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const hash = String((r && r.file_hash) || '');
+      const fid = Number(r && r.face_id);
+      if (!hash || !Number.isFinite(fid)) continue;
+      const root = rootIdOf(fid);
+      if (hidden.has(root)) continue;
+      let entry = perHash.get(hash);
+      if (!entry) {
+        entry = {
+          ids: new Set(),
+          time: Number((r && r.original_time) || 0) || 0,
+          path: r && r.path ? String(r.path) : '',
+        };
+        perHash.set(hash, entry);
+      }
+      entry.ids.add(root);
+    }
+
+    // 3) 按组合签名聚合
+    const groups = new Map();
+    for (const [hash, entry] of perHash) {
+      if (entry.ids.size < minFaces) continue;
+      const ids = Array.from(entry.ids).sort((a, b) => a - b);
+      const key = ids.join(',');
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          comboKey: key,
+          memberFaceIds: ids,
+          photoCount: 0,
+          coverFileHash: hash,
+          coverPath: entry.path,
+          coverTime: entry.time,
+        };
+        groups.set(key, g);
+      }
+      g.photoCount += 1;
+      if (entry.time >= g.coverTime) {
+        g.coverTime = entry.time;
+        g.coverFileHash = hash; // 封面取该组合里最新的一张
+        g.coverPath = entry.path;
+      }
+    }
+
+    const items = Array.from(groups.values())
+      .sort((a, b) => (b.photoCount - a.photoCount) || (b.coverTime - a.coverTime))
+      .slice(0, limit)
+      .map(g => ({
+        combo_key: g.comboKey,
+        member_face_ids: g.memberFaceIds,
+        // 名字与 ids 一一对应，空串代表「未命名」；由客户端决定怎么渲染
+        member_names: g.memberFaceIds.map(id => nameOf.get(id) || ''),
+        named_count: g.memberFaceIds.filter(id => !!nameOf.get(id)).length,
+        photo_count: g.photoCount,
+        cover_file_hash: g.coverFileHash,
+        cover_path: g.coverPath || '',
+      }));
+
+    return { items, total: groups.size };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-5 人物关系图谱数据：共同出现次数（边）+ 人物节点。
+   *
+   * 与合影组合相册同源（都来自 photo_face2filehash），区别是这里算的是**两两成对**的共现，
+   * 而不是「这一组人」的整组签名 —— 图谱要的是边，不是超边。
+   *
+   * @param {Object} params {validPaths, limit, minCount, focusFaceId}
+   */
+  async listRelations(params = {}) {
+    const validPaths = (Array.isArray(params.validPaths) ? params.validPaths : []).filter(Boolean);
+    if (validPaths.length === 0) return { nodes: [], edges: [], total: 0 };
+    const limit = Math.max(1, Math.min(500, Number(params.limit) || 120));
+    const minCount = Math.max(1, Math.min(100, Number(params.minCount ?? params.min_count) || 2));
+    const focusFaceId = Number(params.focusFaceId ?? params.focus_face_id);
+    const hasFocus = Number.isFinite(focusFaceId) && focusFaceId > 0;
+
+    const faceRows = await this.knex('photo_faces').select('face_id', 'belong_face_id', 'name', 'is_hide', 'face_count').catch(() => []);
+    const parentOf = new Map();
+    const nameOf = new Map();
+    const countOf = new Map();
+    const hidden = new Set();
+    const decodeName = buf => {
+      if (Buffer.isBuffer(buf)) return buf.length > 0 ? buf.toString('utf8') : '';
+      return typeof buf === 'string' ? buf : '';
+    };
+    for (const r of Array.isArray(faceRows) ? faceRows : []) {
+      const id = Number(r && r.face_id);
+      if (!Number.isFinite(id)) continue;
+      const belong = Number((r && r.belong_face_id) || 0);
+      parentOf.set(id, belong > 0 ? belong : 0);
+      const root = belong > 0 ? belong : id;
+      const nm = decodeName(r && r.name);
+      if (nm && !nameOf.has(root)) nameOf.set(root, nm);
+      if (Number(r && r.is_hide) === 1) hidden.add(root);
+      if (Number(r && r.face_count) > 0) countOf.set(root, Math.max(countOf.get(root) || 0, Number(r.face_count)));
+    }
+    const rootIdOf = id => {
+      let cur = id;
+      for (let i = 0; i < 16; i++) {
+        const p = parentOf.get(cur);
+        if (!p || p === cur) break;
+        cur = p;
+      }
+      return cur;
+    };
+
+    // 同框自连接：只取 a.face_id < b.face_id，天然去重且不含自环
+    const q = this.knex('photo_face2filehash as a')
+      .join('photo_face2filehash as b', function () {
+        this.on('a.file_hash', '=', 'b.file_hash').andOn('a.face_id', '<', 'b.face_id');
+      })
+      .join('photo_index as p', 'p.file_hash', 'a.file_hash')
+      .where('p.is_file', 1)
+      .where('p.in_trash', 0)
+      .groupBy('a.face_id', 'b.face_id')
+      .select('a.face_id as a_id', 'b.face_id as b_id')
+      .countDistinct({ n: 'a.file_hash' });
+    photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+    const rows = await q.catch(() => []);
+
+    const edgeMap = new Map();
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const ra = rootIdOf(Number(r && r.a_id));
+      const rb = rootIdOf(Number(r && r.b_id));
+      if (!Number.isFinite(ra) || !Number.isFinite(rb) || ra === rb) continue;
+      if (hidden.has(ra) || hidden.has(rb)) continue;
+      if (hasFocus && ra !== focusFaceId && rb !== focusFaceId) continue;
+      const lo = Math.min(ra, rb);
+      const hi = Math.max(ra, rb);
+      const n = Number((r && r.n) || 0) || 0;
+      const key = lo + ':' + hi;
+      edgeMap.set(key, (edgeMap.get(key) || 0) + n);
+    }
+
+    const edges = Array.from(edgeMap.entries())
+      .map(([key, count]) => {
+        const parts = key.split(':');
+        return { a: Number(parts[0]), b: Number(parts[1]), count };
+      })
+      .filter(e => e.count >= minCount)
+      .sort((x, y) => y.count - x.count)
+      .slice(0, limit);
+
+    const nodeIds = new Set();
+    for (const e of edges) {
+      nodeIds.add(e.a);
+      nodeIds.add(e.b);
+    }
+    const nodes = Array.from(nodeIds).map(id => ({
+      face_id: id,
+      name: nameOf.get(id) || '',
+      face_count: countOf.get(id) || 0,
+    }));
+
+    return { nodes, edges, total: edgeMap.size };
+  }
+
+  /**
    * ⭐ 2026-10-16 存量补扫（F2，修「烧图」遗留，用户报「2000 张只剩 300 多」）：
    * 把「可见范围内、已被标记 gen_faces=1、但 photo_face2filehash 里没有任何人脸行」的照片
    * 重新置为 gen_faces=0，交给后台 worker 重新检测。

@@ -2,6 +2,80 @@ import '../../../../core/api/base_api_service.dart';
 import '../models/photo_timeline_model.dart';
 
 class PhotoTimelineApiService extends BaseApiService {
+  /// ⭐ 2026-10-16 P0-4：搜索联想（人物 / 场景 / 活动 / 相机 / 文件名 / OCR / 年份）。
+  /// 计数按当前用户可见范围重算，可直接展示。
+  Future<ApiResponse<List<PhotoSearchSuggestion>>> suggestSearch({
+    required String query,
+    int limit = 8,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/search/suggest',
+      body: {'q': query, 'limit': limit},
+      showLoading: false,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    final data = res.data ?? <String, dynamic>{};
+    final raw = data['items'];
+    final items = raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) =>
+                PhotoSearchSuggestion.fromJson(e.cast<String, dynamic>()))
+            .where((e) => e.label.isNotEmpty)
+            .toList()
+        : <PhotoSearchSuggestion>[];
+    return ApiResponse.success(
+      items,
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-2：合影组合相册（按同框人脸组合聚合，只算本人可见范围）。
+  Future<ApiResponse<PhotoPeerGroupResult>> listPeerGroups({
+    int limit = 60,
+    int minFaces = 2,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/face/group_combos',
+      body: {'limit': limit, 'min_faces': minFaces},
+      showLoading: false,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(
+      PhotoPeerGroupResult.fromJson(res.data ?? <String, dynamic>{}),
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-8：对指定照片按项重跑 AI（face / ocr / place / activity）。
+  /// 只重置所选项目的标记，其它识别结果不受影响。
+  Future<ApiResponse<Map<String, dynamic>>> rerunAi({
+    required List<String> fileHashes,
+    required List<String> kinds,
+  }) async {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/app_ai/rerun',
+      body: {'file_hashes': fileHashes, 'kinds': kinds},
+      showLoading: true,
+    );
+  }
+
   Future<ApiResponse<Map<String, dynamic>>> getPhotoProperties(
     String path, {
     bool showLoading = false,
@@ -10,6 +84,37 @@ class PhotoTimelineApiService extends BaseApiService {
       '/api/photo/properties/get',
       body: {'path': path},
       showLoading: showLoading,
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-1：**只做语义解析，不查库**。
+  ///
+  /// 给搜索框下方的「已识别 / 未识别 / 命中的活动」提示条用。
+  /// 与 `/api/photo/place/search` 的区别：那条路要去 photo_places 捞一遍相册并算可见性，
+  /// 这里纯内存解析（短语词表 + 短语嵌入），代价极低，可以跟着输入防抖直接调。
+  Future<ApiResponse<PhotoSearchParseResult>> parseSearchQuery({
+    required String query,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/place/parse',
+      body: {'query': query},
+      showLoading: false,
+    );
+
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+
+    final data = res.data ?? <String, dynamic>{};
+    return ApiResponse.success(
+      PhotoSearchParseResult.fromJson(data),
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
     );
   }
 
@@ -25,6 +130,7 @@ class PhotoTimelineApiService extends BaseApiService {
     int? collectionId,
     int? smartAlbumId,
     int? faceId,
+    List<int>? comboFaceIds,
     String? placeName,
     bool loadTheDay = false,
     int? year,
@@ -43,6 +149,8 @@ class PhotoTimelineApiService extends BaseApiService {
         if (collectionId != null) 'collection_id': collectionId,
         if (smartAlbumId != null) 'smart_album_id': smartAlbumId,
         if (faceId != null) 'face_id': faceId,
+        if (comboFaceIds != null && comboFaceIds.isNotEmpty)
+          'combo_face_ids': comboFaceIds,
         if (placeName != null && placeName.trim().isNotEmpty)
           'place_name': placeName.trim(),
         if (loadTheDay) 'loadTheDay': 1,
@@ -93,6 +201,7 @@ class PhotoTimelineApiService extends BaseApiService {
     int? collectionId,
     int? smartAlbumId,
     int? faceId,
+    List<int>? comboFaceIds,
     String? placeName,
     bool loadTheDay = false,
     int? year,
@@ -113,6 +222,8 @@ class PhotoTimelineApiService extends BaseApiService {
         if (collectionId != null) 'collection_id': collectionId,
         if (smartAlbumId != null) 'smart_album_id': smartAlbumId,
         if (faceId != null) 'face_id': faceId,
+        if (comboFaceIds != null && comboFaceIds.isNotEmpty)
+          'combo_face_ids': comboFaceIds,
         if (placeName != null && placeName.trim().isNotEmpty)
           'place_name': placeName.trim(),
         if (loadTheDay) 'loadTheDay': 1,
@@ -319,6 +430,66 @@ class PhotoTimelineApiService extends BaseApiService {
   /// 返回 [ApiResponse] 以便调用方根据 [code]（如 403）展示对应提示（如权限被拒绝）
   Future<ApiResponse<void>> batchTrash(List<int> ids) async {
     return apiPost<void>('/api/photo/trash/add', body: {'ids': ids});
+  }
+
+  /// ⭐ 2026-10-16 P0-6：删除并留可撤销日志（返回 operationId，供「撤销」按钮用）。
+  /// 与 batchTrash 的区别：服务端会写一条 photo_operation_log，7 天内可按 id 回滚。
+  Future<ApiResponse<Map<String, dynamic>>> batchTrashLogged(List<int> ids) async {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/trash/add',
+      body: {'ids': ids},
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-6：批量「预演」—— 只返回将影响多少张 / 多少字节，**不写库**。
+  Future<ApiResponse<Map<String, dynamic>>> previewTrash(
+    List<int> ids, {
+    bool inTrash = true,
+  }) async {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/trash/preview',
+      body: {'ids': ids, 'in_trash': inTrash ? 1 : 0},
+      showLoading: false,
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-6：撤销一次批量操作。
+  Future<ApiResponse<Map<String, dynamic>>> undoOperation(int operationId) async {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/operation/undo',
+      body: {'operation_id': operationId},
+    );
+  }
+
+  /// ⭐ 2026-10-16 P0-3 以图搜图：传一张库内照片的 file_hash，返回可见范围内最像的 N 张。
+  /// 返回的条目已带 fullpath/filename/type，可直接喂给 CustomGallery 看图器。
+  Future<ApiResponse<List<Map<String, dynamic>>>> searchByImage({
+    required String fileHash,
+    int limit = 40,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/place/search_image',
+      body: {'file_hash': fileHash, 'limit': limit},
+      showLoading: true,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    final data = res.data ?? <String, dynamic>{};
+    final raw = data['items'];
+    final items = raw is List
+        ? raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
+        : <Map<String, dynamic>>[];
+    return ApiResponse.success(
+      items,
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
   }
 
   /// 从回收站中恢复照片

@@ -110,3 +110,81 @@ class AiFaceListResult {
     );
   }
 }
+
+/// ⭐ 2026-10-16 P0-5：人物关系图谱的一个节点（一个人物）。
+class AiFaceRelationNode {
+  final int faceId;
+  final String name;
+  final int faceCount;
+
+  const AiFaceRelationNode({
+    required this.faceId,
+    required this.name,
+    required this.faceCount,
+  });
+
+  factory AiFaceRelationNode.fromJson(Map<String, dynamic> json) {
+    return AiFaceRelationNode(
+      faceId: (json['face_id'] as num?)?.toInt() ?? 0,
+      name: json['name']?.toString() ?? '',
+      faceCount: (json['face_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  String get displayName => name.trim().isEmpty ? '#$faceId' : name;
+}
+
+/// ⭐ 2026-10-16 P0-5：一条「共同出现」的边。
+class AiFaceRelationEdge {
+  final int a;
+  final int b;
+  final int count;
+
+  const AiFaceRelationEdge({
+    required this.a,
+    required this.b,
+    required this.count,
+  });
+
+  factory AiFaceRelationEdge.fromJson(Map<String, dynamic> json) {
+    return AiFaceRelationEdge(
+      a: (json['a'] as num?)?.toInt() ?? 0,
+      b: (json['b'] as num?)?.toInt() ?? 0,
+      count: (json['count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class AiFaceRelationsResult {
+  final List<AiFaceRelationNode> nodes;
+  final List<AiFaceRelationEdge> edges;
+  final int total;
+
+  const AiFaceRelationsResult({
+    required this.nodes,
+    required this.edges,
+    this.total = 0,
+  });
+
+  factory AiFaceRelationsResult.fromJson(Map<String, dynamic> json) {
+    final nodesRaw = json['nodes'];
+    final edgesRaw = json['edges'];
+    return AiFaceRelationsResult(
+      nodes: nodesRaw is List
+          ? nodesRaw
+              .whereType<Map>()
+              .map((e) => AiFaceRelationNode.fromJson(e.cast<String, dynamic>()))
+              .where((e) => e.faceId > 0)
+              .toList()
+          : <AiFaceRelationNode>[],
+      edges: edgesRaw is List
+          ? edgesRaw
+              .whereType<Map>()
+              .map((e) => AiFaceRelationEdge.fromJson(e.cast<String, dynamic>()))
+              .where((e) => e.a > 0 && e.b > 0)
+              .toList()
+          : <AiFaceRelationEdge>[],
+      total: (json['total'] as num?)?.toInt() ?? 0,
+    );
+  }
+}

@@ -1,13 +1,17 @@
 import 'package:WaterNasOS/core/theme/custom_colors.dart';
 import 'package:WaterNasOS/utils/device_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../../../base/components/custom_glass_card.dart';
 import '../../../base/components/custom_dropdown_field.dart';
 import '../../../base/components/custom_switch.dart';
 import '../../../../utils/dialog_util.dart';
+import '../../../../utils/toast_util.dart';
 import '../../../../core/api/api_controller.dart';
 import '../controller/photo_ai_settings_controller.dart';
+import '../service/photo_ai_settings_api_service.dart';
+import '../../../user/service/user_api_service.dart';
 
 class PhotoAiSettingsView extends StatelessWidget {
   const PhotoAiSettingsView({super.key});
@@ -64,6 +68,14 @@ class PhotoAiSettingsView extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const SizedBox(height: 2),
+                      // ⭐ 2026-10-16 P1-9 AI 任务进度面板（只读聚合）
+                      const _AiQueuePanel(),
+                      const SizedBox(height: 12),
+                      // ⭐ 2026-10-16 P2-18/P2-20 开放平台：MCP 服务 + 模型 API
+                      const _McpOpenPlatformCard(),
+                      const SizedBox(height: 12),
+                      const _ModelApiCard(),
+                      const SizedBox(height: 12),
                       // GPU 优先开关（需要服务器版本 >= 10）
                       if (ApiController.instance.isServerVersionAtLeast(10))
                         CustomGlassCard(
@@ -90,6 +102,7 @@ class PhotoAiSettingsView extends StatelessWidget {
                                 value: ctrl.ocrEnabled.value,
                                 enabled: ctrl.canEdit,
                                 onChanged: (v) => ctrl.toggleOcr(v),
+                                onReset: ctrl.resetOcr,
                               );
                             }),
                             const Divider(height: 1),
@@ -111,6 +124,18 @@ class PhotoAiSettingsView extends StatelessWidget {
                                 enabled: ctrl.canEdit,
                                 onChanged: (v) => ctrl.togglePlace(v),
                                 onReset: ctrl.resetPlaces,
+                              );
+                            }),
+                            const Divider(height: 1),
+                            Obx(() {
+                              return _SwitchItem(
+                                title: 'photo_ai_queue_activity'.tr,
+                                subtitle: 'photo_ai_enable_activity_subtitle'.tr,
+                                progressPercent: ctrl.activityProgress.value,
+                                value: ctrl.activityEnabled.value,
+                                enabled: ctrl.canEdit,
+                                onChanged: (v) => ctrl.toggleActivity(v),
+                                onReset: ctrl.resetActivity,
                               );
                             }),
                             const Divider(height: 1),
@@ -644,6 +669,621 @@ class _SimilarDedupItem extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           CustomSwitch(value: value, onChanged: enabled ? onChanged : null),
+        ],
+      ),
+    );
+  }
+}
+
+/// ⭐ 2026-10-16 P1-9：AI 任务进度面板（只读）。
+///
+/// 此前设置页只有「开/关」和一个百分比，用户看不到"还剩多少、worker 是不是停了"。
+/// 这里把四条流水线 + 图像向量回填的进度一次摊开；**不做暂停/改优先级**——
+/// 那属于写入型控制，要等 P0-6 的写操作审计通道扩展后再上。
+class _AiQueuePanel extends StatefulWidget {
+  const _AiQueuePanel();
+
+  @override
+  State<_AiQueuePanel> createState() => _AiQueuePanelState();
+}
+
+class _AiQueuePanelState extends State<_AiQueuePanel> {
+  final PhotoAiSettingsApiService _api = PhotoAiSettingsApiService.instance;
+  List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
+  bool _loading = true;
+  bool _failed = false;
+  bool _queuePaused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
+    final res = await _api.getQueueStatus();
+    if (!mounted) return;
+    final data = res.success ? res.data : null;
+    final raw = data == null ? null : data['items'];
+    setState(() {
+      _items = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList()
+          : const <Map<String, dynamic>>[];
+      _queuePaused = data != null && data['paused'] == true;
+      _failed = !res.success;
+      _loading = false;
+    });
+  }
+
+  String _labelOf(String key) {
+    switch (key) {
+      case 'faces':
+        return 'photo_ai_queue_faces'.tr;
+      case 'ocr':
+        return 'photo_ai_queue_ocr'.tr;
+      case 'place':
+        return 'photo_ai_queue_place'.tr;
+      case 'activity':
+        return 'photo_ai_queue_activity'.tr;
+      case 'clip':
+        return 'photo_ai_queue_clip'.tr;
+      default:
+        return key;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pendingTotal = _items.fold<int>(
+      0,
+      (s, e) => s + ((e['pending'] as num?)?.toInt() ?? 0),
+    );
+    return CustomGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.donut_large,
+                size: 16,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Text('photo_ai_queue_title'.tr, style: theme.textTheme.titleSmall),
+              const Spacer(),
+              if (!_loading)
+                Text(
+                  pendingTotal <= 0
+                      ? 'photo_ai_queue_all_done'.tr
+                      : '${'photo_ai_queue_pending'.tr} $pendingTotal',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              // ⭐ P1-9：暂停/恢复（写入型控制里最安全的一个：不丢数据、随时可逆）
+              TextButton.icon(
+                onPressed: _loading
+                    ? null
+                    : () async {
+                        final res = await _api.setQueuePaused(!_queuePaused);
+                        if (!res.success) {
+                          ToastUtil.show('operation_failed'.tr);
+                        }
+                        await _load();
+                      },
+                icon: Icon(_queuePaused ? Icons.play_arrow : Icons.pause, size: 16),
+                label: Text(_queuePaused
+                    ? 'photo_ai_queue_resume'.tr
+                    : 'photo_ai_queue_pause'.tr),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.refresh, size: 18),
+                tooltip: 'refresh'.tr,
+                onPressed: _loading ? null : _load,
+              ),
+            ],
+          ),
+          if (_queuePaused)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 2),
+              child: Row(
+                children: [
+                  Icon(Icons.pause_circle_outline,
+                      size: 14, color: theme.colorScheme.error),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'photo_ai_queue_paused'.tr,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: LinearProgressIndicator(minHeight: 3),
+            )
+          else if (_failed)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'operation_failed'.tr,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            )
+          else
+            ..._items.map((it) {
+              final pending = (it['pending'] as num?)?.toInt() ?? 0;
+              final percent = (it['percent'] as num?)?.toInt() ?? 100;
+              final running = it['running'] == true;
+              final enabled = it['enabled'] != false;
+              return Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          _labelOf(it['key']?.toString() ?? ''),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: !enabled
+                                ? theme.colorScheme.outlineVariant
+                                : (running
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.outline),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          !enabled
+                              ? 'photo_ai_queue_disabled'.tr
+                              : (running
+                                    ? 'photo_ai_queue_running'.tr
+                                    : 'photo_ai_queue_idle'.tr),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '$percent%  ·  $pending',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: (percent.clamp(0, 100)) / 100,
+                        minHeight: 4,
+                        backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+}
+
+/// ⭐ 2026-10-16 P2-18 开放平台：MCP 服务配置。
+///
+/// 设计口径照 TrailSnap 的 MCP Server（见 docs/WaterNasOS-整合实施路线图.md §5 P2-18）：
+///   · **只读**：6 个工具全是查询，写操作不开放（写要等 P2-20 的「预演→确认→可撤销」通道）；
+///   · **独立令牌**：`wnos_` 前缀 + scope，与登录 JWT 分离，泄漏一个令牌 ≠ 泄漏账号；
+///   · **明文只出现一次**：轮换时返回，之后只回掩码 —— 所以「复制配置」要么刚轮换过，要么先轮换。
+class _McpOpenPlatformCard extends StatefulWidget {
+  const _McpOpenPlatformCard();
+
+  @override
+  State<_McpOpenPlatformCard> createState() => _McpOpenPlatformCardState();
+}
+
+class _McpOpenPlatformCardState extends State<_McpOpenPlatformCard> {
+  final PhotoAiSettingsApiService _api = PhotoAiSettingsApiService.instance;
+  bool _loading = true;
+  bool _enabled = true;
+  String _tokenMasked = '';
+  int _uid = 0;
+  List<String> _tools = const <String>[];
+  List<Map<String, dynamic>> _users = const <Map<String, dynamic>>[];
+  /// 轮换后才有明文；只活在内存里，不落盘
+  String _plainToken = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final res = await _api.getMcpStatus();
+    List<Map<String, dynamic>> users = const <Map<String, dynamic>>[];
+    try {
+      final raw = await UserApiService.instance.fetchUsers(limit: 200);
+      users = raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
+    } catch (_) {}
+    if (!mounted) return;
+    final data = res.success ? (res.data ?? const <String, dynamic>{}) : const <String, dynamic>{};
+    setState(() {
+      _enabled = data['enabled'] != false;
+      _tokenMasked = data['tokenMasked']?.toString() ?? '';
+      _uid = (data['uid'] as num?)?.toInt() ?? 0;
+      _tools = ((data['tools'] as List?) ?? const []).map((e) => e.toString()).toList();
+      _users = users;
+      _loading = false;
+    });
+  }
+
+  String get _endpoint {
+    final base = ApiController.instance.baseUrl;
+    return '${base.replaceAll(RegExp(r'/+$'), '')}/api/mcp';
+  }
+
+  Future<void> _toggle(bool v) async {
+    setState(() => _enabled = v);
+    final res = await _api.setMcpConfig(enabled: v);
+    if (!res.success) {
+      ToastUtil.show('operation_failed'.tr);
+      await _load();
+    }
+  }
+
+  Future<void> _setOwner(int? uid) async {
+    if (uid == null) return;
+    final res = await _api.setMcpConfig(uid: uid);
+    if (!res.success) {
+      ToastUtil.show('operation_failed'.tr);
+    }
+    await _load();
+  }
+
+  Future<void> _rotate() async {
+    final ok = await DialogUtil.showConfirmDialog(
+      title: 'photo_mcp_token_rotate'.tr,
+      content: 'photo_mcp_token_rotate_confirm'.tr,
+      confirmText: 'ok'.tr,
+      cancelText: 'cancel'.tr,
+    );
+    if (ok != true) return;
+    final res = await _api.rotateMcpToken();
+    if (!res.success) {
+      ToastUtil.show('operation_failed'.tr);
+      return;
+    }
+    final token = res.data?['token']?.toString() ?? '';
+    setState(() => _plainToken = token);
+    await _load();
+    if (!mounted) return;
+    DialogUtil.showInfoDialog(
+      title: 'photo_mcp_token'.tr,
+      content: '${'photo_mcp_token_once'.tr}\n\n$token',
+    );
+  }
+
+  Future<void> _copyConfig() async {
+    if (_plainToken.isEmpty) {
+      ToastUtil.show('photo_mcp_need_token'.tr);
+      return;
+    }
+    final snippet = '{\n'
+        '  "mcpServers": {\n'
+        '    "waternasos": {\n'
+        '      "type": "http",\n'
+        '      "url": "$_endpoint",\n'
+        '      "headers": { "Authorization": "Bearer $_plainToken" }\n'
+        '    }\n'
+        '  }\n'
+        '}';
+    await Clipboard.setData(ClipboardData(text: snippet));
+    ToastUtil.show('copy'.tr);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return CustomGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.hub_outlined, size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text('photo_mcp_title'.tr, style: theme.textTheme.titleSmall),
+              const Spacer(),
+              if (_loading)
+                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'photo_mcp_readonly_hint'.tr,
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 6),
+          if (!_loading) ...[
+            Row(
+              children: [
+                Expanded(child: Text('photo_mcp_enable'.tr, style: theme.textTheme.bodyMedium)),
+                Switch(value: _enabled, onChanged: _toggle),
+              ],
+            ),
+            _kv(theme, 'photo_mcp_endpoint'.tr, _endpoint),
+            _kv(theme, 'photo_mcp_token'.tr, _tokenMasked.isEmpty ? '—' : _tokenMasked),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'photo_mcp_owner'.tr,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+                DropdownButton<int>(
+                  value: _users.any((u) => (u['id'] as num?)?.toInt() == _uid) ? _uid : null,
+                  hint: Text('$_uid', style: theme.textTheme.bodySmall),
+                  items: _users
+                      .map(
+                        (u) => DropdownMenuItem<int>(
+                          value: (u['id'] as num?)?.toInt() ?? 0,
+                          child: Text(
+                            '${u['username'] ?? u['id']}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _setOwner,
+                ),
+              ],
+            ),
+            if (_tools.isNotEmpty)
+              _kv(theme, 'photo_mcp_tools'.tr, _tools.join(' · ')),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _rotate,
+                  icon: const Icon(Icons.vpn_key_outlined, size: 16),
+                  label: Text('photo_mcp_token_rotate'.tr),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _copyConfig,
+                  icon: const Icon(Icons.copy_all_outlined, size: 16),
+                  label: Text('photo_mcp_copy_config'.tr),
+                ),
+              ],
+            ),
+            if (_plainToken.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '$_plainToken',
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _kv(ThemeData theme, String k, String v) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 84,
+            child: Text(
+              k,
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(v, style: theme.textTheme.bodySmall),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ⭐ 2026-10-16 P2-20 前置：模型 API 配置（OpenAI 兼容）。
+///
+/// Agent 对话（P2-20）需要一个对话模型，本仓库此前**没有任何 LLM 接入点**；
+/// 这里按 TrailSnap 的口径（任意 OpenAI 兼容厂商：base_url + api_key + model）先把配置与
+/// **真实连通性测试**做出来 —— 避免出现「填了配置但没人验证过」的死配置。
+/// ⚠️ api_key 只存服务端 config 表，读取一律只回掩码。
+class _ModelApiCard extends StatefulWidget {
+  const _ModelApiCard();
+
+  @override
+  State<_ModelApiCard> createState() => _ModelApiCardState();
+}
+
+class _ModelApiCardState extends State<_ModelApiCard> {
+  final PhotoAiSettingsApiService _api = PhotoAiSettingsApiService.instance;
+  final TextEditingController _baseUrl = TextEditingController();
+  final TextEditingController _apiKey = TextEditingController();
+  final TextEditingController _model = TextEditingController();
+  bool _loading = true;
+  bool _testing = false;
+  bool _hasKey = false;
+  String _keyTail = '';
+  String _resultText = '';
+  bool _resultOk = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _baseUrl.dispose();
+    _apiKey.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final res = await _api.getModelApi();
+    if (!mounted) return;
+    final d = res.success ? (res.data ?? const <String, dynamic>{}) : const <String, dynamic>{};
+    setState(() {
+      _baseUrl.text = d['base_url']?.toString() ?? '';
+      _model.text = d['model']?.toString() ?? '';
+      _hasKey = d['has_key'] == true;
+      _keyTail = d['key_tail']?.toString() ?? '';
+      _loading = false;
+    });
+  }
+
+  Future<void> _save() async {
+    final res = await _api.setModelApi(
+      baseUrl: _baseUrl.text.trim(),
+      apiKey: _apiKey.text,
+      model: _model.text.trim(),
+    );
+    if (!res.success) {
+      ToastUtil.show('operation_failed'.tr);
+      return;
+    }
+    _apiKey.clear();
+    await _load();
+    ToastUtil.show('save'.tr);
+  }
+
+  Future<void> _test() async {
+    setState(() {
+      _testing = true;
+      _resultText = '';
+    });
+    final res = await _api.testModelApi(
+      baseUrl: _baseUrl.text.trim(),
+      apiKey: _apiKey.text,
+      model: _model.text.trim(),
+    );
+    if (!mounted) return;
+    final d = res.success ? (res.data ?? const <String, dynamic>{}) : const <String, dynamic>{};
+    final ok = d['ok'] == true;
+    final models = ((d['models'] as List?) ?? const []).length;
+    final exists = d['model_exists'];
+    setState(() {
+      _testing = false;
+      _resultOk = ok;
+      _resultText = ok
+          ? '${'photo_model_api_ok'.tr} · ${d['latency_ms'] ?? 0}ms'
+              '${models > 0 ? ' · ${'photo_model_api_models'.tr} $models' : ''}'
+              '${exists == false ? ' · ⚠ ${_model.text.trim()}' : ''}'
+          : '${'photo_model_api_fail'.tr} · ${d['message'] ?? ''}';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return CustomGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.smart_toy_outlined, size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text('photo_model_api_title'.tr, style: theme.textTheme.titleSmall),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (!_loading) ...[
+            TextField(
+              controller: _baseUrl,
+              decoration: InputDecoration(
+                labelText: 'photo_model_api_base_url'.tr,
+                hintText: 'https://api.deepseek.com/v1',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _apiKey,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'photo_model_api_key'.tr,
+                hintText: _hasKey
+                    ? '***$_keyTail · ${'photo_model_api_key_kept'.tr}'
+                    : 'sk-...',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _model,
+              decoration: InputDecoration(
+                labelText: 'photo_model_api_model'.tr,
+                hintText: 'deepseek-chat',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: _save,
+                  icon: const Icon(Icons.save_outlined, size: 16),
+                  label: Text('save'.tr),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _testing ? null : _test,
+                  icon: _testing
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.wifi_tethering, size: 16),
+                  label: Text(_testing ? 'photo_model_api_testing'.tr : 'photo_model_api_test'.tr),
+                ),
+              ],
+            ),
+            if (_resultText.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _resultText,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: _resultOk ? theme.colorScheme.primary : theme.colorScheme.error,
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );

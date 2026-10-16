@@ -258,6 +258,10 @@ class DbUtil {
         connection: this.getConnectPhotoDb(),
       },
       {
+        fileName: 'tablePhotoOperationLog', //照片批量操作日志（P0-6 可撤销）
+        connection: this.getConnectPhotoDb(),
+      },
+      {
         fileName: 'tablePhotoFaces', //照片人脸表
         connection: this.getConnectPhotoDb(),
       },

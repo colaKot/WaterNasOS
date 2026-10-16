@@ -254,13 +254,64 @@ class PhotoTimeLineController {
       if (!Array.isArray(ids)) {
         return ResponseUtil.error(req, res, 'common.PARAM_ERROR');
       }
-      await photoTimeLineService.batchTrash(ids, true, req.user);
-      return ResponseUtil.success(req, res, null, 'photo.TRASH_ADD_SUCCESS', 200);
+      // ⭐ 2026-10-16 P0-6：删除改为「留日志的可撤销操作」，返回 operationId 供前端提示撤销。
+      const result = await photoTimeLineService.batchTrashLogged(ids, true, req.user);
+      return ResponseUtil.success(req, res, result, 'photo.TRASH_ADD_SUCCESS', 200);
     } catch (error) {
       Logger.error('batchTrash error:', error);
       const statusCode = error.statusCode || 500;
       const message = statusCode === 403 ? 'auth.PERMISSION_DENIED' : (error.message || 'common.ERROR');
       return ResponseUtil.error(req, res, message, statusCode);
+    }
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-6 批量预演：只返回「将影响多少张 / 多少字节」，**不写库**。
+   */
+  async previewTrash(req, res) {
+    try {
+      const body = req.body || {};
+      const ids = body.ids;
+      if (!Array.isArray(ids)) {
+        return ResponseUtil.error(req, res, 'common.PARAM_ERROR');
+      }
+      const inTrash = body.in_trash === undefined ? true : (body.in_trash !== false && body.in_trash !== 0);
+      const result = await photoTimeLineService.previewTrash(ids, inTrash, req.user);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (error) {
+      Logger.error('previewTrash error:', error);
+      const statusCode = error.statusCode || 500;
+      return ResponseUtil.error(req, res, error.message || 'common.ERROR', statusCode);
+    }
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-6 撤销：按 operation_id 回滚一次批量写操作。
+   */
+  async undoOperation(req, res) {
+    try {
+      const body = req.body || {};
+      const operationId = body.operation_id !== undefined ? body.operation_id : body.operationId;
+      const result = await photoTimeLineService.undoOperation(operationId, req.user);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (error) {
+      Logger.error('undoOperation error:', error);
+      const statusCode = error.statusCode || 500;
+      return ResponseUtil.error(req, res, error.message || 'common.ERROR', statusCode);
+    }
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-6 最近可撤销操作列表（普通用户只看自己的）。
+   */
+  async recentOperations(req, res) {
+    try {
+      const body = req.body || {};
+      const result = await photoTimeLineService.recentOperations(req.user, body.limit);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (error) {
+      Logger.error('recentOperations error:', error);
+      return ResponseUtil.error(req, res, error.message || 'common.ERROR', 500);
     }
   }
 

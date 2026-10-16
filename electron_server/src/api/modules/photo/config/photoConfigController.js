@@ -166,7 +166,7 @@ async function getSimilarProgress(knexPhoto) {
 class PhotoConfigController {
   async getAiConfig(req, res) {
     try {
-      const [ocrEnable, petEnable, faceEnable, placeEnable, similarEnable, faceMinShowCount, aiProgress, similarProgress, gpuPrefer] = await Promise.all([
+      const [ocrEnable, petEnable, faceEnable, placeEnable, similarEnable, faceMinShowCount, aiProgress, similarProgress, gpuPrefer, activityEnable] = await Promise.all([
         getEnableByKey('ai_ocr_enable'),
         getEnableByKey('ai_pet_enable'),
         getEnableByKey('ai_face_enable'),
@@ -176,6 +176,7 @@ class PhotoConfigController {
         getAiProgress(req && req.dbPhoto),
         getSimilarProgress(req && req.dbPhoto),
         getEnableByKeyDefault1('ai_gpu_prefer'),
+        getEnableByKeyDefault1('ai_activity_enable'),
       ]);
       return ResponseUtil.success(
         req,
@@ -190,6 +191,7 @@ class PhotoConfigController {
           aiProgress,
           similarProgress,
           gpuPrefer,
+          activityEnable,
         },
         'common.SUCCESS',
         200
@@ -254,6 +256,21 @@ class PhotoConfigController {
         } catch (_) {}
       }
       return ResponseUtil.success(req, res, { enable }, 'common.SUCCESS', 200);
+    } catch (err) {
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  }
+
+  /**
+   * ⭐ 2026-10-16 活动维度开关（ai_activity_enable，未设置 = 开）。
+   * ⚠️ 刻意**不发** toggleAiPlace 消息：活动与场景共用 placesWorker，
+   *    写 config 即可（worker 每轮会自己读），避免把场景阶段一起停掉。
+   */
+  async setAiActivityEnable(req, res) {
+    try {
+      const enable = parseEnable(req && req.body);
+      const ok = await tableConfig.setConfigByKey('ai_activity_enable', String(enable));
+      return ResponseUtil.success(req, res, { enable: ok ? enable : 0 }, 'common.SUCCESS', 200);
     } catch (err) {
       return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }

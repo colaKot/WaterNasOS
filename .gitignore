@@ -110,3 +110,6 @@ tool/_*
 electron_server/tool/
 flutter_client/tool/
 *.bak_semsearch
+# 本地临时产物（2026-10-16）：MCP 明文令牌、输出稿 —— 禁止入库
+/lingpai.txt
+/outputs/

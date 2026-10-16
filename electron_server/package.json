@@ -25,7 +25,7 @@
   "keywords": [
     "nascabos"
   ],
-  "license": "GPL-3.0 AND AGPL-3.0",
+  "license": "GPL-3.0",
   "build": {
     "appId": "com.nascabos.server",
     "productName": "WaterNasOSServer",
@@ -68,13 +68,13 @@
           "!gitInstall/**/*",
           "!dist*/**/*",
           "!.devdata/**/*",
-          "!vendor/**/*"
+          "!vendor/**/*",
+          "!onnx_models/**"
         ]
       }
     ],
     "extraFiles": [
       "LICENSE",
-      "LICENSE-AGPL-3.0.txt",
       "database/geonames.sqlite",
       "web/**/*",
       "language/*",

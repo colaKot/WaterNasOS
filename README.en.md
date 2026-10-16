@@ -6,10 +6,10 @@ WaterNasOS is a cross-platform NAS software that lets you remotely manage your p
 
 ## Origin & License
 
-> WaterNasOS is a **modified version** of [NasCabOS](https://github.com/nascab/NasCabOS) and uses **layered licensing**: code forked from upstream stays under **GNU GPL v3.0**, while independent parts newly written in this repository are licensed under **GNU AGPL v3.0**.
-> The copyright of the original work belongs to Beijing Yunpiao Piao Technology Co., Ltd. (© 2025); the copyright of the additions in this repository belongs to **colaKot** (© 2026).
+> WaterNasOS is a **modified version** of [NasCabOS](https://github.com/nascab/NasCabOS), distributed under **GNU GPL v3.0**.
+> The copyright of the original work belongs to Beijing Yunpiao Piao Technology Co., Ltd. (© 2025), retained verbatim; the copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026).
 > Since **2026-10** this repository has applied the rename, feature changes and project-wide adjustments listed below to that work.
-> Both license texts are in [LICENSE](LICENSE) (GPL-3.0) and [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) (AGPL-3.0), with the upstream notices retained verbatim. Network protocols, device fingerprints and encrypted data formats remain compatible.
+> The full license text is in [LICENSE](LICENSE) (GPL-3.0). Network protocols, device fingerprints and encrypted data formats remain compatible.
 
 ## What This Version Changes
 
@@ -46,7 +46,7 @@ Everything changed relative to upstream is listed below: the earlier feature wor
   - **Reverse geocoding now uses real distance**: stepping back through geohash levels and picking the smallest `geonameid` labelled the whole Tianhe district "Yuzhu" (10.96 km away) even though Wushan was 2.93 km away. Names are now resolved by actual distance (30 km gate) for footprints, timeline date headings and the properties panel alike.
   - **Two root causes fixed in face recognition**: ① **stall** — after a fully-failed batch the worker found an empty queue and exited, while the clean-exit callback was empty, so it never restarted; it now restarts on demand and recycles parked tasks. ② **marking images as done on failure** — failed inference still flagged the photo as scanned (`gen_faces=1`), so it was never retried; failures now leave the flag untouched and requeue the photo. Face merging no longer swallows errors, migrates samples on merge, and counts `face_count` by de-duplicated rows.
   - **Timeline media filter**: the control bar gains an all / photos / videos segmented switch (the old type dropdown became a Live Photos toggle).
-  - **License change**: the project now uses **layered GPL-3.0 + AGPL-3.0 licensing** — parts forked from upstream remain GPL-3.0, independently added parts are AGPL-3.0, and the combination is conveyed under GPL-3.0 §13.
+  - **License**: unchanged from upstream — **GNU GPL v3.0**.
   - **Server**: **development-instance isolation** (the single-instance lock now keys off Electron `userData`), so a dev instance can run alongside the daily one; the file-listing worker falls back to the main thread on failure, fixing occasional "directory listing 400" errors.
   - **Clients**: all 13 language packs refreshed.
 - **Playback fixes (v1.0.0)**:
@@ -160,20 +160,14 @@ Business cooperation / Contact us: cola23@126.com
 
 ## License
 
-This repository is a derivative of [NasCabOS](https://github.com/nascab/NasCabOS), so it uses **layered licensing**:
-
-| Scope | License | Full text |
-| --- | --- | --- |
-| Code forked from upstream NasCabOS (including files modified here) | **GPL-3.0** | [LICENSE](LICENSE) |
-| Independent parts newly added here, containing no upstream code | **AGPL-3.0** | [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) |
-| The combined work (including binaries packaged as a single exe / APK) | **GPL-3.0 §13 combined work** → AGPL-3.0 §13 applies to the whole | both of the above |
+This repository is a derivative of [NasCabOS](https://github.com/nascab/NasCabOS), distributed under **GNU GPL v3.0**. The full license text is in [LICENSE](LICENSE).
 
 - The copyright of the original upstream work belongs to **Beijing Yunpiao Piao Technology Co., Ltd.** (© 2025) and is retained verbatim; it must not be removed.
-- The copyright of the additions in this repository belongs to **colaKot** (© 2026).
-- The rule is "a file newly written from scratch with no upstream code", e.g. `sync_client/`, `packages/nascab_sync_core/`, `deploy/wnos/` and the self-built scripts under `tool/` fall under AGPL-3.0; everything else (including modified upstream files) is still distributed as a whole under GPL-3.0.
-- **Combined distribution under GPL-3.0 §13**: this distribution (including builds packaged as a single executable) is a combined work of a GPL-3.0 work and an AGPL-3.0 work — the GPL part remains governed by GPL-3.0, while **AGPL-3.0 Section 13 (Remote Network Interaction) applies to the combination as such**: if you run this software or a modified version as a network service, you must offer all users of that service the corresponding complete source code.
-- Any redistributor must keep the copyright notices above and both full license texts.
+- The copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026), also licensed under **GPL-3.0**.
+- Any redistributor must keep the copyright notices above and the full license text; if you convey this software (or a modified version), you must provide the corresponding complete source code (GPL-3.0 §3 / §5).
 
 ## Third-Party Assets & Acknowledgements
 
 - [Tabler Icons](https://github.com/tabler/tabler-icons): window control buttons and other UI icons (**MIT License**, © Paweł Kuna), consumed via the Dart package `tabler_icons_plus`.
+- [TrailSnap](https://github.com/LC044/TrailSnap): an independently developed AI photo-album app. The **feature planning for the photo/album domain** of this project referenced some of its product ideas — with thanks.
+  > Note: this repository contains **no** code, model or data artefacts from TrailSnap.

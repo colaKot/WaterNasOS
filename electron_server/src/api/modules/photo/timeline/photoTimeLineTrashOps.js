@@ -275,8 +275,184 @@ function createTrashOps({ getKnex, getValidPaths, indexFields }) {
     }
   }
 
+  /**
+   * ⭐ 2026-10-16 P0-6 批量「预演」：只算代价（多少张 / 多少字节），**不写任何业务表**。
+   * 与 batchTrash 同一套权限口径，但只读 —— 用户先看到「将移入回收站 128 张 · 1.2 GB」再决定。
+   */
+  async function previewTrash(ids, in_trash, user) {
+    const idsArr = Array.isArray(ids) ? ids.filter(v => Number.isFinite(Number(v))).map(Number) : [];
+    const empty = { count: 0, bytes: 0, blocked: 0 };
+    if (idsArr.length === 0) return empty;
+
+    const knex = getKnex();
+    const rows = await knex('photo_index')
+      .whereIn('id', idsArr)
+      .select('id', 'path', 'filename', 'size', 'in_trash')
+      .catch(() => []);
+
+    let count = 0;
+    let bytes = 0;
+    let blocked = 0;
+    const mainKnex = knexUtil.getInstance(dbUtil.DB_PATHS.MAIN_DB);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (in_trash && Number(row.in_trash) === 1) continue; // 已在回收站里的不算
+      const fullPath = path.join(String(row.path || ''), String(row.filename || ''));
+      if (FileUtil.isProtectedPath(fullPath)) {
+        blocked += 1;
+        continue;
+      }
+      if (in_trash && user && !userUtil.isAdmin(user)) {
+        const canDelete = await hasPermission(mainKnex, user, 'delete', fullPath);
+        if (!canDelete) {
+          blocked += 1;
+          continue;
+        }
+      }
+      count += 1;
+      bytes += Number(row.size || 0) || 0;
+    }
+    return { count, bytes, blocked };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-6：执行批量删除并**留下可撤销的日志**。
+   * undo_data 只存业务层快照（哪些 id、原 in_trash 值），撤销时按 id 回滚索引，不动文件。
+   * @returns {Promise<{operationId:number|null, count:number, bytes:number, expireDays:number}>}
+   */
+  async function batchTrashLogged(ids, in_trash, user) {
+    const preview = await previewTrash(ids, in_trash, user);
+    const before = await getKnex()('photo_index')
+      .whereIn('id', Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [])
+      .select('id', 'in_trash')
+      .catch(() => []);
+
+    await batchTrash(ids, in_trash, user);
+
+    const uid = user && user.id ? Number(user.id) : 0;
+    const EXPIRE_DAYS = 7;
+    let operationId = null;
+    try {
+      const inserted = await getKnex()('photo_operation_log')
+        .insert({
+          uid,
+          op_type: in_trash ? 'trash' : 'untrash',
+          target_ids: JSON.stringify((Array.isArray(before) ? before : []).map(r => Number(r.id))),
+          undo_data: JSON.stringify((Array.isArray(before) ? before : []).map(r => ({ id: Number(r.id), in_trash: Number(r.in_trash) || 0 }))),
+          summary: JSON.stringify({ count: preview.count, bytes: preview.bytes }),
+          status: 'executed',
+          expire_time: new Date(Date.now() + EXPIRE_DAYS * 24 * 3600 * 1000),
+        })
+        .returning('id');
+      operationId = Array.isArray(inserted) && inserted[0]
+        ? (typeof inserted[0] === 'object' ? Number(inserted[0].id) : Number(inserted[0]))
+        : null;
+    } catch (err) {
+      // 日志写失败不能让删除结果丢失 —— 只是这次不可撤销
+      Logger.error('operation log insert failed:', err);
+    }
+
+    return { operationId, count: preview.count, bytes: preview.bytes, expireDays: EXPIRE_DAYS };
+  }
+
+  /** 当前用户最近可撤销的操作（管理员看全部，普通用户只看自己的） */
+  async function recentOperations(user, limit = 20) {
+    const knex = getKnex();
+    const uid = user && user.id ? Number(user.id) : 0;
+    const q = knex('photo_operation_log')
+      .where('status', 'executed')
+      .orderBy('create_time', 'desc')
+      .limit(Math.max(1, Math.min(50, Number(limit) || 20)));
+    if (!(user && userUtil.isAdmin(user))) q.where('uid', uid);
+    const rows = await q.catch(() => []);
+    return {
+      items: (Array.isArray(rows) ? rows : []).map(r => {
+        const summary = (() => {
+          try {
+            return JSON.parse(String(r.summary || '{}'));
+          } catch (_) {
+            return {};
+          }
+        })();
+        return {
+          id: Number(r.id),
+          op_type: String(r.op_type || ''),
+          count: Number(summary.count || 0),
+          bytes: Number(summary.bytes || 0),
+          status: String(r.status || ''),
+          create_time: r.create_time || null,
+          expire_time: r.expire_time || null,
+        };
+      }),
+    };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-6 撤销：按 undo_data 回滚索引层。
+   * 只认 status='executed' + 未过期 + 本人（或管理员）；重复撤销直接拒绝，不做幂等吞掉
+   * —— 让用户明确知道「这次没生效」比悄悄成功更安全。
+   */
+  async function undoOperation(operationId, user) {
+    const id = Number(operationId);
+    if (!Number.isFinite(id) || id <= 0) {
+      const err = new Error('common.PARAM_ERROR');
+      err.statusCode = 400;
+      throw err;
+    }
+    const knex = getKnex();
+    const row = await knex('photo_operation_log').where({ id }).first().catch(() => null);
+    if (!row) {
+      const err = new Error('common.NOT_FOUND');
+      err.statusCode = 404;
+      throw err;
+    }
+    const uid = user && user.id ? Number(user.id) : 0;
+    if (Number(row.uid) !== uid && !(user && userUtil.isAdmin(user))) {
+      const err = new Error('auth.PERMISSION_DENIED');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (String(row.status) !== 'executed') {
+      const err = new Error('photo.UNDO_NOT_AVAILABLE');
+      err.statusCode = 409;
+      throw err;
+    }
+    if (row.expire_time && new Date(row.expire_time).getTime() < Date.now()) {
+      await knex('photo_operation_log').where({ id }).update({ status: 'expired' }).catch(() => {});
+      const err = new Error('photo.UNDO_EXPIRED');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    let undoList = [];
+    try {
+      undoList = JSON.parse(String(row.undo_data || '[]'));
+    } catch (_) {
+      undoList = [];
+    }
+    const restoreToTrash = undoList.filter(e => e && Number(e.in_trash) === 1).map(e => Number(e.id));
+    const restoreOutOfTrash = undoList.filter(e => e && Number(e.in_trash) === 0).map(e => Number(e.id));
+
+    if (restoreToTrash.length > 0) {
+      await knex('photo_index').whereIn('id', restoreToTrash).update({ in_trash: 1, in_trash_time: new Date() });
+    }
+    if (restoreOutOfTrash.length > 0) {
+      await knex('photo_index').whereIn('id', restoreOutOfTrash).update({ in_trash: 0, in_trash_time: null });
+    }
+
+    await knex('photo_operation_log')
+      .where({ id })
+      .update({ status: 'undone', undone_time: new Date() })
+      .catch(() => {});
+
+    return { undone: undoList.length, operationId: id };
+  }
+
   return {
     batchTrash,
+    previewTrash,
+    batchTrashLogged,
+    recentOperations,
+    undoOperation,
     getTrashPhotoList,
     deleteFromTrash,
     restoreFromTrash,

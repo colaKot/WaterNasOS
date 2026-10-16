@@ -6,10 +6,10 @@ WaterNasOS 是一款跨平台 NAS 软件，支持远程管理照片、影音、�
 
 ## 项目来源与许可证
 
-> WaterNasOS 是基于 [NasCabOS](https://github.com/nascab/NasCabOS) 二次开发的**修改版**，采用**分层授权**：fork 自上游的代码继续以 **GNU GPL v3.0** 分发，本仓库新增的独立部分以 **GNU AGPL v3.0** 授权。
-> 上游原始版权归 Beijing Yunpiao Piao Technology Co., Ltd. 所有（© 2025）；本仓库新增部分的版权归 **colaKot** 所有（© 2026）。
+> WaterNasOS 是基于 [NasCabOS](https://github.com/nascab/NasCabOS) 二次开发的**修改版**，以 **GNU GPL v3.0** 授权分发。
+> 上游原始版权归 Beijing Yunpiao Piao Technology Co., Ltd. 所有（© 2025），此声明原样保留；本仓库新增与修改部分的版权归 **colaKot** 所有（© 2026）。
 > 本仓库自 **2026-10** 起在原项目基础上完成下述更名、功能增删与全局调整。
-> 两份许可证全文见 [LICENSE](LICENSE)（GPL-3.0）与 [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt)（AGPL-3.0），上游原始版权声明原样保留；网络协议、设备指纹与加密数据格式保持兼容。
+> 许可证全文见 [LICENSE](LICENSE)（GPL-3.0）；网络协议、设备指纹与加密数据格式保持兼容。
 
 ## 本版本改动一览
 
@@ -46,7 +46,7 @@ WaterNasOS 是一款跨平台 NAS 软件，支持远程管理照片、影音、�
   - **地名反查改用真实距离**：原先逐级回退 geohash 后按 `geonameid` 取最小，导致整个天河区都被标成「鱼珠」（实测 10.96km，而最近的五山只有 2.93km）。现在按经纬度**实际距离**取最近（30km 闸门），足迹地名、时间轴日期标题、属性面板一起修正。
   - **人脸识别两处根因修复**：① **停摆** —— 整批识别失败后 worker 取空队列即退出，而「干净退出」的回调是空的 ⇒ 再也不会自动重启；现已在退出路径上按需重启并回收 parked 任务。② **烧图** —— 推理失败也把该张标记为已扫描，导致 `gen_faces=1` 永不重扫；现在失败不标记、进队列重试。人脸合并同时修掉「吞错、样本不随合并迁移、`face_count` 按未去重行数记账」。
   - **时间轴媒体类型筛选**：控制栏新增「全部 | 图片 | 视频」三段切换（原「类型」下拉收成「实况」开关）。
-  - **许可证变更**：改用 **GPL-3.0 + AGPL-3.0 分层授权** —— fork 自上游的部分仍是 GPL-3.0，本仓库新增的独立部分为 AGPL-3.0，组合分发依据 GPL-3.0 §13。详见下方[许可证](#许可证)。
+  - **许可证**：沿用上游的 **GNU GPL v3.0**（本仓库未变更许可证）。
   - **服务端**：新增**开发实例隔离**（单实例锁改绑 Electron `userData`），开发实例可与日常实例并存；文件列表 worker 失败时自动回退主线程执行，修复偶发的「目录列表 400」。
   - **客户端**：13 个语言包同步更新。
 - **影视播放修复（v1.0.0）**：
@@ -157,20 +157,14 @@ flutter run -d win/ios/android/mac
 
 ## 许可证
 
-本仓库是 [NasCabOS](https://github.com/nascab/NasCabOS) 的衍生作品，因此采用**分层授权**：
-
-| 范围 | 许可证 | 全文 |
-| --- | --- | --- |
-| fork 自上游 NasCabOS 的代码（含在本仓库中被修改过的文件） | **GPL-3.0** | [LICENSE](LICENSE) |
-| 本仓库新增、不含上游原始代码的独立部分 | **AGPL-3.0** | [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) |
-| 两者组合后的整体（含打包成单个 exe / APK 的成品） | **GPL-3.0 §13 组合作品** → 整体适用 AGPL-3.0 §13 | 上述两份 |
+本仓库是 [NasCabOS](https://github.com/nascab/NasCabOS) 的衍生作品，以 **GNU GPL v3.0** 分发，许可证全文见 [LICENSE](LICENSE)。
 
 - 上游原始作品版权归 **Beijing Yunpiao Piao Technology Co., Ltd.** 所有（© 2025），此声明原样保留、不可移除。
-- 本仓库新增部分的版权归 **colaKot** 所有（© 2026）。
-- 判定标准是「该文件是否从零新增、不含上游原始代码」，例如 `sync_client/`、`packages/nascab_sync_core/`、`deploy/wnos/` 以及 `tool/` 下的自建脚本属于 AGPL-3.0 范围；其余代码（包括被修改过的上游文件）整体仍按 GPL-3.0 分发。
-- **组合分发依据 GPL-3.0 §13**：本发行物（含打包成单个可执行文件的成品）是 GPL-3.0 作品与 AGPL-3.0 作品的组合作品 —— GPL 部分继续受 GPL-3.0 约束，而 **AGPL-3.0 第 13 条（远程网络交互）适用于整个组合**：你若将本软件（含修改版）作为网络服务提供给用户，必须向所有使用者提供对应的完整源代码。
-- 任何再分发者均须保留上述版权声明与两份许可证全文。
+- 本仓库新增与修改部分的版权归 **colaKot** 所有（© 2026），同样以 **GPL-3.0** 授权。
+- 任何再分发者均须保留上述版权声明与许可证全文；若将本软件（含修改版）对外分发或提供下载，须一并提供对应的完整源代码（GPL-3.0 §3 / §5）。
 
 ## 第三方资源与致谢
 
 - [Tabler Icons](https://github.com/tabler/tabler-icons)：窗口控制按钮等界面图标（**MIT License**，© Paweł Kuna），通过 Dart 包 `tabler_icons_plus` 引入。
+- [TrailSnap（行影集）](https://github.com/LC044/TrailSnap)：一款独立开发的 AI 相册应用。本项目的**相册域功能规划**参考了它的产品化思路，在此致谢。
+  > 说明：本项目**未包含** TrailSnap 的任何代码、模型或数据产物。

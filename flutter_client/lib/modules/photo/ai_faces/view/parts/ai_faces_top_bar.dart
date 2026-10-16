@@ -6,6 +6,7 @@ import '../../../../base/components/custom_expandable_search_bar.dart';
 import '../../../../home/views/pc_components/pc_app_window.dart';
 import '../../../../../core/user/current_user_controller.dart';
 import '../../controller/ai_faces_controller.dart';
+import 'ai_face_relation_page.dart';
 
 class AiFacesTopBar extends StatelessWidget {
   final AiFacesController controller;
@@ -95,6 +96,13 @@ class AiFacesTopBar extends StatelessWidget {
           final buttons = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // ⭐ 2026-10-16 P0-5 人物关系图谱：谁和谁总是一起出现
+              CustomBorderedIconButton(
+                icon: Icons.hub_outlined,
+                tooltip: 'photo_face_relations'.tr,
+                onTap: () => Get.to(() => const AiFaceRelationPage()),
+              ),
+              const SizedBox(width: 6),
               // 重扫「我相册里」的人脸：所有登录用户可用
               CustomBorderedIconButton(
                 icon: Icons.face_retouching_natural,

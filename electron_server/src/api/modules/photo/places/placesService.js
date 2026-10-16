@@ -221,6 +221,385 @@ class PlacesService {
   }
 
   /**
+   * ⭐ 2026-10-16 P0-1：**只做语义解析，不查库**。
+   *
+   * 给照片时间轴的搜索框提供「已识别：日落 · 海滩　未识别：xx」提示条。
+   * 为什么不复用 searchPlaces：那条路会去 photo_places 里捞一遍相册并算可见性，
+   * 对「只是想告诉用户我猜到了什么」来说太贵；解析层本身是纯内存计算（短语词表 + 短语嵌入）。
+   *
+   * 顺带把**活动标签**（photo_activity，独立于场景标签，见 tablePhotoActivity.js）的命中一并返回，
+   * 因为「游泳 / 露营 / 大笑」这类词可能只落在活动维度里，用户看不到就会以为搜不到。
+   *
+   * @param {Object} params {query}
+   * @returns {Promise<{available:boolean, tags:string[], unmatched:string[], activities:Array, parsed:Object|null}>}
+   */
+  async parseQuery(params = {}) {
+    const query = params && params.query !== undefined ? String(params.query).trim() : '';
+    if (!query) {
+      return { available: false, tags: [], unmatched: [], activities: [], parsed: null };
+    }
+
+    let parsed = null;
+    let available = false;
+    try {
+      const placesQuery = require('../../../../workers/ai/places/placesQuery');
+      available = !!placesQuery.isAvailable();
+      if (available) {
+        await placesQuery.ensureReady();
+        parsed = placesQuery.analyze(query, { topTags: 12 });
+      }
+    } catch (_) {
+      parsed = null;
+    }
+
+    const ok = !!(parsed && parsed.ok);
+    const tags = ok && Array.isArray(parsed.tags)
+      ? parsed.tags.map(t => (t && t.label ? String(t.label).trim() : '')).filter(Boolean)
+      : [];
+    const unmatched = ok && Array.isArray(parsed.unmatched)
+      ? parsed.unmatched.map(u => String(u || '').trim()).filter(Boolean)
+      : [];
+
+    // 活动标签命中（与场景标签互相独立）
+    let activities = [];
+    try {
+      const like = '%' + query + '%';
+      const rows = await this.knex('photo_activity')
+        .select('act_key', 'act_name', 'photo_count')
+        .where('is_hide', 0)
+        .where(function () {
+          this.where('act_name', 'like', like).orWhere('act_key', 'like', like);
+          if (tags.length > 0) this.orWhereIn('act_name', tags);
+        })
+        .orderBy('photo_count', 'desc')
+        .limit(8);
+      activities = (Array.isArray(rows) ? rows : [])
+        .map(r => ({
+          act_key: r && r.act_key ? String(r.act_key) : '',
+          act_name: r && r.act_name ? String(r.act_name) : '',
+          photo_count: Number((r && r.photo_count) || 0) || 0,
+        }))
+        .filter(r => r.act_name);
+    } catch (_) {
+      activities = [];
+    }
+
+    return { available, tags, unmatched, activities, parsed: parsed || null };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-3 以图搜图：拿一张图的 CLIP 图像嵌入，在**可见范围内**找最像的 N 张。
+   *
+   * 为什么现在才做：`placesClipUtil.scoreImage` 一直在算 512 维图像向量，但**只用于和标签
+   * 文本嵌入点积，算完即丢**；库里没有任何向量列 ⇒ 想以图搜图必须先加列 + 回填（见
+   * `photo_index.clip_emb` 与 `tool/_backfill_clip_emb.js`）。
+   *
+   * 检索走**全量余弦**（两边都已 L2 归一化 ⇒ 退化为点积），分批扫描避免一次性把几十万行读进内存。
+   * ⛔ 不引入 sqlite-vec / pgvector：单机 SQLite，先看实测瓶颈再决定要不要加速。
+   *
+   * @param {Object} params {file_hash?, path?, image_base64?, limit?, validPaths?}
+   */
+  async searchByImage(params = {}) {
+    const fs = require('fs');
+    const os = require('os');
+    const pathMod = require('path');
+    const limit = Math.max(1, Math.min(100, Number(params.limit) || 40));
+    const fileHash = params.file_hash !== undefined ? String(params.file_hash).trim()
+      : (params.fileHash !== undefined ? String(params.fileHash).trim() : '');
+    const validPaths = Array.isArray(params.validPaths) ? params.validPaths.filter(Boolean) : [];
+
+    // 1) 查询图落地成本地文件
+    let queryPath = params.path ? String(params.path) : '';
+    let tempFile = '';
+    if (!queryPath && fileHash) {
+      const row = await this.knex('photo_index')
+        .where({ file_hash: fileHash })
+        .select('path', 'filename')
+        .first()
+        .catch(() => null);
+      if (row && row.path) queryPath = pathMod.join(String(row.path), String(row.filename || ''));
+    }
+    if (!queryPath && params.image_base64) {
+      try {
+        const raw = String(params.image_base64).replace(/^data:[^,]+,/, '');
+        tempFile = pathMod.join(os.tmpdir(), `wnos_imgsearch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`);
+        fs.writeFileSync(tempFile, Buffer.from(raw, 'base64'));
+        queryPath = tempFile;
+      } catch (_) {
+        queryPath = '';
+      }
+    }
+    const cleanup = () => {
+      if (tempFile) {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (_) {}
+      }
+    };
+
+    if (!queryPath || !fs.existsSync(queryPath)) {
+      cleanup();
+      const err = new Error('photo.IMG_SEARCH_NO_SOURCE');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const clip = require('../../../../workers/ai/places/placesClipUtil');
+    if (!clip.isAvailable()) {
+      cleanup();
+      return { available: false, items: [], scanned: 0 };
+    }
+
+    let queryEmb = null;
+    try {
+      await clip.ensureReady();
+      const scored = await clip.scoreImage(queryPath, { topK: 1 });
+      queryEmb = scored && scored.emb ? scored.emb : null;
+    } catch (err) {
+      cleanup();
+      const e = new Error('photo.IMG_SEARCH_FAILED');
+      e.statusCode = 500;
+      throw e;
+    }
+    cleanup();
+    if (!queryEmb) {
+      return { available: true, items: [], scanned: 0 };
+    }
+
+    // 2) 分批扫描候选（只读可见范围；已归一化 ⇒ 点积即余弦）
+    const CHUNK = 4000;
+    const MAX_SCAN = 300000;
+    let offset = 0;
+    let scanned = 0;
+    const hits = []; // { i, score }
+    const meta = []; // 与 hits 的 i 对应
+    const scoresBuf = [];
+
+    for (;;) {
+      const qb = this.knex('photo_index as p')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0)
+        .whereNotNull('p.clip_emb')
+        .select('p.file_hash', 'p.path', 'p.filename', 'p.type', 'p.clip_emb')
+        .orderBy('p.id', 'asc')
+        .limit(CHUNK)
+        .offset(offset);
+      if (fileHash) qb.whereNot('p.file_hash', fileHash);
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(qb, 'p.path', validPaths);
+      const rows = await qb.catch(() => []);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+
+      for (const r of rows) {
+        const buf = r && r.clip_emb;
+        if (!buf) continue;
+        const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+        const dim = Math.floor(bytes.byteLength / 4);
+        if (dim <= 0) continue;
+        const vec = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + dim * 4));
+        let dot = 0;
+        const n = Math.min(dim, queryEmb.length);
+        for (let d = 0; d < n; d += 1) dot += vec[d] * queryEmb[d];
+        scoresBuf.push({
+          score: dot,
+          file_hash: String(r.file_hash || ''),
+          fullpath: pathMod.join(String(r.path || ''), String(r.filename || '')),
+          filename: String(r.filename || ''),
+          type: Number(r.type) || 1,
+        });
+      }
+      scanned += rows.length;
+      offset += rows.length;
+      if (rows.length < CHUNK || scanned >= MAX_SCAN) break;
+    }
+
+    // 3) 排序取前 N
+    scoresBuf.sort((a, b) => b.score - a.score);
+    const items = scoresBuf.slice(0, limit).map(h => ({
+      file_hash: h.file_hash,
+      fullpath: h.fullpath,
+      filename: h.filename,
+      type: h.type,
+      score: Number(h.score.toFixed(6)),
+    }));
+
+    return { available: true, items, scanned };
+  }
+
+  /**
+   * ⭐ 2026-10-16 P0-4 搜索联想聚合（8 类里能落地的 7 类）。
+   *
+   * 数据源全部现成：人物 `photo_faces` / 场景 `photo_places` / 活动 `photo_activity` /
+   * 相机与文件名 `photo_index` / OCR `photo_info_fts` / 年份 `photo_index.original_time`。
+   *
+   * ⚠️ 计数一律在**该用户可见范围内**重新算（可见性零角色例外）：
+   *   聚合表里的 `photo_count` 是全库口径，直接展示等于把别人相册的规模漏给普通用户。
+   *
+   * ⚠️ `photo_faces.name` 是 BLOB ⇒ LIKE 必须 `CAST(name AS TEXT)`，并且转义 `% _ \`。
+   *
+   * @param {Object} params {q, limit, validPaths}
+   */
+  async suggest(params = {}) {
+    const raw = params.q !== undefined ? params.q : (params.query !== undefined ? params.query : '');
+    const q = String(raw === null || raw === undefined ? '' : raw).trim();
+    const limit = Math.max(1, Math.min(20, Number(params.limit) || 8));
+    if (!q) return { q: '', items: [] };
+
+    const validPaths = Array.isArray(params.validPaths) ? params.validPaths.filter(Boolean) : [];
+    const scopeEmpty = Object.prototype.hasOwnProperty.call(params, 'validPaths') && validPaths.length === 0;
+    const escapeLike = s => String(s).replace(/[\\%_]/g, m => '\\' + m);
+    const prefix = escapeLike(q) + '%';
+    const contains = '%' + escapeLike(q) + '%';
+    const items = [];
+
+    // 可见范围子查询（各计数共用）
+    const visibleHashes = () => {
+      const sub = this.knex('photo_index as p')
+        .select('p.file_hash')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0);
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(sub, 'p.path', validPaths);
+      return sub;
+    };
+    const scopedCount = async (table, column, value) => {
+      if (scopeEmpty) return 0;
+      try {
+        const row = await this.knex(table)
+          .where(column, value)
+          .whereIn('file_hash', visibleHashes())
+          .count({ n: 'file_hash' })
+          .first();
+        return Number((row && row.n) || 0) || 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
+    // 1) 人物（根人脸 + 未隐藏 + 名字前缀命中）
+    try {
+      const rows = await this.knex('photo_faces')
+        .where(function () {
+          this.whereNull('belong_face_id').orWhere('belong_face_id', 0);
+        })
+        .where('is_hide', 0)
+        .andWhereRaw("CAST(name AS TEXT) LIKE ? ESCAPE '\\'", [prefix])
+        .orderBy('face_count', 'desc')
+        .limit(limit)
+        .select('face_id', 'name');
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const nm = Buffer.isBuffer(r && r.name)
+          ? r.name.toString('utf8')
+          : (typeof (r && r.name) === 'string' ? r.name : '');
+        if (!nm) continue;
+        const fid = Number(r && r.face_id);
+        const count = await scopedCount('photo_face2filehash', 'face_id', fid);
+        if (count <= 0) continue;
+        items.push({ type: 'person', label: nm, count, face_id: fid });
+      }
+    } catch (_) {}
+
+    // 2) 场景
+    try {
+      const rows = await this.knex('photo_places')
+        .where('is_hide', 0)
+        .where('place_name', 'like', prefix)
+        .orderBy('photo_count', 'desc')
+        .limit(limit)
+        .select('place_name');
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const nm = r && r.place_name ? String(r.place_name) : '';
+        if (!nm) continue;
+        const count = await scopedCount('photo_places2filehash', 'place_name', nm);
+        if (count <= 0) continue;
+        items.push({ type: 'scene', label: nm, count });
+      }
+    } catch (_) {}
+
+    // 3) 活动（独立维度，见 tablePhotoActivity.js）
+    try {
+      const rows = await this.knex('photo_activity')
+        .where('is_hide', 0)
+        .andWhereRaw("(act_name LIKE ? ESCAPE '\\' OR act_key LIKE ? ESCAPE '\\')", [prefix, prefix])
+        .orderBy('photo_count', 'desc')
+        .limit(limit)
+        .select('act_name');
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const nm = r && r.act_name ? String(r.act_name) : '';
+        if (!nm) continue;
+        const count = await scopedCount('photo_activity2filehash', 'act_name', nm);
+        if (count <= 0) continue;
+        items.push({ type: 'activity', label: nm, count });
+      }
+    } catch (_) {}
+
+    // 4) 相机：photo_index 里相机是自由文本，取「命中的相机名 + 张数」，按张数排序
+    try {
+      if (scopeEmpty) throw new Error('scope');
+      const camQuery = this.knex('photo_index as p')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0)
+        .whereNotNull('p.camera')
+        .andWhere('p.camera', 'like', contains)
+        .select('p.camera')
+        .count({ n: 'p.file_hash' })
+        .groupBy('p.camera')
+        .orderBy('n', 'desc')
+        .limit(3);
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(camQuery, 'p.path', validPaths);
+      const rows = await camQuery;
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const nm = r && r.camera ? String(r.camera).trim() : '';
+        if (!nm) continue;
+        items.push({ type: 'camera', label: nm, count: Number((r && r.n) || 0) || 0 });
+      }
+    } catch (_) {}
+
+    // 5) 文件名：不列具体文件名（太长），给一个「按文件名搜索」的入口 + 命中张数
+    try {
+      if (scopeEmpty) throw new Error('scope');
+      const row = await visibleHashes()
+        .clone()
+        .where('p.filename', 'like', contains)
+        .count({ n: 'p.file_hash' })
+        .first();
+      const n = Number((row && row.n) || 0) || 0;
+      if (n > 0) items.push({ type: 'filename', label: q, count: n });
+    } catch (_) {}
+
+    // 6) OCR / FTS 文本（票面、截图、路牌上的字）
+    try {
+      const aiOcrEnable = await tableConfig.getConfigByKey('ai_ocr_enable').catch(() => null);
+      if (aiOcrEnable === '1' && !scopeEmpty) {
+        const token = q.replace(/[\s\u3000]+/g, '').replace(/["'*]/g, '');
+        if (token) {
+          const row = await visibleHashes()
+            .clone()
+            .whereRaw('p.file_hash IN (SELECT file_hash FROM photo_info_fts WHERE ocr MATCH ?)', [token + '*'])
+            .count({ n: 'p.file_hash' })
+            .first();
+          const n = Number((row && row.n) || 0) || 0;
+          if (n > 0) items.push({ type: 'ocr', label: q, count: n });
+        }
+      }
+    } catch (_) {}
+
+    // 7) 年份
+    const yearMatch = /^(\d{4})$/.exec(q);
+    if (yearMatch) {
+      try {
+        const row = await visibleHashes()
+          .clone()
+          .whereRaw("strftime('%Y', p.original_time / 1000, 'unixepoch', 'localtime') = ?", [yearMatch[1]])
+          .count({ n: 'p.file_hash' })
+          .first();
+        const n = Number((row && row.n) || 0) || 0;
+        if (n > 0) items.push({ type: 'year', label: yearMatch[1], count: n });
+      } catch (_) {}
+    }
+
+    return { q, items };
+  }
+
+  /**
    * ⭐ 2026-10-14 场景语义搜索：把「夕阳下的海滩」这类自然语言查询
    * 解析成场景标签再查库（解析层见 workers/ai/places/placesQuery.js）。
    * 解析层不可用（词表缺失 / 全部未识别）时退回标签名子串匹配，
@@ -405,6 +784,29 @@ class PlacesService {
         clearedPlaceCount: Number(clearedPlaceCount) || 0,
         activityResetCount: Number(activityResetCount) || 0,
         clearedActivityRelationCount: Number(clearedActivityRelationCount) || 0,
+        clearedActivityCount: Number(clearedActivityCount) || 0,
+      };
+    });
+  }
+
+  /**
+   * ⭐ 2026-10-16 只重置**活动维度**（场景一概不动）。
+   *
+   * 场景已跑完、活动只跑到一半时，「重来一遍」不该连场景一起推倒 ——
+   * `/place/reset` 是「两个维度都重扫」语义，没有「只重扫活动」的口子。
+   * 活动与场景完全独立：不同表、不同标志位，所以这段是幂等且不碰场景的。
+   */
+  async resetActivityRecognition() {
+    return this.knex.transaction(async trx => {
+      const activityResetCount = await trx('photo_index')
+        .whereNot('gen_activity', 0)
+        .update({ gen_activity: 0 })
+        .catch(() => 0);
+      const clearedRelationCount = await trx('photo_activity2filehash').del().catch(() => 0);
+      const clearedActivityCount = await trx('photo_activity').del().catch(() => 0);
+      return {
+        activityResetCount: Number(activityResetCount) || 0,
+        clearedActivityRelationCount: Number(clearedRelationCount) || 0,
         clearedActivityCount: Number(clearedActivityCount) || 0,
       };
     });

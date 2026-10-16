@@ -246,3 +246,193 @@ class FetchResult {
     required this.addedCount,
   });
 }
+
+
+/// ⭐ 2026-10-16 P0-1：搜索语义解析结果（**只解析、不查库**）。
+///
+/// 时间轴搜索框原本把关键词直接扔给服务端，用户看不到「系统猜到了什么」。
+/// 语义是猜出来的：不把猜的过程摊开，用户搜不到时就无法判断
+/// 「该换个说法」还是「库里确实没有」。这里承载提示条要用的三个列表。
+class PhotoSearchActivity {
+  final String actKey;
+  final String actName;
+  final int photoCount;
+
+  const PhotoSearchActivity({
+    required this.actKey,
+    required this.actName,
+    required this.photoCount,
+  });
+
+  factory PhotoSearchActivity.fromJson(Map<String, dynamic> json) {
+    return PhotoSearchActivity(
+      actKey: json['act_key']?.toString() ?? '',
+      actName: json['act_name']?.toString() ?? '',
+      photoCount: (json['photo_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class PhotoSearchParseResult {
+  /// 语义解析层（词表 / 短语嵌入）是否可用；不可用时只剩字面匹配。
+  final bool available;
+  final List<String> tags;
+  final List<String> unmatched;
+
+  /// 活动维度命中（独立于场景标签，见服务端 tablePhotoActivity.js）。
+  final List<PhotoSearchActivity> activities;
+
+  const PhotoSearchParseResult({
+    required this.available,
+    required this.tags,
+    required this.unmatched,
+    required this.activities,
+  });
+
+  static const PhotoSearchParseResult empty = PhotoSearchParseResult(
+    available: false,
+    tags: <String>[],
+    unmatched: <String>[],
+    activities: <PhotoSearchActivity>[],
+  );
+
+  bool get isEmpty =>
+      tags.isEmpty && unmatched.isEmpty && activities.isEmpty;
+
+  factory PhotoSearchParseResult.fromJson(Map<String, dynamic> json) {
+    final tagsRaw = json['tags'];
+    final unmatchedRaw = json['unmatched'];
+    final actsRaw = json['activities'];
+    return PhotoSearchParseResult(
+      available: json['available'] == true,
+      tags: tagsRaw is List
+          ? tagsRaw
+              .map((e) => e.toString())
+              .where((e) => e.isNotEmpty)
+              .toList()
+          : <String>[],
+      unmatched: unmatchedRaw is List
+          ? unmatchedRaw
+              .map((e) => e.toString())
+              .where((e) => e.isNotEmpty)
+              .toList()
+          : <String>[],
+      activities: actsRaw is List
+          ? actsRaw
+              .whereType<Map>()
+              .map((e) =>
+                  PhotoSearchActivity.fromJson(e.cast<String, dynamic>()))
+              .toList()
+          : <PhotoSearchActivity>[],
+    );
+  }
+}
+
+/// ⭐ 2026-10-16 P0-4：一条搜索联想建议。
+///
+/// `type` 取值：person / scene / activity / camera / filename / ocr / year。
+/// 计数一律是**当前用户可见范围**内的张数（聚合表里的 photo_count 是全库口径，
+/// 直接展示会把别人相册的规模漏给普通用户）。
+class PhotoSearchSuggestion {
+  final String type;
+  final String label;
+  final int count;
+  final int? faceId;
+
+  const PhotoSearchSuggestion({
+    required this.type,
+    required this.label,
+    required this.count,
+    this.faceId,
+  });
+
+  factory PhotoSearchSuggestion.fromJson(Map<String, dynamic> json) {
+    final fid = json['face_id'];
+    return PhotoSearchSuggestion(
+      type: json['type']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      count: (json['count'] as num?)?.toInt() ?? 0,
+      faceId: fid is num ? fid.toInt() : null,
+    );
+  }
+}
+
+/// ⭐ 2026-10-16 P0-2：一个「合影组合」——同一组人反复同框的照片堆。
+class PhotoPeerGroup {
+  final String comboKey;
+  final List<int> memberFaceIds;
+  final List<String> memberNames;
+  final int namedCount;
+  final int photoCount;
+  final String coverFileHash;
+
+  /// 封面图的完整路径（服务端直接给出，客户端拼缩略图 URL 用）。
+  final String coverPath;
+
+  const PhotoPeerGroup({
+    required this.comboKey,
+    required this.memberFaceIds,
+    required this.memberNames,
+    required this.namedCount,
+    required this.photoCount,
+    required this.coverFileHash,
+    this.coverPath = '',
+  });
+
+  factory PhotoPeerGroup.fromJson(Map<String, dynamic> json) {
+    final idsRaw = json['member_face_ids'];
+    final namesRaw = json['member_names'];
+    return PhotoPeerGroup(
+      comboKey: json['combo_key']?.toString() ?? '',
+      memberFaceIds: idsRaw is List
+          ? idsRaw.map((e) => (e as num).toInt()).toList()
+          : <int>[],
+      memberNames: namesRaw is List
+          ? namesRaw.map((e) => e.toString()).toList()
+          : <String>[],
+      namedCount: (json['named_count'] as num?)?.toInt() ?? 0,
+      photoCount: (json['photo_count'] as num?)?.toInt() ?? 0,
+      coverFileHash: json['cover_file_hash']?.toString() ?? '',
+      coverPath: json['cover_path']?.toString() ?? '',
+    );
+  }
+
+  /// 成员展示名：未命名的按「未命名」占位，但**同名要去重**，
+  /// 否则会渲染出「未命名、未命名」这种没有信息量的标题。
+  List<String> get displayNames {
+    final seen = <String>{};
+    final out = <String>[];
+    for (var i = 0; i < memberFaceIds.length; i++) {
+      final raw = i < memberNames.length ? memberNames[i].trim() : '';
+      final label = raw.isEmpty ? '未命名' : raw;
+      if (seen.add(label)) out.add(label);
+    }
+    return out;
+  }
+}
+
+class PhotoPeerGroupResult {
+  final List<PhotoPeerGroup> items;
+  final int total;
+  final bool faceEnable;
+
+  const PhotoPeerGroupResult({
+    required this.items,
+    required this.total,
+    this.faceEnable = true,
+  });
+
+  factory PhotoPeerGroupResult.fromJson(Map<String, dynamic> json) {
+    final raw = json['items'];
+    return PhotoPeerGroupResult(
+      items: raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => PhotoPeerGroup.fromJson(e.cast<String, dynamic>()))
+              .toList()
+          : <PhotoPeerGroup>[],
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      faceEnable: json['face_enable'] != 0,
+    );
+  }
+}

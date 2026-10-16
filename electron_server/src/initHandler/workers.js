@@ -358,6 +358,8 @@ module.exports = {
           .then(async () => {
             // 服务正在关闭 ⇒ 绝对不要再把 worker 拉起来
             if (singletonWorkerManager.shuttingDown) return;
+            // ⭐ 2026-10-16 P1-9：用户暂停了 AI 流水线 ⇒ 不自动重启
+            if (typeof singletonWorkerManager.isAiPaused === 'function' && singletonWorkerManager.isAiPaused()) return;
             // 读开关：关掉了就不重启
             try {
               if (!knexUtil.hasConnection(dbUtil.DB_PATHS.MAIN_DB)) {
@@ -464,6 +466,8 @@ module.exports = {
             } catch (_) {}
             const enabled = await tableConfig.getConfigByKey('ai_ocr_enable').catch(() => '0');
             if (enabled !== '1') return;
+            // ⭐ 2026-10-16 P1-9：暂停期间同样不自动重启
+            if (typeof singletonWorkerManager.isAiPaused === 'function' && singletonWorkerManager.isAiPaused()) return;
 
             if (!knexUtil.hasConnection(dbUtil.DB_PATHS.PHOTO_DB)) {
               await knexUtil.init(dbUtil.DB_PATHS.PHOTO_DB);

@@ -139,6 +139,29 @@ class PhotoAiFacesApiService extends BaseApiService {
   }
 
   /// 只重建「我可见范围内」照片的人脸（不碰别人的相册）
+  /// ⭐ 2026-10-16 P0-7 重扫「两阶段」的预览：只算差异，**不写库**。
+  /// 返回 {photos, faceRows, faces, samples, emptyGroupsAfter}，交给用户确认后再跑 rescanFaces。
+  Future<ApiResponse<Map<String, dynamic>>> previewRescanFaces() async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/face/rescan/preview',
+      body: {},
+      showLoading: true,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(
+      res.data ?? <String, dynamic>{},
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
+  }
+
   Future<ApiResponse<bool>> rescanFaces({bool showLoading = false}) async {
     final res = await apiPost<dynamic>(
       '/api/photo/face/rescan',
@@ -175,4 +198,29 @@ class PhotoAiFacesApiService extends BaseApiService {
       rawResponse: res.rawResponse,
     );
   }
+  /// ⭐ 2026-10-16 P0-5：人物关系图谱数据（共同出现的边 + 人物节点）。
+  Future<ApiResponse<AiFaceRelationsResult>> listRelations({
+    int limit = 120,
+    int minCount = 2,
+  }) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/face/relations',
+      body: {'limit': limit, 'min_count': minCount},
+      showLoading: false,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    return ApiResponse.success(
+      AiFaceRelationsResult.fromJson(res.data ?? <String, dynamic>{}),
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
+  }
+
 }

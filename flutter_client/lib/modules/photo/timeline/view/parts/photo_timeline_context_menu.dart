@@ -168,6 +168,19 @@ class PhotoTimelineContextMenu extends StatelessWidget {
             }
           },
         ),
+        // ⭐ 2026-10-16：以图搜图 / 重新识别——原来只在多选栏里，现在右键直接可用
+        CustomContextMenuItem.create(
+          label: Text('photo_search_by_image'.tr),
+          icon: const Icon(Icons.image_search, size: 18),
+          value: 'search_by_image',
+          onSelected: (_) => controller.searchByImageForItem(item),
+        ),
+        CustomContextMenuItem.create(
+          label: Text('photo_rerun_title'.tr),
+          icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+          value: 'rerun_ai',
+          onSelected: (_) => controller.rerunAiForItem(item),
+        ),
         if (canShowPhotoFaces)
           CustomContextMenuItem.create(
             label: Text('face_show_photo_faces'.tr),

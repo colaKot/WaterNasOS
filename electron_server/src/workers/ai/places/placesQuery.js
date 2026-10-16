@@ -269,6 +269,312 @@ function analyze(text, opts = {}) {
 /** 仅供测试/调试：重置状态 */
 function _reset() { _ready = null; _available = null; _entries = []; _embeds = null; _qDim = 0; _byLen = []; }
 
+// ============================================================================
+// ⭐ 2026-10-16 验证动作一实测结论落地：多语言 CLIP 文本塔（中文直编）
+//
+// A/B（23 条中文查询 / 95 张可评 / Top-5，零图像推理、两路共用同一份图像嵌入）：
+//   现有词表路线 78.3% / MRR 0.684 ｜ 中文直编 95.7% / MRR 0.804 ｜ **双路融合 95.7% / MRR 0.841**
+//   · 自然中文说法：词表 73.7% vs 直编 94.7%（词表对「自然风光/纸质文件/拍的文件」根本解析不出标签）
+//   · 裸标签查询：两路都 100%（词表对已建模场景类很准）
+// ⇒ 结论：**不替换**现有链路，而是给召回加一路「直编余弦」，把词表降级为「精排/绑定」。
+//   本文件只负责**查询编码**；排序融合在 photoTimeLineService._fuseMultilingualRank。
+//
+// ⚠️ 两个必须自己接/自己实现的地方（都是「静默失败」的坑）：
+//   1) 该 ONNX **只输出 last_hidden_state**（[1,seq,768]）：均值池化 + 768→512 投影**在图外**
+//      （1_Pooling=mean_tokens、2_Dense=768→512 bias=false）。权重已离线转成裸 float32
+//      `dense_w512x768.f32.bin`，Node 侧零依赖直接读。
+//   2) tokenizer 是 **BERT WordPiece**（vocab 119547），不是 SentencePiece ⇒ 本文件自带
+//      BertNormalizer + BertPreTokenizer + greedy WordPiece，零新依赖。
+//
+// 产物目录：onnx_models/clip_multilingual/{model.onnx, tokenizer.json, dense_w512x768.f32.bin}
+// 环境变量 OCR_* 无关；融合可用配置键 `ai_multilingual_clip_enable=0` 关掉。
+// ============================================================================
+
+const MT_DIR = () => path.join(remoteAssets.resolveOnnxModelsRoot(), 'clip_multilingual');
+const MT_MODEL = () => path.join(MT_DIR(), 'model.onnx');
+const MT_TOKENIZER = () => path.join(MT_DIR(), 'tokenizer.json');
+const MT_DENSE = () => path.join(MT_DIR(), 'dense_w512x768.f32.bin');
+const MT_MAX_LEN = 128;
+const MT_DIM = 512;
+const MT_HIDDEN = 768;
+// ⭐ 内存是硬成本：实测 fp32 塔常驻 **+437MB RSS**（96→522MB），而 API 进程要服务所有模块。
+//    所以搜完一段空闲就**主动卸载**（释放 ONNX 会话、把内存交还），下次查询再懒加载（~0.5s）。
+//    ⛔ 不做常驻：NAS 上为了搜一次照片长期多占 400MB 不划算。可用 MT_IDLE_UNLOAD_MS 调整（默认 10 分钟）。
+const MT_IDLE_UNLOAD_MS = Math.max(1000, Number(process.env.MT_IDLE_UNLOAD_MS ?? 600000));
+let _mtLastUse = 0;
+
+let _mtAvailable = null;
+let _mtReadyPromise = null;
+let _mtReady = null;
+let _mtFailed = false;
+let _mtSession = null;
+let _mtVocab = null;
+let _mtDenseW = null;
+
+function isMultilingualAvailable() {
+  if (_mtAvailable !== null) return _mtAvailable;
+  try {
+    _mtAvailable = fs.existsSync(MT_MODEL()) && fs.existsSync(MT_TOKENIZER()) && fs.existsSync(MT_DENSE());
+  } catch (_) {
+    _mtAvailable = false;
+  }
+  return _mtAvailable;
+}
+
+/** BertNormalizer 用到的 CJK 区间（与 HF 的实现一致） */
+const _MT_CJK_RANGES = [
+  [0x4e00, 0x9fff],
+  [0x3400, 0x4dbf],
+  [0xf900, 0xfaff],
+  [0x20000, 0x2a6df],
+  [0x2a700, 0x2b73f],
+  [0x2b740, 0x2b81f],
+  [0x2b820, 0x2ceaf],
+  [0x2f800, 0x2fa1f],
+];
+
+function _mtIsCjk(cp) {
+  for (const [a, b] of _MT_CJK_RANGES) {
+    if (cp >= a && cp <= b) return true;
+  }
+  return false;
+}
+
+function _mtIsControl(cp) {
+  if (cp === 0 || cp === 0xfffd) return true;
+  if (cp === 9 || cp === 10 || cp === 13) return false; // tab/lf/cr 先转空格
+  return cp < 32 || (cp >= 0x7f && cp <= 0x9f);
+}
+
+function _mtIsPunct(cp) {
+  return (
+    (cp >= 33 && cp <= 47) ||
+    (cp >= 58 && cp <= 64) ||
+    (cp >= 91 && cp <= 96) ||
+    (cp >= 123 && cp <= 126)
+  );
+}
+
+/** BertNormalizer: clean_text + handle_chinese_chars（CJK 前后补空格 ⇒ 每个字单独成 token） */
+function _mtNormalize(text) {
+  const out = [];
+  for (const ch of String(text || '')) {
+    const cp = ch.codePointAt(0);
+    if (_mtIsControl(cp)) continue;
+    if (cp === 9 || cp === 10 || cp === 13 || ch === ' ') {
+      out.push(' ');
+      continue;
+    }
+    if (_mtIsCjk(cp)) {
+      out.push(' ' + ch + ' ');
+      continue;
+    }
+    out.push(ch);
+  }
+  return out.join('');
+}
+
+/** BertPreTokenizer: 空白切分 + 标点单独成 token */
+function _mtPreTokenize(text) {
+  const tokens = [];
+  for (const chunk of String(text).split(/\s+/)) {
+    if (!chunk) continue;
+    let buf = '';
+    for (const ch of chunk) {
+      if (_mtIsPunct(ch.codePointAt(0))) {
+        if (buf) {
+          tokens.push(buf);
+          buf = '';
+        }
+        tokens.push(ch);
+      } else {
+        buf += ch;
+      }
+    }
+    if (buf) tokens.push(buf);
+  }
+  return tokens;
+}
+
+/** greedy longest-match WordPiece（与 HF 的 max_input_chars_per_word=100 一致） */
+function _mtWordPiece(token) {
+  const unk = _mtVocab.get('[UNK]');
+  if (token.length > 100) return [unk];
+  const ids = [];
+  let start = 0;
+  while (start < token.length) {
+    let end = token.length;
+    let cur = null;
+    while (start < end) {
+      let sub = token.slice(start, end);
+      if (start > 0) sub = '##' + sub;
+      const id = _mtVocab.get(sub);
+      if (id !== undefined) {
+        cur = id;
+        break;
+      }
+      end -= 1;
+    }
+    if (cur === null) return [unk];
+    ids.push(cur);
+    start = end;
+  }
+  return ids;
+}
+
+function _mtEncodeIds(text) {
+  const tokens = _mtPreTokenize(_mtNormalize(text));
+  const body = [];
+  for (const t of tokens) {
+    const ids = _mtWordPiece(t);
+    for (const id of ids) body.push(id);
+  }
+  const cls = _mtVocab.get('[CLS]');
+  const sep = _mtVocab.get('[SEP]');
+  if (body.length > MT_MAX_LEN - 2) body.length = MT_MAX_LEN - 2; // 给 CLS/SEP 留位（与 HF truncation 同口径）
+  return [cls, ...body, sep];
+}
+
+async function ensureMultilingualReady() {
+  if (_mtReady) return _mtReady;
+  if (_mtFailed || !isMultilingualAvailable()) return null;
+  if (_mtReadyPromise) return _mtReadyPromise;
+  _mtReadyPromise = (async () => {
+    try {
+      const ort = require('onnxruntime-node');
+      const { getBestExecutionProviders } = require('../../../utils/onnxProviderUtil');
+      const tk = JSON.parse(fs.readFileSync(MT_TOKENIZER(), 'utf8'));
+      const vocabObj = tk && tk.model && tk.model.vocab;
+      if (!vocabObj || typeof vocabObj !== 'object') throw new Error('tokenizer.json 缺少 model.vocab');
+      _mtVocab = new Map(Object.keys(vocabObj).map(k => [k, Number(vocabObj[k])]));
+      if (!_mtVocab.has('[CLS]') || !_mtVocab.has('[SEP]')) throw new Error('词表缺少 [CLS]/[SEP]');
+      const buf = fs.readFileSync(MT_DENSE());
+      _mtDenseW = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+      if (_mtDenseW.length !== MT_DIM * MT_HIDDEN) {
+        throw new Error(`dense 权重尺寸不对：期望 ${MT_DIM * MT_HIDDEN}，实际 ${_mtDenseW.length}`);
+      }
+      _mtSession = await ort.InferenceSession.create(MT_MODEL(), {
+        executionProviders: getBestExecutionProviders(),
+        graphOptimizationLevel: 'all',
+      });
+      _mtReady = { dim: MT_DIM, vocab: _mtVocab.size };
+      Logger.info(`[placesQuery] 多语言塔就绪：vocab=${_mtVocab.size} dim=${MT_DIM}（中文直编参与融合重排）`);
+      return _mtReady;
+    } catch (err) {
+      _mtFailed = true;
+      Logger.warn(`[placesQuery] 多语言塔加载失败，融合重排不生效（搜索行为与以前一致）：${err && err.message ? err.message : err}`);
+      return null;
+    }
+  })();
+  return _mtReadyPromise;
+}
+
+/**
+ * 把一句中文编码成 512 维单位向量（CLIP 图像空间的句子嵌入）。
+ * @returns {Promise<Float32Array|null>} 不可用时返回 null（调用方必须容忍）
+ */
+async function encodeMultilingual(text) {
+  const ready = await ensureMultilingualReady();
+  if (!ready) return null;
+  _mtLastUse = Date.now();
+  _scheduleIdleUnload();
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try {
+    const ort = require('onnxruntime-node');
+    const ids = _mtEncodeIds(raw);
+    const seq = ids.length;
+    const idsI64 = BigInt64Array.from(ids.map(v => BigInt(v)));
+    const maskI64 = BigInt64Array.from(new Array(seq).fill(1n));
+    const feeds = {};
+    for (const name of _mtSession.inputNames) {
+      if (name === 'input_ids') feeds[name] = new ort.Tensor('int64', idsI64, [1, seq]);
+      else if (name === 'attention_mask') feeds[name] = new ort.Tensor('int64', maskI64, [1, seq]);
+      else if (name === 'token_type_ids') feeds[name] = new ort.Tensor('int64', BigInt64Array.from(new Array(seq).fill(0n)), [1, seq]);
+    }
+    const out = await _mtSession.run(feeds);
+    const last = out[_mtSession.outputNames[0]];
+    const data = last.data;
+    if (!data || data.length < seq * MT_HIDDEN) return null;
+
+    // 均值池化（mask 全 1 ⇒ 直接按 token 数平均）
+    const pooled = new Float32Array(MT_HIDDEN);
+    for (let s = 0; s < seq; s += 1) {
+      const base = s * MT_HIDDEN;
+      for (let h = 0; h < MT_HIDDEN; h += 1) pooled[h] += data[base + h];
+    }
+    for (let h = 0; h < MT_HIDDEN; h += 1) pooled[h] /= seq;
+
+    // 768 → 512 线性投影（bias=false）
+    const vec = new Float32Array(MT_DIM);
+    for (let o = 0; o < MT_DIM; o += 1) {
+      const row = o * MT_HIDDEN;
+      let acc = 0;
+      for (let h = 0; h < MT_HIDDEN; h += 1) acc += _mtDenseW[row + h] * pooled[h];
+      vec[o] = acc;
+    }
+    let norm = 0;
+    for (let i = 0; i < MT_DIM; i += 1) norm += vec[i] * vec[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < MT_DIM; i += 1) vec[i] /= norm;
+    return vec;
+  } catch (err) {
+    Logger.warn(`[placesQuery] 多语言编码失败（本条查询退回词表路线）：${err && err.message ? err.message : err}`);
+    return null;
+  }
+}
+
+/**
+ * 空闲卸载：到点且确实没再被用过就释放会话。
+ * ⛔ 只清会话与权重，不动 tokenizer 状态也没必要 —— 一起清最省内存（下次 ensure 会重建）。
+ */
+function _scheduleIdleUnload() {
+  if (_mtIdleTimer) return;
+  _mtIdleTimer = setTimeout(() => {
+    _mtIdleTimer = null;
+    if (!_mtSession) return;
+    const idle = Date.now() - _mtLastUse;
+    if (idle < MT_IDLE_UNLOAD_MS) {
+      _scheduleIdleUnload();
+      return;
+    }
+    try {
+      if (typeof _mtSession.release === 'function') _mtSession.release();
+    } catch (_) {}
+    _mtSession = null;
+    _mtReady = null;
+    _mtReadyPromise = null;
+    if (global.gc) {
+      try {
+        global.gc();
+      } catch (_) {}
+    }
+    Logger.info('[placesQuery] 多语言塔空闲卸载（内存已交还；下次查询会重新加载）');
+  }, MT_IDLE_UNLOAD_MS + 1000);
+  if (_mtIdleTimer && typeof _mtIdleTimer.unref === 'function') _mtIdleTimer.unref();
+}
+let _mtIdleTimer = null;
+
+/** 仅供测试/调试：重置多语言塔状态 */
+function _mtReset() {
+  _mtAvailable = null;
+  _mtReadyPromise = null;
+  _mtReady = null;
+  _mtFailed = false;
+  _mtSession = null;
+  _mtVocab = null;
+  _mtDenseW = null;
+}
+
+module.exports = {
+  isMultilingualAvailable,
+  ensureMultilingualReady,
+  encodeMultilingual,
+  _mtTokenizeForDebug: text => (_mtVocab ? _mtEncodeIds(text) : null),
+  _mtNormalizeForDebug: _mtNormalize,
+  _mtReset,
+};
+
 module.exports = {
   isAvailable,
   ensureReady,
@@ -276,4 +582,11 @@ module.exports = {
   segment,
   _normalize,
   _reset,
+  // ⭐ 2026-10-16 验证动作一落地：中文直编（多语言 CLIP 文本塔），供融合重排使用
+  isMultilingualAvailable,
+  ensureMultilingualReady,
+  encodeMultilingual,
+  _mtTokenizeForDebug: text => (_mtVocab ? _mtEncodeIds(text) : null),
+  _mtNormalizeForDebug: _mtNormalize,
+  _mtReset,
 };

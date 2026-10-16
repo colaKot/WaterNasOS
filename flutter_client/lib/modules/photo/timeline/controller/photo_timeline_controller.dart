@@ -19,6 +19,8 @@ import '../../../gallery/views/custom_gallery.dart';
 import '../../../home/views/pc_home_controller.dart';
 import '../../ai_faces/models/ai_faces_models.dart';
 import '../../ai_faces/service/photo_ai_faces_api_service.dart';
+import '../../ai_setting/service/photo_ai_settings_api_service.dart';
+import '../service/photo_offline_snapshot.dart';
 import '../../photo_main/controller/photo_home_controller.dart';
 import '../../album/models/photo_album_model.dart';
 import '../../album/service/photo_album_api_service.dart';
@@ -79,6 +81,7 @@ class PhotoTimelineController extends GetxController {
   final int? initialCollectionId;
   final int? initialSmartAlbumId;
   final int? initialFaceId;
+  final List<int>? initialComboFaceIds;
   final String? initialPlaceName;
   final bool initialLoadTheDay;
   final String? initialGeohash;
@@ -99,6 +102,7 @@ class PhotoTimelineController extends GetxController {
     this.initialCollectionId,
     this.initialSmartAlbumId,
     this.initialFaceId,
+    this.initialComboFaceIds,
     this.initialPlaceName,
     this.initialLoadTheDay = false,
     this.initialGeohash,
@@ -156,6 +160,27 @@ class PhotoTimelineController extends GetxController {
   final TextEditingController searchController = TextEditingController();
   Timer? _searchDebounce;
 
+  /// ⭐ 2026-10-16 P0-1：搜索的语义解析结果（「已识别 / 未识别 / 命中的活动」）。
+  /// 服务端一直在解析（placesQuery），客户端此前没把它显示出来 ⇒ 用户看不到「系统猜到了什么」。
+  final RxList<String> searchTags = <String>[].obs;
+  final RxList<String> searchUnmatched = <String>[].obs;
+  final RxList<PhotoSearchActivity> searchActivities =
+      <PhotoSearchActivity>[].obs;
+  final RxBool searchSemantic = false.obs;
+  final RxBool searchParsing = false.obs;
+
+  /// 解析请求序号：防抖 + 网络乱序时只认最后一次响应。
+  int _searchParseSeq = 0;
+
+  /// ⭐ 2026-10-16 P1-12 离线快照：断网时用本地快照渲染，并告诉用户快照是什么时候的。
+  final RxString offlineNotice = ''.obs;
+  final RxBool offlineMode = false.obs;
+
+  /// ⭐ 2026-10-16 P0-4：搜索联想建议（点击直接改写搜索词）。
+  final RxList<PhotoSearchSuggestion> searchSuggestions =
+      <PhotoSearchSuggestion>[].obs;
+
+
   final RxString baseGeohash = ''.obs;
   final RxInt nearbyRangeKm = 2.obs;
 
@@ -165,6 +190,9 @@ class PhotoTimelineController extends GetxController {
   final RxnInt collectionId = RxnInt();
   final RxnInt smartAlbumId = RxnInt();
   final RxnInt faceId = RxnInt();
+
+  /// ⭐ 2026-10-16 P0-2 合影组合：一组根人脸 id（语义是**交集**，不是并集）。
+  final RxList<int> comboFaceIds = <int>[].obs;
   final RxnString placeName = RxnString();
   final RxBool loadTheDay = false.obs;
   final RxnInt year = RxnInt();
@@ -308,6 +336,9 @@ class PhotoTimelineController extends GetxController {
     collectionId.value = initialCollectionId;
     smartAlbumId.value = initialSmartAlbumId;
     faceId.value = initialFaceId;
+    if (initialComboFaceIds != null && initialComboFaceIds!.isNotEmpty) {
+      comboFaceIds.assignAll(initialComboFaceIds!);
+    }
     if (initialPlaceName != null && initialPlaceName!.trim().isNotEmpty) {
       placeName.value = initialPlaceName!.trim();
     }
@@ -403,12 +434,97 @@ class PhotoTimelineController extends GetxController {
     _searchDebounce = Timer(const Duration(milliseconds: 500), () {
       searchKeyword.value = val;
       refreshTimeline();
+      // ⭐ 与列表刷新并行：解析与联想只用于「提示条 / 建议」，不阻塞结果渲染。
+      _parseSearch(val);
+      _fetchSuggestions(val);
     });
+  }
+
+  /// ⭐ 2026-10-16 P0-1：取回语义解析结果（已识别 / 未识别 / 活动命中）。
+  /// 失败与超时都只清空提示条，**不影响搜索结果本身**。
+  Future<void> _parseSearch(String val) async {
+    final q = val.trim();
+    final seq = ++_searchParseSeq;
+    if (q.isEmpty) {
+      searchTags.clear();
+      searchUnmatched.clear();
+      searchActivities.clear();
+      searchSemantic.value = false;
+      searchParsing.value = false;
+      return;
+    }
+    searchParsing.value = true;
+    try {
+      final res = await _apiService.parseSearchQuery(query: q);
+      if (seq != _searchParseSeq) return; // 已有更新的请求，丢弃本次
+      if (!res.success || res.data == null) {
+        searchTags.clear();
+        searchUnmatched.clear();
+        searchActivities.clear();
+        searchSemantic.value = false;
+        return;
+      }
+      final data = res.data!;
+      searchTags.assignAll(data.tags);
+      searchUnmatched.assignAll(data.unmatched);
+      searchActivities.assignAll(data.activities);
+      searchSemantic.value =
+          data.available && (data.tags.isNotEmpty || data.activities.isNotEmpty);
+    } catch (_) {
+      if (seq == _searchParseSeq) {
+        searchTags.clear();
+        searchUnmatched.clear();
+        searchActivities.clear();
+        searchSemantic.value = false;
+      }
+    } finally {
+      if (seq == _searchParseSeq) searchParsing.value = false;
+    }
   }
 
   void clearSearch() {
     searchKeyword.value = '';
     searchController.clear();
+    _searchParseSeq++; // 作废在途请求
+    searchTags.clear();
+    searchUnmatched.clear();
+    searchActivities.clear();
+    searchSemantic.value = false;
+    searchParsing.value = false;
+    searchSuggestions.clear();
     refreshTimeline();
+  }
+
+  /// ⭐ 2026-10-16 P0-4：取搜索联想建议。失败只清空建议，不影响搜索结果。
+  Future<void> _fetchSuggestions(String val) async {
+    final q = val.trim();
+    final seq = ++_searchParseSeq;
+    if (q.isEmpty) {
+      searchSuggestions.clear();
+      return;
+    }
+    try {
+      final res = await _apiService.suggestSearch(query: q);
+      if (seq != _searchParseSeq) return;
+      searchSuggestions.assignAll(res.success && res.data != null
+          ? res.data!.where((e) => e.label != q).take(8)
+          : const <PhotoSearchSuggestion>[]);
+    } catch (_) {
+      if (seq == _searchParseSeq) searchSuggestions.clear();
+    }
+  }
+
+  /// ⭐ 2026-10-16 P0-4：点选一条联想建议 —— 直接把它写进搜索框并立即检索。
+  void applySearchKeyword(String keyword) {
+    final k = keyword.trim();
+    if (k.isEmpty) return;
+    if (_searchDebounce?.isActive ?? false) _searchDebounce!.cancel();
+    searchController.text = k;
+    searchController.selection =
+        TextSelection.collapsed(offset: k.length);
+    searchKeyword.value = k;
+    refreshTimeline();
+    _parseSearch(k);
+    _fetchSuggestions(k);
   }
 }

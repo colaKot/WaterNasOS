@@ -39,6 +39,7 @@ router.post('/setAiPetEnable', authenticateJWT, requireSuperAdmin, photoConfigCo
 router.post('/setAiFaceEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiFaceEnable);
 router.post('/setAiFaceMinShowCount', authenticateJWT, requireSuperAdmin, photoConfigController.setAiFaceMinShowCount);
 router.post('/setAiPlaceEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiPlaceEnable);
+router.post('/setAiActivityEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiActivityEnable);
 router.post('/setAiSimilarEnable', authenticateJWT, requireSuperAdmin, photoConfigController.setAiSimilarEnable);
 router.post('/setAiGpuPrefer', authenticateJWT, requireSuperAdmin, photoConfigController.setAiGpuPrefer);
 router.post('/getAiConfig', authenticateJWT, requireSuperAdmin, photoConfigController.getAiConfig);
@@ -53,8 +54,15 @@ router.post('/timeline/years', authenticateJWT, photoTimeLineController.getTimel
 // places
 router.post('/place/list', authenticateJWT, placesController.listPlaces);
 router.post('/place/search', authenticateJWT, placesController.searchPlaces);
+// ⭐ 2026-10-16 P0-1 只解析不查库：给时间轴搜索框回「已识别 / 未识别 / 活动命中」
+router.post('/place/parse', authenticateJWT, placesController.parseQuery);
+// ⭐ 2026-10-16 P0-3 以图搜图：file_hash | path | image_base64 → 可见范围内最像的 N 张
+router.post('/place/search_image', authenticateJWT, placesController.searchImage);
+// ⭐ 2026-10-16 P0-4 搜索联想聚合（人物/场景/活动/相机/文件名/OCR/年份）
+router.post('/search/suggest', authenticateJWT, placesController.suggest);
 router.post('/place/status/set', authenticateJWT, requireAdmin, placesController.setPlaceStatus);
 router.post('/place/reset', authenticateJWT, requireAdmin, placesController.resetPlaces);
+router.post('/place/activity/reset', authenticateJWT, requireAdmin, placesController.resetActivity);
 
 // map
 router.post('/getBoundsPhoto', authenticateJWT, photoTimeLineController.getBoundsPhoto);
@@ -99,6 +107,10 @@ router.post('/trash/list', authenticateJWT, photoTimeLineController.getTrashPhot
 router.post('/trash/restore', authenticateJWT, photoTimeLineController.restoreFromTrash);
 router.post('/trash/delete', authenticateJWT, photoTimeLineController.deleteFromTrash);
 router.post('/trash/empty', authenticateJWT, photoTimeLineController.emptyTrash);
+// ⭐ 2026-10-16 P0-6 写操作「预演 → 执行 → 可撤销」
+router.post('/trash/preview', authenticateJWT, photoTimeLineController.previewTrash);
+router.post('/operation/undo', authenticateJWT, photoTimeLineController.undoOperation);
+router.post('/operation/recent', authenticateJWT, photoTimeLineController.recentOperations);
 
 // Face
 router.post('/face/list', authenticateJWT, faceController.listFaces);
@@ -119,6 +131,8 @@ router.post('/face/photo/remove', authenticateJWT, faceController.removePhotoFro
 router.post('/face/photo/move', authenticateJWT, faceController.movePhotoToFace);
 // 只重建「调用者可见范围内」照片的人脸（普通用户可用）；/face/reset 全库重建仍限管理员
 router.post('/face/rescan', authenticateJWT, faceController.rescanFaces);
+// ⭐ 2026-10-16 P0-7 重扫两阶段：先 preview 看差异（不写库），确认后再调 /face/rescan 执行
+router.post('/face/rescan/preview', authenticateJWT, faceController.previewRescanFaces);
 // ⭐ 2026-10-16 存量补扫：只把「已标记完成但无任何脸行」的照片重新入队（不清已有分组）
 router.post('/face/rescan-missing', authenticateJWT, faceController.rescanMissingFaces);
 // ⭐ 2026-10-16 全库「合并相似人物」：一次性归并分裂的碎片组（限超管，支持 dry_run）
@@ -126,6 +140,10 @@ router.post('/face/merge-similar', authenticateJWT, requireSuperAdmin, faceContr
 // 清理历史误检人脸（全局维护，限管理员）
 router.post('/face/purge', authenticateJWT, requireSuperAdmin, faceController.purgeSuspiciousFaces);
 router.get('/face/image', authenticateJWT, faceController.faceImageGet);
+// ⭐ 2026-10-16 P0-2 合影组合相册：按「同框人脸组合」聚合（只算本人可见范围）
+router.post('/face/group_combos', authenticateJWT, faceController.listPeerGroups);
+// ⭐ 2026-10-16 P0-5 人物关系图谱：共同出现次数（边）+ 人物节点
+router.post('/face/relations', authenticateJWT, faceController.listRelations);
 
 // Similar
 router.post('/similar/list', authenticateJWT, requireAdmin, similarController.listSimilarGroups);
@@ -141,6 +159,27 @@ router.post('/gps_add/reset', authenticateJWT, requireAdmin, gpsSupplementContro
 
 // App AI
 router.post('/app_ai/overview', authenticateJWT, appAiController.overview);
+// ⭐ 2026-10-16 P0-8 单张/多张「重新识别（分项）」：人脸 / OCR / 场景 / 活动 按需重跑
+router.post('/app_ai/rerun', authenticateJWT, appAiController.rerun);
+router.post('/app_ai/ocr/reset', authenticateJWT, requireAdmin, appAiController.resetOcr);
+// ⭐ 2026-10-16 P1-9 AI 任务进度聚合（只读）
+router.post('/app_ai/queue', authenticateJWT, appAiController.queue);
+// ⭐ 2026-10-16 P2-18/P2-20 开放平台：模型 API（Agent 用，OpenAI 兼容）配置与连通性测试。
+// 凭据属于系统级 ⇒ 仅超管可读写。
+router.post('/app_ai/model_api/get', authenticateJWT, requireSuperAdmin, appAiController.modelApiGet);
+router.post('/app_ai/model_api/set', authenticateJWT, requireSuperAdmin, appAiController.modelApiSet);
+router.post('/app_ai/model_api/test', authenticateJWT, requireSuperAdmin, appAiController.modelApiTest);
+// ⭐ 2026-10-16 P1/P2 智能发现批次（除记忆确认外全部只读）
+router.post('/app_ai/time_compare', authenticateJWT, appAiController.timeCompare);
+router.post('/app_ai/day_frames', authenticateJWT, appAiController.dayFrames);
+router.post('/app_ai/tickets', authenticateJWT, appAiController.tickets);
+router.post('/app_ai/memories', authenticateJWT, appAiController.memories);
+router.post('/app_ai/memory/save', authenticateJWT, appAiController.saveMemory);
+router.post('/app_ai/memory/remove', authenticateJWT, appAiController.removeMemory);
+router.post('/app_ai/duplicates', authenticateJWT, appAiController.duplicates);
+router.post('/app_ai/models', authenticateJWT, appAiController.models);
+router.post('/app_ai/year_report', authenticateJWT, appAiController.yearReport);
+router.post('/app_ai/travel_lines', authenticateJWT, appAiController.travelLines);
 router.post('/file_view/list', authenticateJWT, createFileViewHandler('photo', 'list'));
 router.post('/file_view/search', authenticateJWT, createFileViewHandler('photo', 'globalSearch'));
 

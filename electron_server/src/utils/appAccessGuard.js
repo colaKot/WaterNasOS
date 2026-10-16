@@ -54,6 +54,8 @@ const APP_API_PREFIXES = {
  */
 const PUBLIC_API_PREFIXES = [
   '/api/auth',
+  // MCP Server（P2-18）：自带 Bearer token 鉴权，与登录态无关，故不适合走应用白名单
+  '/api/mcp',
   '/api/apps',
   '/api/home',
   '/api/message',

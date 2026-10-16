@@ -227,6 +227,33 @@ class AppPhotoTimelineMultiSelectBottomBar
                     await controller.deleteSelected();
                   },
                 ),
+              if (singleSelectedPhoto != null)
+                ListTile(
+                  leading: const Icon(Icons.compare_outlined),
+                  title: Text('photo_insight_time_compare'.tr),
+                  onTap: () async {
+                    Get.back();
+                    await controller.timeCompareSelected();
+                  },
+                ),
+              if (singleSelectedPhoto != null)
+                ListTile(
+                  leading: const Icon(Icons.image_search),
+                  title: Text('photo_search_by_image'.tr),
+                  onTap: () async {
+                    Get.back();
+                    await controller.searchByImageSelected();
+                  },
+                ),
+              ListTile(
+                leading: const Icon(Icons.auto_awesome_outlined),
+                title: Text('photo_rerun_title'.tr),
+                subtitle: Text('photo_rerun_hint'.tr),
+                onTap: () async {
+                  Get.back();
+                  await controller.rerunSelectedAi();
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.close),
                 title: Text('cancel'.tr),

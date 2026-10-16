@@ -114,6 +114,7 @@ extension PhotoTimelineControllerPagination on PhotoTimelineController {
       collectionId: collectionId.value,
       smartAlbumId: smartAlbumId.value,
       faceId: faceId.value,
+      comboFaceIds: comboFaceIds.isEmpty ? null : comboFaceIds.toList(),
       placeName: placeName.value,
       loadTheDay: loadTheDay.value,
       year: year.value,

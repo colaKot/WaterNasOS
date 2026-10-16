@@ -12,21 +12,56 @@ try {
   sharp.concurrency(1);
 } catch (_) {}
 
-const MODELS_DIR = () => path.join(remoteAssets.resolveOnnxModelsRoot(), 'ppocrv5');
+// ⭐ 2026-10-16 P0-验证动作二：允许用环境变量把 OCR 模型换成另一套，
+// 供离线 A/B（PP-OCRv5 vs v6）使用。生产路径不设置这两个变量 ⇒ 行为与以前完全一致。
+// ⚠️ 换模型必须**连字典一起换**：下面 ocrImage 会校验 `dict.length === recOut.dims[2]`，
+//    字典不配会静默返回空串（v5 字典 18386 项 / v6 small 字典 18710 项）。
+/**
+ * ⭐ 2026-10-16 验证动作二（PP-OCRv6 A/B）实测结论落地：
+ *   PP-OCRv6 small 在**重标定检测阈值**后全面优于 v5 —— 12 张真实库照片上
+ *   字数 +13%（14745 vs 13031）、低置信行 4.06→3.78/百行、耗时 -7%（43.7s vs 47.2s），
+ *   清晰文档识别更准（公示图「西至广清调预/东聚建设路」、长文「趴在桌子上」都是 v5 读错的）。
+ * 因此：**本机只要放好 ppocrv6 目录就优先用 v6，否则自动回退 v5**（远端模式/未升级环境不受影响）。
+ *
+ * ⛔ 三条硬约束（都是实测踩出来的，别改）：
+ *   1) 换版本必须**连字典一起换**（v5 18385 项 / v6 18710 项），
+ *      否则 ocrImage 里 `if (this.dict.length !== recOut.dims[2]) return ''` 会**静默返回空串**；
+ *   2) 阈值**不能沿用**：v6 的 det 概率图分布与 v5 不同，用 v5 阈值会「整块漏检」
+ *      （合同翻拍实测 773 字 → 330 字，改成 0.20/0.30 后恢复到 1017 字）；
+ *   3) 环境变量 OCR_MODELS_DIR / OCR_DICT_PATH 优先级最高，供离线 A/B 用。
+ */
+const OCR_VARIANT = () => {
+  if (process.env.OCR_MODELS_DIR || process.env.OCR_DICT_PATH) return 'env';
+  try {
+    const v6 = path.join(remoteAssets.resolveOnnxModelsRoot(), 'ppocrv6');
+    if (fs.existsSync(path.join(v6, 'det', 'det.onnx')) && fs.existsSync(path.join(v6, 'rec', 'rec.onnx'))) {
+      return 'v6';
+    }
+  } catch (_) {}
+  return 'v5';
+};
+const IS_V6 = () => OCR_VARIANT() === 'v6';
+const MODELS_DIR = () => {
+  if (process.env.OCR_MODELS_DIR) return path.resolve(process.env.OCR_MODELS_DIR);
+  return path.join(remoteAssets.resolveOnnxModelsRoot(), IS_V6() ? 'ppocrv6' : 'ppocrv5');
+};
 const DET_MODEL_PATH = () => path.join(MODELS_DIR(), 'det/det.onnx');
 const CLS_MODEL_PATH = () => path.join(MODELS_DIR(), 'cls/cls.onnx');
 const REC_MODEL_PATH = () => path.join(MODELS_DIR(), 'rec/rec.onnx');
-const DICT_PATH = () => path.join(MODELS_DIR(), 'ppocrv5_dict.txt');
+const DICT_PATH = () => {
+  if (process.env.OCR_DICT_PATH) return path.resolve(process.env.OCR_DICT_PATH);
+  return path.join(MODELS_DIR(), IS_V6() ? 'ppocrv6_dict.txt' : 'ppocrv5_dict.txt');
+};
 
 const DET_LIMIT_SIDE_LEN = Number(process.env.DET_LIMIT_SIDE_LEN ?? 960);
 const DET_UPSCALE_MIN_SIDE = Number(process.env.DET_UPSCALE_MIN_SIDE ?? 960);
 const DET_UPSCALE_MAX_SCALE = Number(process.env.DET_UPSCALE_MAX_SCALE ?? 4);
-const DET_BIN_THRESH = Number(process.env.DET_BIN_THRESH ?? 0.25);
+const DET_BIN_THRESH = Number(process.env.DET_BIN_THRESH ?? (IS_V6() ? 0.2 : 0.25));
 const DET_MIN_PIXELS = Number(process.env.DET_MIN_PIXELS ?? 6);
 const DET_MIN_BOX_SIZE = Number(process.env.DET_MIN_BOX_SIZE ?? 6);
 const DET_DILATE_X = Number(process.env.DET_DILATE_X ?? 7);
 const DET_DILATE_Y = Number(process.env.DET_DILATE_Y ?? 1);
-const DET_BOX_SCORE_THRESH = Number(process.env.DET_BOX_SCORE_THRESH ?? 0.4);
+const DET_BOX_SCORE_THRESH = Number(process.env.DET_BOX_SCORE_THRESH ?? (IS_V6() ? 0.3 : 0.4));
 
 const REC_IMG_H = 48;
 const REC_MAX_W = 960;
@@ -422,6 +457,8 @@ class OnnxOcrEngine {
     };
     this.detSession = await onnx.InferenceSession.create(DET_MODEL_PATH(), sessionOptions);
     this.recSession = await onnx.InferenceSession.create(REC_MODEL_PATH(), sessionOptions);
+    Logger.info(`[ocrOnnx] 版本=${OCR_VARIANT()} 模型目录=${MODELS_DIR()} 字典=${this.dict ? this.dict.length : 0} 项 `
+      + `det 阈值=${DET_BIN_THRESH}/${DET_BOX_SCORE_THRESH}`);
     Logger.info(`[ocrOnnx] Selected providers: ${sessionOptions.executionProviders.join(', ')}`);
     Logger.info(`[ocrOnnx] Loaded backends: ${getLoadedBackends()}`);
     try {
@@ -515,7 +552,8 @@ async function getOcrEngine() {
   if (!_enginePromise) {
     _enginePromise = (async () => {
       const remoteAssets = require('../../../utils/remoteAssetsManager');
-      await remoteAssets.ensureBundle('onnx_models.ppocrv5');
+      // 用本地 v6 时不需要再去拉 v5 bundle（远端模式下 v6 不存在 ⇒ 仍会走这行拿 v5）
+      if (!IS_V6()) await remoteAssets.ensureBundle('onnx_models.ppocrv5');
       return new OnnxOcrEngine().init();
     })();
   }

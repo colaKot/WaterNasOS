@@ -430,9 +430,22 @@ class AiFacesController extends GetxController {
   /// 重新扫描「我相册里」的人脸（2026-10-13）：
   /// 只清掉自己可见照片的人脸框并重新排队识别，别人的相册不受影响。
   Future<void> confirmAndRescanFaces() async {
+    // ⭐ 2026-10-16 P0-7：先 preview 再 apply。
+    // rescan 是「直接执行」的：一按就把可见范围内的脸行全删、gen_faces 全部置 0、
+    // 空壳组连样本一起清掉，分组与命名都保不住。用户点之前必须先看到代价。
+    final preview = await _api.previewRescanFaces();
+    final stats = preview.success ? (preview.data ?? <String, dynamic>{}) : <String, dynamic>{};
+    final photos = (stats['photos'] as num?)?.toInt() ?? 0;
+    final faceRows = (stats['faceRows'] as num?)?.toInt() ?? 0;
+    final groups = (stats['emptyGroupsAfter'] as num?)?.toInt() ?? 0;
+
     final confirmed = await DialogUtil.showConfirmDialog(
-      title: 'face_rescan_mine'.tr,
-      content: 'face_rescan_mine_confirm_content'.tr,
+      title: 'face_rescan_preview_title'.tr,
+      content: [
+        'face_rescan_preview_photos'.tr + '：' + '$photos',
+        'face_rescan_preview_faces'.tr + '：' + '$faceRows',
+        'face_rescan_preview_clean'.tr + '：' + '$groups',
+      ].join('\n'),
       confirmText: 'ok'.tr,
       cancelText: 'cancel'.tr,
     );

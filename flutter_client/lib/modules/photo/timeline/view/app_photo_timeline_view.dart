@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import '../controller/photo_timeline_controller.dart';
 import 'parts/photo_timeline_list.dart';
 import 'parts/photo_timeline_sidebar.dart';
+import 'parts/photo_timeline_search_summary.dart';
 import 'parts/app_photo_timeline_multiselect_bar.dart';
 import '../../../../core/theme/custom_colors.dart';
 import '../../photo_main/view/app_photo_main_view.dart';
@@ -366,6 +367,9 @@ class _AppPhotoTimelineViewState extends State<AppPhotoTimelineView> {
       child: Column(
         children: [
           _buildToolbar(),
+          // ⭐ 2026-10-16 P0-1：把语义解析结果（已识别 / 未识别）摊给用户看；
+          // 无搜索词或无解析结果时自身渲染成 0 高度，不影响原有布局。
+          PhotoTimelineSearchSummary(controller: _ctrl),
           Expanded(
             child: Listener(
               onPointerDown: _onPointerDown,
@@ -408,6 +412,7 @@ class AppPhotoTimelineRoutePage extends StatelessWidget {
   final int? collectionId;
   final int? smartAlbumId;
   final int? faceId;
+  final List<int>? comboFaceIds;
   final String? placeName;
   final bool loadTheDay;
   final String? geohash;
@@ -421,6 +426,7 @@ class AppPhotoTimelineRoutePage extends StatelessWidget {
     this.collectionId,
     this.smartAlbumId,
     this.faceId,
+    this.comboFaceIds,
     this.placeName,
     this.loadTheDay = false,
     this.geohash,
@@ -434,6 +440,9 @@ class AppPhotoTimelineRoutePage extends StatelessWidget {
     if (collectionId != null) t = '${t}_collection_$collectionId';
     if (smartAlbumId != null) t = '${t}_smart_album_$smartAlbumId';
     if (faceId != null) t = '${t}_face_$faceId';
+    if (comboFaceIds != null && comboFaceIds!.isNotEmpty) {
+      t = '${t}_combo_${comboFaceIds!.join('-')}';
+    }
     if (placeName != null && placeName!.trim().isNotEmpty) {
       t = '${t}_place_name_${placeName!.trim()}';
     }
@@ -455,6 +464,7 @@ class AppPhotoTimelineRoutePage extends StatelessWidget {
         initialCollectionId: collectionId,
         initialSmartAlbumId: smartAlbumId,
         initialFaceId: faceId,
+        initialComboFaceIds: comboFaceIds,
         initialPlaceName: placeName,
         initialLoadTheDay: loadTheDay,
         initialGeohash: geohash,

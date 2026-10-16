@@ -275,6 +275,12 @@ app.use('/api/videoPlayer', videoPlayerApi);
 const photoApi = require('./modules/photo/photoRouter');
 app.use('/api/photo', photoApi);
 
+// ⭐ 2026-10-16 P2-18 MCP Server（只读 6 工具）：把照片库只读地暴露给 Agent。
+// 鉴权走独立的 Bearer token（不是 JWT），不过 appAccessGuard；
+// 管理接口 /api/mcp/status、/config/set、/token/rotate 仍走 JWT + 超管。
+const mcpApi = require('./modules/mcp/mcpRouter');
+app.use('/api/mcp', mcpApi);
+
 // Video相关api
 const videoApi = require('./modules/video/videoRouter');
 app.use('/api/video', videoApi);

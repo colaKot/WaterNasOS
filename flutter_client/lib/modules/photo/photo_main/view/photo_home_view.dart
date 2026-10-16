@@ -16,6 +16,7 @@ import '../../ai_faces/view/ai_faces_view.dart';
 import '../../ai_gps_add/view/ai_gps_add_view.dart';
 import '../../ai_scenes/view/ai_scenes_view.dart';
 import '../../ai_similar/view/ai_similar_view.dart';
+import '../../insight/view/app_photo_insight_view.dart';
 import '../../preview_setting/view/photo_preview_settings_view.dart';
 import '../../../folder_view/folder_view_module_type.dart';
 import '../../../folder_view/view/pc_folder_view_page.dart';
@@ -104,6 +105,8 @@ class PhotoHomeView extends StatelessWidget {
               return const AiScenesView();
             } else if (key == "ai.similar") {
               return const AiSimilarView();
+            } else if (key == "ai.insight") {
+              return const PhotoInsightView();
             } else if (key == "ai.gps_supplement") {
               return const AiGpsAddView();
             }

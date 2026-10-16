@@ -38,6 +38,7 @@ extension PhotoTimelineControllerLoading on PhotoTimelineController {
         collectionId: collectionId.value,
         smartAlbumId: smartAlbumId.value,
         faceId: faceId.value,
+      comboFaceIds: comboFaceIds.isEmpty ? null : comboFaceIds.toList(),
         placeName: placeName.value,
         loadTheDay: loadTheDay.value,
         year: year.value,
@@ -94,6 +95,8 @@ extension PhotoTimelineControllerLoading on PhotoTimelineController {
         if (dateList.isNotEmpty) {
           // 加载首屏照片
           await _loadInitialPhotos();
+          // ⭐ 2026-10-16 P1-12：首屏成功就把日期表 + 前 N 张落一份本地快照
+          unawaited(_saveTimelineSnapshot());
           // 刷新完成后，将列表滚动到顶部
           if (scrollController.hasClients) {
             scrollController.jumpTo(0);
@@ -102,9 +105,96 @@ extension PhotoTimelineControllerLoading on PhotoTimelineController {
       }
     } catch (e) {
       print('加载日期列表错误: $e');
+      // ⭐ 2026-10-16 P1-12：拉不到就试本地快照（断网 / 服务端没起来时至少能看最近一次的内容）
+      await _restoreTimelineSnapshot();
     } finally {
       isLoadingDates.value = false;
     }
+  }
+
+  /// ⭐ 2026-10-16 P1-12：把当前日期表 + 已加载的照片落本地。
+  /// 命名空间 = 服务端地址 + uid + 年份，最多留 5 份、5天 TTL 以外只标注不删。
+  Future<void> _saveTimelineSnapshot() async {
+    try {
+      final photos = <Map<String, dynamic>>[];
+      for (final item in photoItems) {
+        if (item is TimelineListPhoto) {
+          photos.add(PhotoSnapshotData.photoToJson(
+            <String, dynamic>{
+              'id': item.photo.id,
+              'file_hash': item.photo.fileHash,
+              'path': item.photo.path,
+              'filename': item.photo.filename,
+              'original_time': item.photo.originalTime,
+              'original_date': item.photo.originalDate,
+              'type': item.photo.type,
+              'is_lvp': item.photo.isLvp,
+            },
+          ));
+        }
+      }
+      if (photos.isEmpty && dateList.isEmpty) return;
+      await PhotoOfflineSnapshot.save(
+        ns: _snapshotNamespace(),
+        dates: dateList
+            .map((e) => <String, dynamic>{
+                  'original_date': e.originalDate,
+                  'date_photo_count': e.count,
+                })
+            .toList(),
+        photos: photos,
+      );
+    } catch (_) {}
+  }
+
+  /// ⭐ 2026-10-16 P1-12：用本地快照恢复时间轴（只恢复快照里那一部分）。
+  Future<void> _restoreTimelineSnapshot() async {
+    try {
+      final snap = await PhotoOfflineSnapshot.load(_snapshotNamespace());
+      if (snap == null || (snap.dates.isEmpty && snap.photos.isEmpty)) return;
+
+      if (snap.dates.isNotEmpty) {
+        dateList.assignAll(
+          snap.dates
+              .whereType<Map>()
+              .map((e) => TimelineDateItem.fromJson(e.cast<String, dynamic>()))
+              .where((e) => e.originalDate.trim().isNotEmpty)
+              .toList(),
+        );
+      }
+      final photos = snap.photos
+          .whereType<Map>()
+          .map((e) => TimelinePhotoItem.fromJson(e.cast<String, dynamic>()))
+          .toList();
+      if (photos.isNotEmpty) {
+        final items = <TimelineListItem>[];
+        String? currentDate;
+        for (final p in photos) {
+          if (p.originalDate != currentDate) {
+            currentDate = p.originalDate;
+            items.add(TimelineListDateHeader(date: currentDate));
+          }
+          items.add(TimelineListPhoto(photo: p));
+        }
+        photoItems.assignAll(items);
+      }
+
+      offlineMode.value = true;
+      offlineNotice.value =
+          '离线快照 · 更新于 ${snap.savedAtText}，共 ${photos.length} 张'
+          '${snap.truncated ? '（已截断）' : ''}';
+      ToastUtil.show(offlineNotice.value);
+    } catch (_) {}
+  }
+
+  String _snapshotNamespace() {
+    final server = ApiController.instance.baseUrl;
+    final uid = CurrentUserController.instance.current?.id ?? 0;
+    return PhotoOfflineSnapshot.namespace(
+      server: server,
+      uid: uid,
+      year: DateTime.now().year,
+    );
   }
 
   /// 加载首屏照片。

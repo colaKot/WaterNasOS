@@ -192,6 +192,63 @@ class FaceController {
   };
 
   /**
+   * ⭐ 2026-10-16 P0-7 重扫两阶段：preview —— 只返回「将要发生什么」，**不写任何数据**。
+   * 前端先展示差异（将移除多少脸 / 影响多少人物组 / 重跑多少张），用户确认后再调 /face/rescan。
+   */
+  previewRescanFaces = async (req, res) => {
+    try {
+      const service = new FaceService(req.dbPhoto);
+      const validPaths = await this._validPathsOf(req);
+      const result = await service.previewRescan({ validPaths });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('previewRescanFaces error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  /**
+   * ⭐ 2026-10-16 P0-2 合影组合相册：按「同框人脸组合」聚合（只算当前用户可见范围）。
+   */
+  listPeerGroups = async (req, res) => {
+    try {
+      const service = new FaceService(req.dbPhoto);
+      const validPaths = await this._validPathsOf(req);
+      const body = req.body || {};
+      const result = await service.listPeerGroups({
+        validPaths,
+        limit: body.limit,
+        minFaces: body.min_faces ?? body.minFaces,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('listPeerGroups error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  /**
+   * ⭐ 2026-10-16 P0-5 人物关系图谱数据：共同出现次数（边）+ 人物节点。
+   */
+  listRelations = async (req, res) => {
+    try {
+      const service = new FaceService(req.dbPhoto);
+      const validPaths = await this._validPathsOf(req);
+      const body = req.body || {};
+      const result = await service.listRelations({
+        validPaths,
+        limit: body.limit,
+        minCount: body.min_count ?? body.minCount,
+        focusFaceId: body.focus_face_id ?? body.focusFaceId,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('listRelations error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
+
+  /**
    * ⭐ 2026-10-16 存量补扫：只把「已标记完成、但实际没有任何人脸行」的照片重新入队。
    * 与 /face/rescan 不同 —— 不清已有分组，只补跑被「烧掉」的照片（普通用户可用）。
    */
