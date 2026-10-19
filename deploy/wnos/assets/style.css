@@ -683,7 +683,7 @@ a:hover {
 
 .dl-table__head {
   display: grid;
-  grid-template-columns: 1.4fr 2fr 0.7fr 84px;
+  grid-template-columns: 1.4fr 2fr 0.7fr 132px;
   gap: 16px;
   padding: 15px 28px;
   background: var(--bg-alt);
@@ -695,7 +695,7 @@ a:hover {
 
 .dl-row {
   display: grid;
-  grid-template-columns: 1.4fr 2fr 0.7fr 84px;
+  grid-template-columns: 1.4fr 2fr 0.7fr 132px;
   gap: 16px;
   align-items: center;
   padding: 19px 28px;
@@ -734,6 +734,18 @@ a:hover {
   font-size: 14px;
   font-weight: 500;
   justify-self: start;
+}
+
+/* 下载列里并排放「下载 / 加速」，两个链接包成 flex 容器才不会各占一个网格项 */
+.dl-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 国内加速镜像：颜色区分开，避免误以为是另一个版本 */
+.dl-row a.dl-mirror {
+  color: var(--blue);
 }
 
 .note {
@@ -1022,7 +1034,7 @@ a:hover {
 
   .dl-table__head,
   .dl-row {
-    grid-template-columns: 1fr 84px;
+    grid-template-columns: 1fr 132px;
   }
 
   .dl-table__head span:nth-child(2),
