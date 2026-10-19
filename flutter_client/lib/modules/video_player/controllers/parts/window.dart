@@ -1,6 +1,33 @@
 part of '../video_player_controller.dart';
 
+/// 画面缩放方式（本机记住，不上服务端）：true = 铺满屏幕，false = 适应。
+const String _kVideoScalePrefKey = 'player_video_scale_cover';
+
 extension PlayerWindow on PlayerController {
+  /// ⭐ 2026-10-19 铺满 ⇄ 适应。
+  Future<void> toggleVideoScaleMode() =>
+      setVideoScaleMode(!isVideoCover.value);
+
+  Future<void> setVideoScaleMode(bool cover) async {
+    isVideoCover.value = cover;
+    try {
+      await playbackEngine.value?.setVideoResizeMode(cover ? 'zoom' : 'fit');
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kVideoScalePrefKey, cover);
+    } catch (_) {}
+  }
+
+  /// 打开播放器时恢复上次的选择（默认铺满）。
+  Future<void> loadVideoScaleMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getBool(_kVideoScalePrefKey);
+      if (saved != null) isVideoCover.value = saved;
+    } catch (_) {}
+  }
+
   Future<void> _setDesktopFullscreen(bool enabled) async {
     if (!DeviceUtils.isDesktop || isClosed) return;
     if (enabled) {

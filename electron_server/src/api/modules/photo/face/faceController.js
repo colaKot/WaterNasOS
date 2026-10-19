@@ -9,12 +9,14 @@ const tableConfig = require('../../../../db/table/tableConfig');
 const userUtil = require('../../../../utils/userUtil');
 
 // 人脸聚类参数默认值 / 取值范围（服务端与 AI 设置页共用口径）
-const FACE_TUNING_DEFAULTS = { simThresh: 0.45, minQuality: 75, secondMergeThresh: 0.45, threads: 3 };
+const FACE_TUNING_DEFAULTS = { simThresh: 0.45, minQuality: 75, secondMergeThresh: 0.45, threads: 3, namedExtraReq: 0.05 };
 const FACE_TUNING_RANGE = {
   simThresh: [0.2, 0.9],
   minQuality: [40, 95],
   secondMergeThresh: [0.2, 0.9],
   threads: [1, 8],
+  // ⭐ 2026-10-19 已命名人物的额外认领门槛（父子/表兄弟这类家族脸靠它拉开）
+  namedExtraReq: [0, 0.2],
 };
 
 async function getEnableByKey(key) {
@@ -379,6 +381,22 @@ class FaceController {
         fileHash: body.file_hash ?? body.fileHash,
         validPaths: await this._validPathsOf(req),
       });
+      // ⭐ 2026-10-19 移出即重识别：该图已被重新置为 gen_faces=0，
+      // 但 faceWorker 可能已因队列取空而退出（退出后只在 15s 内查一次 pending），
+      // 这里主动拉一次；已在跑 / 已暂停 / 开关关掉就什么都不做。
+      try {
+        const workers = require('../../../../initHandler/workers');
+        const { getSingletonWorkerManager } = require('../../../../workers/singletonWorkerManager');
+        const mgr = getSingletonWorkerManager();
+        const running = !!(mgr && typeof mgr.isWorkerRunning === 'function' && mgr.isWorkerRunning('faceWorker'));
+        const paused = !!(mgr && typeof mgr.isAiPaused === 'function' && mgr.isAiPaused());
+        if (!running && !paused && workers && typeof workers.startFaceWorker === 'function') {
+          const enabled = typeof workers.isAiWorkerEnabled === 'function'
+            ? await workers.isAiWorkerEnabled('ai_face_enable')
+            : true;
+          if (enabled) workers.startFaceWorker();
+        }
+      } catch (_) {}
       return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
     } catch (e) {
       const msgKey = e && e.message ? e.message : 'common.ERROR';
@@ -558,10 +576,11 @@ class FaceController {
         FACE_TUNING_DEFAULTS.secondMergeThresh
       );
       const threads = await readNum('ai_face_threads', FACE_TUNING_DEFAULTS.threads);
+      const namedExtraReq = await readNum('ai_face_named_extra_req', FACE_TUNING_DEFAULTS.namedExtraReq);
       return ResponseUtil.success(
         req,
         res,
-        { simThresh, minQuality, secondMergeThresh, threads, range: FACE_TUNING_RANGE },
+        { simThresh, minQuality, secondMergeThresh, threads, namedExtraReq, range: FACE_TUNING_RANGE },
         'common.SUCCESS',
         200
       );
@@ -586,6 +605,7 @@ class FaceController {
         FACE_TUNING_RANGE.secondMergeThresh
       );
       const threads = clampTo(body.threads, FACE_TUNING_DEFAULTS.threads, FACE_TUNING_RANGE.threads);
+      const namedExtraReq = clampTo(body.namedExtraReq, FACE_TUNING_DEFAULTS.namedExtraReq, FACE_TUNING_RANGE.namedExtraReq);
 
       // 线程数变化需要重启识别进程才生效（worker 启动时读一次）
       let prevThreads = FACE_TUNING_DEFAULTS.threads;
@@ -601,6 +621,7 @@ class FaceController {
       await tableConfig.setConfigByKey('ai_face_min_quality', String(minQuality));
       await tableConfig.setConfigByKey('ai_face_second_merge_thresh', String(secondMergeThresh));
       await tableConfig.setConfigByKey('ai_face_threads', String(threads));
+      await tableConfig.setConfigByKey('ai_face_named_extra_req', String(namedExtraReq));
 
       // 线程数改了 ⇒ 重启人脸 worker（停旧起新；识别任务会自动继续）
       const threadsChanged = Math.floor(prevThreads) !== Math.floor(threads);
@@ -618,7 +639,7 @@ class FaceController {
       return ResponseUtil.success(
         req,
         res,
-        { simThresh, minQuality, secondMergeThresh, threads, range: FACE_TUNING_RANGE, restarted: threadsChanged },
+        { simThresh, minQuality, secondMergeThresh, threads, namedExtraReq, range: FACE_TUNING_RANGE, restarted: threadsChanged },
         'common.SUCCESS',
         200
       );

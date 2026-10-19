@@ -28,10 +28,22 @@ void _showShortcutsHelp(BuildContext context) {
 
 /// 画廊顶部控制按钮组件
 class GalleryTopControls extends StatelessWidget {
-  const GalleryTopControls({super.key, this.onInfoPressed});
+  const GalleryTopControls({
+    super.key,
+    this.onInfoPressed,
+    this.isLivePhoto = false,
+    this.onLiveTap,
+  });
 
   /// 点击「查看照片信息」时的回调；若提供则替代默认的 toggleInfoPanel（用于手机端弹出底部 sheet）
   final VoidCallback? onInfoPressed;
+
+  /// ⭐ 2026-10-17 当前这张是不是实况照片：是的话在工具条最左侧加一个显眼的「实况」按钮。
+  /// （此前只有「长按图片」和「文件名旁的小标记」两个很隐蔽的入口，用户普遍找不到）
+  final bool isLivePhoto;
+
+  /// 点击「实况」按钮时播放
+  final VoidCallback? onLiveTap;
 
   @override
   Widget build(BuildContext context) {
@@ -72,6 +84,17 @@ class GalleryTopControls extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (isLivePhoto && onLiveTap != null) ...[
+                  CustomIconButton(
+                    icon: Icons.motion_photos_on_outlined,
+                    onPressed: onLiveTap!,
+                    iconColor: Colors.white,
+                    iconSize: iconSize,
+                    buttonSize: buttonSize,
+                    tooltip: 'photo_live_play'.tr,
+                  ),
+                  SizedBox(width: buttonSpacing),
+                ],
                 Obx(() {
                   if (!controller.showInfoButton.value) {
                     return const SizedBox.shrink();

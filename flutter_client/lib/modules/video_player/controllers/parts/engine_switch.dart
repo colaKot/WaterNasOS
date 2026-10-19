@@ -58,5 +58,9 @@ extension PlayerEngineSwitch on PlayerController {
     if (c != null && !c.isCompleted) {
       c.complete();
     }
+    // ⭐ 2026-10-19 原生 PlayerView 的缩放方式要等 playerId 就绪才能下发
+    try {
+      await engine.setVideoResizeMode(isVideoCover.value ? 'zoom' : 'fit');
+    } catch (_) {}
   }
 }

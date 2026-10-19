@@ -18,8 +18,6 @@ import '../../app_setting/view/app_photo_settings_view.dart';
 import '../../app_ai/view/app_photo_ai_view.dart';
 import '../../timeline/view/parts/app_photo_timeline_multiselect_bar.dart';
 import '../../trash/view/app_photo_trash_view.dart';
-import '../../../folder_view/view/app_folder_view_page.dart';
-import '../../../folder_view/folder_view_module_type.dart';
 import '../../../photoBackup/view/app_photo_backup_view.dart';
 import '../../../transfer/views/download/download_center/app_download_center_view.dart';
 
@@ -282,9 +280,10 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
       return const AppPhotoAiView();
     }
     if (_index == 4) {
-      // 独立相册端：最后一项由「文件」整体换成「备份」，内容即相册备份页
+      // ⭐ 2026-10-19 手机端把「文件」tab 整体去掉（4 个 tab 就到 AI 为止）；
+      //    这里只剩独立相册端的第 5 项「备份」。
       if (_isPhotoApp) return const AppPhotoBackupView(embedded: true);
-      return const AppFolderViewPage(moduleType: FolderViewModuleType.photo);
+      return Center(child: Text('not_implemented_yet'.tr));
     }
     return Center(child: Text('not_implemented_yet'.tr));
   }
@@ -442,15 +441,13 @@ class _AppPhotoMainViewState extends State<AppPhotoMainView> {
                 icon: const Icon(Icons.auto_awesome_outlined),
                 label: 'app_photo_tab_ai'.tr,
               ),
-              BottomNavigationBarItem(
-                // 独立相册端：最后一项「文件」换成「备份」（相册备份内容）
-                icon: Icon(
-                  _isPhotoApp
-                      ? Icons.cloud_upload_outlined
-                      : Icons.folder_outlined,
+              // ⭐ 2026-10-19：主客户端不再有「文件」tab（找文件走桌面「文件」应用）；
+              //    独立相册端保留「备份」作为第 5 项。
+              if (_isPhotoApp)
+                BottomNavigationBarItem(
+                  icon: const Icon(Icons.cloud_upload_outlined),
+                  label: 'app_backup'.tr,
                 ),
-                label: _isPhotoApp ? 'app_backup'.tr : 'file'.tr,
-              ),
             ],
           );
         }

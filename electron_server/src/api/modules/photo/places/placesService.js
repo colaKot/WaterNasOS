@@ -1,6 +1,8 @@
 const path = require('path');
 const { getTranslation } = require('../../../../utils/i18nUtil');
 const photoPathQueryUtil = require('../timeline/photoPathQueryUtil');
+const sqliteVec = require('../../../../utils/sqliteVecUtil');
+const { categorize } = require('../../../../utils/photoCategoryUtil');
 
 class PlacesService {
   constructor(knex) {
@@ -205,6 +207,9 @@ class PlacesService {
         ...rest,
         place_name_raw: rawName,
         place_name: localizedName,
+        // ⭐ 2026-10-18 分类页按大类分组：细标签 → food/travel/stay/nature/...
+        // 用原始英文/中文 place_name 判定（不用翻译后的，否则切语言分类会变）
+        category: categorize(rawName),
         is_hide: Number(it && it.is_hide ? it.is_hide : 0) || 0,
         cover,
       };
@@ -366,16 +371,48 @@ class PlacesService {
       return { available: true, items: [], scanned: 0 };
     }
 
-    // 2) 分批扫描候选（只读可见范围；已归一化 ⇒ 点积即余弦）
-    const CHUNK = 4000;
-    const MAX_SCAN = 300000;
-    let offset = 0;
-    let scanned = 0;
-    const hits = []; // { i, score }
-    const meta = []; // 与 hits 的 i 对应
+    // 2) 检索：优先走 vec0 向量索引，不可用时退回分批全表扫
+    //
+    // ⭐ 2026-10-17 旧实现是分批全表扫 + JS 逐个点积（CHUNK 4000 / MAX_SCAN 300000），
+    //    30k 张实测 ≈ 490ms，而且 MAX_SCAN 触顶是**静默 break**（召回悄悄少给）。
+    //    改走索引后 KNN 在 C 里跑，单次 ≈ 70ms，且不再有静默截断。
     const scoresBuf = [];
+    let scanned = 0;
+    const knnHits = await sqliteVec.knn(this.knex, queryEmb, Math.min(10000, Math.max(limit * 20, 400)));
 
-    for (;;) {
+    if (knnHits.length > 0) {
+      const distById = new Map();
+      for (const h of knnHits) distById.set(Number(h.id), Number(h.distance));
+      const ids = Array.from(distById.keys()).filter(Boolean);
+      const qb = this.knex('photo_index as p')
+        .whereIn('p.id', ids)
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0)
+        .select('p.id', 'p.file_hash', 'p.path', 'p.filename', 'p.type');
+      if (fileHash) qb.whereNot('p.file_hash', fileHash);
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(qb, 'p.path', validPaths);
+      else qb.whereRaw('1 = 0');
+      const rows = await qb.catch(() => []);
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const d = distById.get(Number(r.id));
+        if (!Number.isFinite(d)) continue;
+        // 已 L2 归一化 ⇒ 余弦距离 d = 2 - 2·cos ⇒ cos = 1 - d/2
+        scoresBuf.push({
+          score: 1 - d / 2,
+          file_hash: String(r.file_hash || ''),
+          fullpath: pathMod.join(String(r.path || ''), String(r.filename || '')),
+          filename: String(r.filename || ''),
+          type: Number(r.type) || 1,
+        });
+      }
+      scanned = knnHits.length;
+    } else {
+      // ↓↓↓ 降级路径：旧的 JS 全表扫（扩展缺失 / 索引还没回填）
+      const CHUNK = 4000;
+      const MAX_SCAN = 300000;
+      let offset = 0;
+
+      for (;;) {
       const qb = this.knex('photo_index as p')
         .where('p.is_file', 1)
         .where('p.in_trash', 0)
@@ -407,9 +444,16 @@ class PlacesService {
           type: Number(r.type) || 1,
         });
       }
-      scanned += rows.length;
-      offset += rows.length;
-      if (rows.length < CHUNK || scanned >= MAX_SCAN) break;
+        scanned += rows.length;
+        offset += rows.length;
+        if (rows.length < CHUNK || scanned >= MAX_SCAN) {
+          // ⚠️ 触顶原本是静默 break ⇒ 以图搜图会悄悄少给结果。
+          if (scanned >= MAX_SCAN) {
+            console.warn(`[searchByImage] ⚠️ 降级全表扫触顶 MAX_SCAN=${MAX_SCAN}，结果可能不完整`);
+          }
+          break;
+        }
+      }
     }
 
     // 3) 排序取前 N
@@ -438,6 +482,126 @@ class PlacesService {
    *
    * @param {Object} params {q, limit, validPaths}
    */
+  /**
+   * ⭐ 2026-10-18 搜索浮层的「推荐词」。
+   *
+   * 不是随便给几个热门词，而是**按这个用户自己的库**算出来的：
+   * 他最常拍的场景 / 最常做的事 / 出镜最多的人。
+   * 可见性口径与其他接口一致（validPaths 定向过滤）。
+   */
+  async hotSearches(params = {}) {
+    const validPaths = Array.isArray(params.validPaths) ? params.validPaths.filter(Boolean) : [];
+    const scopeEmpty = Object.prototype.hasOwnProperty.call(params, 'validPaths') && validPaths.length === 0;
+    if (scopeEmpty) return { items: [] };
+
+    // ⚠️ 不能直接 GROUP BY photo_places2filehash 全表 JOIN：本机 6 万张库实测 2.0s + 1.0s，
+    // 搜索浮层一打开就卡住。改成「先用预计算的 photo_count 排序取候选，
+    // 再对候选在可见范围内精确计数」，一共几十次小查询。
+    const visibleHashes = () => {
+      const sub = this.knex('photo_index as p')
+        .select('p.file_hash')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0);
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(sub, 'p.path', validPaths);
+      return sub;
+    };
+    /**
+     * 一次把一批标签在可见范围内的张数算完。
+     * ⚠️ 不要改回逐条查：每条都要重新执行一次 visibleHashes 子查询（实测 6 万张库），
+     * 24 条就是 24 遍全表扫，浮层打开会明显卡一下。改成一次 JOIN + IN 只走 place_name 索引。
+     */
+    const scopedCountMap = async (table, column, values) => {
+      const out = new Map();
+      const list = Array.isArray(values) ? values.filter(Boolean) : [];
+      if (list.length === 0) return out;
+      const q = this.knex(`${table} as t`)
+        .join('photo_index as p', 'p.file_hash', 't.file_hash')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0)
+        .whereIn(`t.${column}`, list)
+        .groupBy(`t.${column}`)
+        .select(`t.${column} as name`)
+        .count({ n: 'p.file_hash' });
+      if (validPaths.length > 0) photoPathQueryUtil.applyPathPrefixFilter(q, 'p.path', validPaths);
+      const rows = await q.catch(() => []);
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const nm = String((r && r.name) || '').trim();
+        if (!nm) continue;
+        out.set(nm, Number((r && r.n) || 0) || 0);
+      }
+      return out;
+    };
+
+    const items = [];
+    try {
+      const scenes = await this.knex('photo_places')
+        .where('is_hide', 0)
+        .orderBy('photo_count', 'desc')
+        .limit(24)
+        .select('place_name');
+      const names = (Array.isArray(scenes) ? scenes : [])
+        .map(r => String((r && r.place_name) || '').trim())
+        .filter(Boolean);
+      const counts = await scopedCountMap('photo_places2filehash', 'place_name', names);
+      let taken = 0;
+      for (const nm of names) {
+        const cnt = counts.get(nm) || 0;
+        if (cnt <= 0) continue;
+        items.push({ type: 'scene', label: nm, count: cnt, category: categorize(nm) });
+        if (++taken >= 10) break;
+      }
+    } catch (_) {}
+
+    try {
+      const acts = await this.knex('photo_activity')
+        .where('is_hide', 0)
+        .orderBy('photo_count', 'desc')
+        .limit(20)
+        .select('act_name');
+      const actNames = (Array.isArray(acts) ? acts : [])
+        .map(r => String((r && r.act_name) || '').trim())
+        .filter(Boolean);
+      const actCounts = await scopedCountMap('photo_activity2filehash', 'act_name', actNames);
+      let taken = 0;
+      for (const nm of actNames) {
+        const cnt = actCounts.get(nm) || 0;
+        if (cnt <= 0) continue;
+        items.push({ type: 'activity', label: nm, count: cnt, category: categorize(nm) });
+        if (++taken >= 8) break;
+      }
+    } catch (_) {}
+
+    // 人物：根人脸里取前 6 个有名字的，再用可见范围计数
+    try {
+      const faces = await this.knex('photo_faces')
+        .where(function () {
+          this.whereNull('belong_face_id').orWhere('belong_face_id', 0);
+        })
+        .where('is_hide', 0)
+        .whereNotNull('name')
+        .orderBy('face_count', 'desc')
+        .limit(6)
+        .select('face_id', 'name');
+      for (const f of Array.isArray(faces) ? faces : []) {
+        const raw = Buffer.isBuffer(f && f.name) ? f.name.toString('utf8') : String((f && f.name) || '');
+        const nm = raw.trim();
+        if (!nm) continue;
+        const row = await this.knex('photo_face2filehash')
+          .where('face_id', Number(f.face_id))
+          .whereIn('file_hash', visibleHashes())
+          .count({ n: 'file_hash' })
+          .first()
+          .catch(() => null);
+        const cnt = Number((row && row.n) || 0) || 0;
+        if (cnt <= 0) continue;
+        items.push({ type: 'person', label: nm, count: cnt, category: 'people', face_id: Number(f.face_id) });
+      }
+    } catch (_) {}
+
+    items.sort((a, b) => b.count - a.count);
+    return { items: items.slice(0, 16) };
+  }
+
   async suggest(params = {}) {
     const raw = params.q !== undefined ? params.q : (params.query !== undefined ? params.query : '');
     const q = String(raw === null || raw === undefined ? '' : raw).trim();

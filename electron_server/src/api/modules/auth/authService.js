@@ -365,13 +365,20 @@ class AuthService {
    */
   async getUserProfile({ knexMain }, userId) {
     try {
-      const user = await knexMain('user').where({ id: userId }).select('id', 'username', 'role', 'create_time', 'updated_at').first();
+      // ⚠️ 2026-10-18 修正：原来 select 了 `role` 和 `updated_at`，但 user 表里
+      //    **这两列都不存在**（角色列叫 `type`，也没有 updated_at）⇒ 每次调用都
+      //    SQLITE_ERROR → auth.PROFILE_FETCH_FAILED，接口恒 400。
+      //    对外契约仍保留 role 字段（由 type 映射），避免改坏客户端。
+      const user = await knexMain('user')
+        .where({ id: userId })
+        .select('id', 'username', 'type', 'avatar', 'language', 'is_active', 'create_time', 'last_login_time', 'last_login_ip')
+        .first();
 
       if (!user) {
         throw new Error('auth.USER_NOT_FOUND');
       }
 
-      return user;
+      return { ...user, role: user.type };
     } catch (error) {
       if (error.message.startsWith('auth.')) throw error;
       throw new Error('auth.PROFILE_FETCH_FAILED');

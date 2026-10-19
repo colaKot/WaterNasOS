@@ -445,6 +445,44 @@
   </script>
   <!-- Safari：Flutter Web 依赖 Intl.v8BreakIterator，须在 flutter 引擎加载前注入 -->
   <script src="./assets/vendor/intl_v8_break_iterator_polyfill.js"></script>
+  <!--
+    ⭐ 2026-10-19 中文字形（显示成「方块里一个 X」）：
+    Flutter Web（CanvasKit）没有中日韩字形，缺字形时会去 fonts.gstatic.com 现拉 Noto。
+    NAS 在内网 / 客户端连不上 gstatic ⇒ 拉不到 ⇒ 满屏豆腐块。
+    这里把回退字体的基址改成本机镜像（web/fonts_fallback/s/，见同目录 README）。
+
+    ⚠️ 只能通过 _flutter.loader.load({config}) 传，写 window.flutterConfiguration 是**没用的**：
+    Flutter 3.x 的 bootstrap 不看那个全局了（实测引擎照样去 gstatic）。
+    bootstrap 自己会调 _flutter.loader.load()，所以这里先占住 window._flutter，
+    给它的 loader 装一个 setter，拿到真实 loader 时把 load() 包一层塞 config。
+  -->
+  <script>
+    (function () {
+      var api = {};
+      var loaderRef = null;
+      Object.defineProperty(api, 'loader', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return loaderRef; },
+        set: function (v) {
+          loaderRef = v;
+          if (v && typeof v.load === 'function' && !v.__wnosPatched) {
+            var orig = v.load;
+            v.load = function (opts) {
+              opts = opts || {};
+              opts.config = Object.assign(
+                { fontFallbackBaseUrl: 'fonts_fallback/s/' },
+                opts.config || {}
+              );
+              return orig.call(v, opts);
+            };
+            v.__wnosPatched = true;
+          }
+        }
+      });
+      window._flutter = api;
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

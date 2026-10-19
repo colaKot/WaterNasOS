@@ -115,6 +115,10 @@ object NascabPlaybackMethodHandler : MethodChannel.MethodCallHandler {
                 session.applyExternalSubtitleUrl(url, sourcePath, label)
                 result.success(null)
             }
+            "setResizeMode" -> {
+                session.setResizeMode(args["mode"]?.toString() ?: "fit")
+                result.success(null)
+            }
             "dispose" -> {
                 Media3PlaybackHost.releasePlayer(playerId)
                 result.success(null)

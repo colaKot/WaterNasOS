@@ -63,6 +63,19 @@ class CustomGalleryController extends GetxController {
   }
 
   /// 停止页内 Live Photo 播放
+  /// ⭐ 2026-10-17 实况自动播放：只在**首次进入查看器**时播一次，翻页不再自动播。
+  bool _liveAutoPlayedOnce = false;
+
+  void maybeAutoPlayLive(int index) {
+    if (_liveAutoPlayedOnce) return;
+    _liveAutoPlayedOnce = true;
+    Future<void>.delayed(const Duration(milliseconds: 400), () {
+      if (isClosed) return;
+      if (isLivePhotoPlaying) return;
+      startLivePlayback(index);
+    });
+  }
+
   void stopLivePlayback() {
     livePlayingIndex.value = null;
   }

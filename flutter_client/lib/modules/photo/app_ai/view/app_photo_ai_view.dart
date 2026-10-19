@@ -13,6 +13,9 @@ import '../../ai_scenes/models/ai_scenes_models.dart';
 import '../../ai_scenes/view/ai_scenes_view.dart';
 import '../../ai_similar/view/ai_similar_view.dart';
 import '../../app_setting/view/app_photo_settings_view.dart';
+import '../../recall/view/photo_memory_view.dart';
+import '../../recall/view/photo_tickets_view.dart';
+import '../../recall/view/photo_annual_view.dart';
 import '../../timeline/view/app_photo_timeline_view.dart';
 import '../controller/app_photo_ai_controller.dart';
 
@@ -42,6 +45,10 @@ class AppPhotoAiView extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
                 children: [
+                  // ⭐ 2026-10-19 手机端补上「回忆」三件套（记忆 / 票据 / 年度总结）：
+                  //    桌面左侧栏已经有一整组，手机上没有侧栏，挂在 AI 页顶部当快捷入口。
+                  const _RecallEntries(),
+                  const SizedBox(height: 18),
                   _PreviewSection(
                     title: 'photo_menu_ai_face'.tr,
                     total: data?.faces.total ?? 0,
@@ -145,6 +152,100 @@ class AppPhotoAiView extends StatelessWidget {
           }),
         );
       },
+    );
+  }
+}
+
+/// ⭐ 2026-10-19 手机端「回忆」快捷入口：记忆 / 票据 / 年度总结。
+///
+/// 桌面是左侧栏一整组，手机没有侧栏 —— 这三页都是「内容体」（不带 Scaffold/AppBar），
+/// 所以 push 的时候套一层 `_RecallPage` 才有返回按钮。
+class _RecallEntries extends StatelessWidget {
+  const _RecallEntries();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final items = <({IconData icon, String label, Widget page})>[
+      (
+        icon: Icons.auto_stories_outlined,
+        label: 'photo_memory_title'.tr,
+        page: const PhotoMemoryView(),
+      ),
+      (
+        icon: Icons.receipt_long_outlined,
+        label: 'photo_tickets_title'.tr,
+        page: const PhotoTicketsView(),
+      ),
+      (
+        icon: Icons.bar_chart,
+        label: 'photo_annual_title'.tr,
+        page: const PhotoAnnualView(),
+      ),
+    ];
+    return Row(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) const SizedBox(width: 10),
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => _RecallPage(title: items[i].label, child: items[i].page),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: scheme.onSurface.withValues(alpha: 0.06)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(items[i].icon, size: 22, color: scheme.primary),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        items[i].label,
+                        style: theme.textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _RecallPage extends StatelessWidget {
+  final String title;
+  final Widget child;
+
+  const _RecallPage({required this.title, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          title,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
+      body: child,
     );
   }
 }

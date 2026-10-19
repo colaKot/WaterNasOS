@@ -136,6 +136,7 @@ class _PcVideoPlayerViewState extends State<PcVideoPlayerView> {
                     children: [
                       PlaybackVideoSurface(
                         engine: engine,
+                        cover: controller.isVideoCover.value,
                         onNativeViewCreated: controller.onMedia3SurfaceReady,
                         onSurfaceTap: controller.handlePlayerTap,
                       ),
@@ -149,6 +150,8 @@ class _PcVideoPlayerViewState extends State<PcVideoPlayerView> {
                 child: Obx(
                   () => WebSubtitleOverlay(
                     text: controller.webActiveSubtitleText.value,
+                    bottomPadding:
+                        controller.transcodeSubtitleBottomPadding(context),
                   ),
                 ),
               ),

@@ -329,12 +329,14 @@ class NotesApiService extends BaseApiService {
     final fileName = file.name.trim().isEmpty
         ? p.basename(filePath.isEmpty ? 'asset.bin' : filePath)
         : file.name.trim();
-    if (file.bytes == null && filePath.isEmpty) {
+    // 新 API 的 PlatformFile 不再缓存 bytes：无本地路径时退回按 uri 读内存
+    if (filePath.isEmpty && file.uri.toString().isEmpty) {
       throw Exception('upload_failed'.tr);
     }
     if (base.trim() == ApiController.p2pBaseUrl) {
-      final bytes =
-          file.bytes ?? await XFile(filePath, name: fileName).readAsBytes();
+      final bytes = filePath.isEmpty
+          ? await file.readAsBytes()
+          : await XFile(filePath, name: fileName).readAsBytes();
       final req = http.MultipartRequest(
         'POST',
         Uri.parse('$base$modulePath/note/uploadAsset'),
@@ -367,9 +369,13 @@ class NotesApiService extends BaseApiService {
       return buildAssetUrl(noteId: noteId, assetName: assetName);
     }
     final uploader = createDioWithBadCertificateCompat();
-    final multipart = file.bytes != null
-        ? dio.MultipartFile.fromBytes(file.bytes!, filename: fileName)
-        : await dio.MultipartFile.fromFile(filePath, filename: fileName);
+    // 有本地路径就走文件流（不把整份读进内存），否则（web/blob）退回内存
+    final multipart = filePath.isNotEmpty
+        ? await dio.MultipartFile.fromFile(filePath, filename: fileName)
+        : dio.MultipartFile.fromBytes(
+            await file.readAsBytes(),
+            filename: fileName,
+          );
     final form = dio.FormData.fromMap({'noteId': noteId, 'file': multipart});
     final resp = await uploader.post(
       '$base$modulePath/note/uploadAsset',

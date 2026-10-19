@@ -2,6 +2,7 @@ const knex = require('knex');
 const path = require('path');
 const Logger = require('../utils/logger');
 const config = require('../config/config');
+const sqliteVecUtil = require('../utils/sqliteVecUtil');
 
 class KnexUtil {
   constructor() {
@@ -47,18 +48,33 @@ class KnexUtil {
       ...options,
     };
 
+    // ⭐ 2026-10-17 向量检索下沉数据库：每条池连接都要加载 sqlite-vec。
+    // ⚠️ 必须在 pool 层做 —— 连接池是懒建的（min=0, max=5），只加载一次的话
+    //    第 2 条连接上就会报 "no such module: vec0"。
+    // 扩展缺失 / 非 win-x64 时静默降级，不影响任何既有功能。
+    sqliteVecUtil.applyKnexExtension(defaultOptions);
+
     try {
       const knexInstance = knex(defaultOptions);
 
       // 测试连接
       await knexInstance.raw('SELECT 1');
 
-      // 启用WAL模式（Write-Ahead Logging）
-      await knexInstance.raw('PRAGMA journal_mode = WAL');
-
+      // ⭐ busy_timeout 必须**先**设：WAL 切换要拿短暂的排他锁，
+      // 另一进程/外部工具（sqlite3 CLI、备份脚本）正在写时会立刻返回 SQLITE_BUSY，
+      // 顺序反了就会出现「连上了、能读，但写报 attempt to write a readonly database」
+      // （2026-10-18 双实例模拟实测：3 次里 1 次命中）。
       const busyTimeoutMs = Math.max(0, Math.min(60000, Number(process.env.SQLITE_BUSY_TIMEOUT_MS ?? 5000)));
       if (busyTimeoutMs > 0) {
         await knexInstance.raw(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+      }
+
+      // 启用WAL模式（Write-Ahead Logging）
+      try {
+        await knexInstance.raw('PRAGMA journal_mode = WAL');
+      } catch (e) {
+        // 拿不到排他锁时降级继续：WAL 只是并发读写优化，不该阻断启动
+        Logger.warn('⚠️ journal_mode=WAL failed, continue with default journal:', e && e.message);
       }
 
 

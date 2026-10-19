@@ -191,7 +191,88 @@ class PhotoSourceService {
     return { matched: [...matched], absent, scanned, hashed };
   }
 
-  /// 查询这批 size 里哪些在图库（该用户可见的源范围内）至少有一个候选行。
+  /**
+   * ⭐ 2026-10-17 P5：**候选限定**的 content_md5 补齐。
+   *
+   * 为什么需要：`photo_index.content_md5` 是惰性填充的（只有相册备份比对过才写），
+   * 实测 61686 张里只有 5359 张有值 ⇒「重复照片清理」只能查出 1 组，功能等于废的。
+   *
+   * 为什么能只算一部分：**内容相同 ⇒ size 必相同** ⇒ 只有 size 与别人撞车的才可能重复。
+   * 实测候选 9754 行 / 31 GiB，全量 219 GiB ⇒ 省掉 86% 的读盘。
+   *
+   * ⚠️ 算法直接复用本类的 computeContentMd5（与 fileListController / 客户端 /api/file/md5
+   * 逐字节一致），绝不另写一份，否则客户端本地算出的 md5 永远对不上。
+   *
+   * @param {{limit?:number, pathPrefixes?:string[]}} options
+   * @returns {Promise<{candidates:number, scanned:number, hashed:number, failed:number, remaining:number}>}
+   */
+  async backfillContentMd5(options = {}) {
+    const limit = Math.max(1, Math.min(5000, Number(options.limit) || 500));
+    const prefixes = Array.isArray(options.pathPrefixes) ? options.pathPrefixes.filter(Boolean) : [];
+    await this.ensureContentMd5Column().catch(() => false);
+
+    const buildCandidates = () => {
+      const q = this.knex('photo_index as p')
+        .where('p.is_file', 1)
+        .where('p.in_trash', 0)
+        .where('p.type', 1)
+        .whereRaw("(p.content_md5 IS NULL OR p.content_md5 = '')")
+        .whereIn(
+          'p.size',
+          this.knex('photo_index')
+            .select('size')
+            .where('is_file', 1)
+            .where('in_trash', 0)
+            .where('type', 1)
+            .groupBy('size')
+            .havingRaw('COUNT(1) >= 2')
+        );
+      if (prefixes.length > 0) {
+        q.where(qb => {
+          for (const root of prefixes) {
+            const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+            qb.orWhere('p.path', root).orWhere('p.path', 'like', `${prefix}%`);
+          }
+        });
+      }
+      return q;
+    };
+
+    const candidates = await buildCandidates()
+      .count({ n: 'p.id' })
+      .first()
+      .then(r => Number((r && r.n) || 0) || 0)
+      .catch(() => 0);
+    if (candidates <= 0) return { candidates: 0, scanned: 0, hashed: 0, failed: 0, remaining: 0 };
+
+    const rows = await buildCandidates()
+      .select('p.id', 'p.path', 'p.filename', 'p.size')
+      .limit(limit)
+      .catch(() => []);
+
+    let hashed = 0;
+    let failed = 0;
+    for (const row of rows || []) {
+      const abs = path.join(String(row.path || ''), String(row.filename || ''));
+      const md5 = await this.computeContentMd5(abs, Number(row.size)).catch(() => '');
+      if (!md5) {
+        failed += 1;
+        continue;
+      }
+      await this.knex('photo_index').where({ id: row.id }).update({ content_md5: md5 }).catch(() => {});
+      hashed += 1;
+    }
+
+    const remaining = await buildCandidates()
+      .count({ n: 'p.id' })
+      .first()
+      .then(r => Number((r && r.n) || 0) || 0)
+      .catch(() => 0);
+
+    return { candidates, scanned: (rows || []).length, hashed, failed, remaining };
+  }
+
+  /// 查询这批 size 里哪些在图库（该用户可见的源范围内）至少有一个候选行。  /// 查询这批 size 里哪些在图库（该用户可见的源范围内）至少有一个候选行。
   /// 只 select size，走索引，代价与 size 个数成正比、与库大小无关。
   async queryPresentSizes(roots, sizes) {
     const present = new Set();

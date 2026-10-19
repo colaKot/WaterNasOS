@@ -24,15 +24,32 @@ const Logger = require('../../../utils/logger');
 const dbUtil = require('../../../db/dbUtil');
 const knexUtil = require('../../../db/knexUtil');
 const tableConfig = require('../../../db/table/tableConfig');
-const { predictPlaceFull, ensurePlaces365Ready, isRemoteModelError } = require('./placesUtil');
+const { predictPlaceFull, ensurePlaces365Ready, isRemoteModelError, isPermanentImageError } = require('./placesUtil');
 const placesClipUtil = require('./placesClipUtil');
 const fusion = require('./placesFusion');
 // ⭐ 2026-10-15 活动维度（与场景并行、独立表、独立标志位，见 docs §8.22.7）
 const activityUtil = require('./activityUtil');
 const personGateUtil = require('./personGateUtil');
 const fileService = require('../../../api/modules/file/core/fileService');
+const sqliteVec = require('../../../utils/sqliteVecUtil');
 
 const CALIB_CONFIG_KEY = 'ai_place_calib';
+
+/** 活动/场景维度：同一张图最多尝试几次（瞬时错误才计数，永久错误直接放弃） */
+const MAX_AI_ATTEMPTS = Math.max(1, Math.min(20, Number(process.env.PLACE_AI_MAX_ATTEMPTS ?? 3)));
+
+/**
+ * ⭐ 2026-10-17 判定「永久性图像错误」——重试一万次也不会成功的那类。
+ *
+ * 依据：这些都是 **sharp / libvips 在解码阶段**报的错，只与文件本身有关
+ *（不是图片、或数据损坏），与模型、内存、并发都无关。
+ *
+ * ⛔ 反面清单（这些是**瞬时**错误，必须重试，绝不能当成永久失败）：
+ *    · 模型/权重加载失败（isRemoteModelError 那条路径）
+ *    · SQLITE_BUSY / 磁盘 IO 抖动 / ENOMEM
+ *    所以这里**只按解码错误特征匹配**，不做「什么都算永久」的粗暴兜底。
+ */
+// 判定函数已挪到 placesUtil（纯函数、可单测），见那边的 isPermanentImageError
 const CALIB_SAMPLE = Math.max(20, Math.min(1000, Number(process.env.PLACE_CALIB_SAMPLE || 200)));
 
 /** 配置键 → 融合参数 */
@@ -398,6 +415,7 @@ class PlacesWorker {
     let done = 0;
     let tagged = 0;
     let gated = 0;
+    let abandoned = 0; // ⭐ 2026-10-17 放弃计数：让「跑完了但有 N 张没成功」可见
     const t0 = Date.now();
 
     while (this.isRunning) {
@@ -418,8 +436,31 @@ class PlacesWorker {
           if (r && r.tagged) tagged += 1;
           if (r && r.gated) gated += 1;
         } catch (err) {
-          // 单张失败不阻断整轮；**不写标志位** ⇒ 下次还会重试这张
-          Logger.error(`❌ activity failed: ${row && row.filename}`, err);
+          // ⭐ 2026-10-17 失败语义修复。原来这里**不写标志位** ⇒ 永久失败的文件（不是图片/
+          //    已损坏）会被无限重试：实测 jpush_uid.png 重试 78 次、PA290862.JPG 39 次，
+          //    而且 gen_activity 永远降不到 0（用户看到的「待处理」数字是假的）。
+          //    现在：永久性解码错误**立即放弃并记录原因**；瞬时错误最多重试 MAX_AI_ATTEMPTS 次。
+          const id = row && row.id ? Number(row.id) : 0;
+          const name = row && row.filename ? row.filename : '(未知)';
+          if (!id) {
+            Logger.error(`❌ activity failed（无 id，无法记账）: ${name}`, err);
+          } else {
+            const attempts = await this.bumpActivityAttempts(id);
+            const reason = err && err.message ? String(err.message).slice(0, 140) : String(err);
+            if (isPermanentImageError(err)) {
+              await this.markActivityDone(id);
+              abandoned += 1;
+              Logger.warn(`[activity] 放弃（图像不可解码，第 ${attempts} 次，以后不再重试）: ${name} —— ${reason}`);
+            } else if (attempts >= MAX_AI_ATTEMPTS) {
+              await this.markActivityDone(id);
+              abandoned += 1;
+              Logger.error(`[activity] 放弃（已尝试 ${attempts}/${MAX_AI_ATTEMPTS} 次）: ${name} —— ${reason}`);
+            } else if (attempts <= 2 || attempts % 10 === 0) {
+              Logger.warn(`[activity] 第 ${attempts}/${MAX_AI_ATTEMPTS} 次失败，将重试: ${name} —— ${reason}`);
+            } else {
+              Logger.debug(`[activity] 第 ${attempts} 次失败: ${name}`);
+            }
+          }
         }
         if (done > 0 && done % 500 === 0) {
           const s = (Date.now() - t0) / 1000;
@@ -433,7 +474,8 @@ class PlacesWorker {
       const s = (Date.now() - t0) / 1000;
       Logger.info(`[placesWorker] ✅ 活动维度完成：${done} 张，命中活动 ${tagged} 张`
         + `（${(100 * tagged / done).toFixed(1)}%），跑过人物门控 ${gated} 张`
-        + `（${(100 * gated / done).toFixed(1)}%），耗时 ${(s / 60).toFixed(1)} 分钟`);
+        + `（${(100 * gated / done).toFixed(1)}%），放弃 ${abandoned} 张（图像不可解码或多次失败），`
+        + `耗时 ${(s / 60).toFixed(1)} 分钟`);
     } else {
       Logger.info('✅ No pending activity tasks, activity phase done');
     }
@@ -590,6 +632,24 @@ class PlacesWorker {
       .catch(() => {});
   }
 
+  /**
+   * ⭐ 2026-10-17 活动维度尝试次数 +1，返回自增后的值。
+   * 用「先读后写」而不是 SQL 自增：better-sqlite3 + knex 下 `.increment()` 的返回语义不稳，
+   * 而这里需要拿到**准确的新值**来做「是否达到上限」的判断。
+   */
+  async bumpActivityAttempts(id) {
+    const numId = Number(id) || 0;
+    if (!numId) return 0;
+    try {
+      const row = await this.knex('photo_index').where({ id: numId }).select('gen_activity_attempts').first();
+      const next = Math.max(0, Number(row && row.gen_activity_attempts) || 0) + 1;
+      await this.knex('photo_index').where({ id: numId }).update({ gen_activity_attempts: next });
+      return next;
+    } catch (_) {
+      return 1;
+    }
+  }
+
   async getNextBatch() {
     return this.knex('photo_index')
       .select('id', 'path', 'filename', 'file_hash', 'type')
@@ -679,7 +739,18 @@ class PlacesWorker {
       if (isRemoteModelError(err)) {
         throw err;
       }
-      Logger.error(`❌  scene recognition failed: ${imagePath}`, err);
+      // ⭐ 2026-10-17 这里的「失败即完成」是**有意为之**（避免无限重试），保留；
+      //    但原来连计数都没有 ⇒「跑完了但有 N 张没成功」完全不可见。补上：
+      //    永久性解码错误单独计数，结束汇总里报出来。
+      if (isPermanentImageError(err)) {
+        this.abandonedCount = (this.abandonedCount || 0) + 1;
+        if (this.abandonedCount <= 3 || this.abandonedCount % 100 === 0) {
+          Logger.warn(`[scene] 放弃（图像不可解码，第 ${this.abandonedCount} 张）: ${imagePath} —— `
+            + `${err && err.message ? String(err.message).slice(0, 120) : err}`);
+        }
+      } else {
+        Logger.error(`❌  scene recognition failed: ${imagePath}`, err);
+      }
       await this.markIndexDone(id);
       return;
     }
@@ -765,6 +836,7 @@ class PlacesWorker {
 
         // ⭐ 被可判性 head 拦下的照片不给场景标签，但**向量照样留下** —— 以图搜图不该漏掉这些
         await trx('photo_index').where({ id }).update({ gen_place: 1, ...this.clipEmbColumn(id) });
+        await this.syncVecEmb(trx, id);
       });
     } catch (err) {
       Logger.error('❌  scene DB write failed:', err);
@@ -782,10 +854,26 @@ class PlacesWorker {
     if (!cached || !cached.emb || Number(cached.id) !== Number(id)) return {};
     try {
       const emb = cached.emb;
-      return { clip_emb: Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength) };
+      // ⭐ 2026-10-17 同步记下塔标识，供检索时拒绝跨塔比较。
+      return {
+        clip_emb: Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
+        emb_model: placesClipUtil.getModelTag() || null,
+      };
     } catch (_) {
       return {};
     }
+  }
+
+  /**
+   * ⭐ 2026-10-17 把本轮的图像向量同步进 vec0 检索表（photo_emb）。
+   * 与 clipEmbColumn 同一份数据、同一套 id 校验；失败只降级（旧的全表扫路径仍能跑）。
+   * ⚠️ 不能并进 clipEmbColumn —— 后者返回的是 photo_index 的 update 片段，
+   *   而 vec0 是另一张表，必须单独写。
+   */
+  async syncVecEmb(knexOrTrx, id) {
+    const cached = this._clipEmb;
+    if (!cached || !cached.emb || Number(cached.id) !== Number(id)) return;
+    await sqliteVec.upsertEmb(knexOrTrx, id, cached.emb).catch(() => {});
   }
 
   async markIndexDone(id) {
@@ -793,6 +881,7 @@ class PlacesWorker {
       .where({ id })
       .update({ gen_place: 1, ...this.clipEmbColumn(id) })
       .catch(() => {});
+    await this.syncVecEmb(this.knex, id);
   }
 
   stop() {

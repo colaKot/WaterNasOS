@@ -1,10 +1,10 @@
 name: nascab_sync
 description: "WaterNasOS 目录同步客户端 —— 电脑 <-> NAS 目录同步的 Windows 独立程序"
 publish_to: 'none'
-version: 1.1.0+2
+version: 2.0.0+3
 
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: '>=3.12.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -25,11 +25,10 @@ dependencies:
   # 登录态与用户偏好持久化
   shared_preferences: ^2.5.3
   # 同步基线本地库
-  sqflite_common_ffi: ^2.3.7
-  # sqflite_common_ffi 在 Windows 上依赖 sqlite3 动态库，
-  # 少了这组依赖基线库会打不开（同步退化为「无基线」，删除传播失效）
-  sqlite3: ^2.9.4
-  sqlite3_flutter_libs: ">=0.5.41 <0.6.0"
+  # sqlite3 3.x 起原生库由 native assets（build hooks）自动构建，
+  # 不再需要 sqlite3_flutter_libs（该包已 EOL：0.6.0+eol）。
+  sqflite_common_ffi: ^2.4.4
+  sqlite3: ^3.7.1
   # 选择本地同步目录
   file_picker: ^10.3.7
   # 桌面窗口（关窗进托盘、单实例）
@@ -47,3 +46,15 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+
+
+# sqlite3 3.x 的原生库由 Dart build hooks 产出。默认会从 GitHub Releases 下载预编译 DLL，
+# 该地址在受限网络下经常拉不到（报 "Building native assets failed"）。
+# 统一改为用仓库内的官方 amalgamation 源码本地编译，构建完全离线、可重现。
+hooks:
+  user_defines:
+    sqlite3:
+      source: source
+      path: ../third_party/sqlite3/sqlite3.c
+      defines:
+        default_options: true

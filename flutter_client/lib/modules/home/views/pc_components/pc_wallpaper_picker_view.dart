@@ -73,18 +73,16 @@ class _PcWallpaperPickerViewState extends State<PcWallpaperPickerView> {
 
   Future<void> _uploadCustomWallpaper() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.image,
-        allowMultiple: false,
-        withData: true,
       );
-      if (result == null || result.files.isEmpty) return;
+      if (result.isEmpty) return;
 
-      final file = result.files.first;
+      final file = result.first;
       final filename = file.name.trim().isNotEmpty
           ? file.name.trim()
           : 'wallpaper';
-      final bytes = file.bytes;
+      final bytes = await file.readAsBytes();
       if (bytes == null || bytes.isEmpty) {
         ToastUtil.show('home_wallpaper_upload_failed'.tr);
         return;

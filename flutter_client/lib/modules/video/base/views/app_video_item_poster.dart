@@ -31,6 +31,10 @@ class AppVideoItemPoster extends StatelessWidget {
   final int? currentAlbumId;
   final VoidCallback? onRemovedFromCurrentAlbum;
 
+  /// ⭐ 2026-10-19 封面图 / 缩略图切换（移动端）。
+  ///   false = 竖版海报 2:3；true = 横版缩略图 3:2（同桌面端口径）。
+  final bool showFanart;
+
   const AppVideoItemPoster({
     super.key,
     required this.item,
@@ -42,6 +46,7 @@ class AppVideoItemPoster extends StatelessWidget {
     this.onFavoriteChanged,
     this.currentAlbumId,
     this.onRemovedFromCurrentAlbum,
+    this.showFanart = false,
   });
 
   Future<void> _toggleFavorite(VideoHomeItemBean item) async {
@@ -397,7 +402,9 @@ class AppVideoItemPoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final title = item.nfoName.isNotEmpty ? item.nfoName : item.filename;
-    final posterUrl = VideoUtils.getPosterUrl(item, size: 500);
+    final posterUrl = showFanart
+        ? VideoUtils.getFanartThumbUrl(item, size: 500)
+        : VideoUtils.getPosterUrl(item, size: 500);
     final safeProgress = progress?.clamp(0, 1).toDouble();
     final rating = item.nfoScore;
     final typeText = videoMediaTypeText(item.mediaType);
@@ -417,7 +424,8 @@ class AppVideoItemPoster extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AspectRatio(
-              aspectRatio: 2 / 3,
+              // ⭐ 横版缩略图用 3:2（= 刮削出的 backdrop 真实比例，见 video_list_grid 注释）
+              aspectRatio: showFanart ? 3 / 2 : 2 / 3,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -426,7 +434,8 @@ class AppVideoItemPoster extends StatelessWidget {
                     child: posterUrl.isNotEmpty
                         ? CustomExtendedImage(
                             imageUrl: posterUrl,
-                            fit: BoxFit.cover,
+                            // ⭐ 横版用 contain：库里横屏 / 竖屏混排，固定比例 cover 必裁
+                            fit: showFanart ? BoxFit.contain : BoxFit.cover,
                             borderRadius: imageRadius,
                             showLoading: false,
                           )

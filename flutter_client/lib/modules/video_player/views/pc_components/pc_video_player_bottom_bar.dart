@@ -332,6 +332,19 @@ class PcVideoPlayerBottomBar extends GetView<PlayerController> {
                                 //   onPressed: () {},
                                 // ),
                                 PcVideoVolumeControl(controller: controller),
+                                // ⭐ 2026-10-19 铺满 / 适应（桌面全屏时画面不够大就切这个）
+                                IconButton(
+                                  tooltip: 'player_aspect_ratio'.tr,
+                                  icon: Obx(
+                                    () => Icon(
+                                      controller.isVideoCover.value
+                                          ? Icons.fit_screen
+                                          : Icons.aspect_ratio,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  onPressed: controller.toggleVideoScaleMode,
+                                ),
                                 IconButton(
                                   icon: Obx(
                                     () => Icon(

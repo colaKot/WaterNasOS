@@ -7,7 +7,7 @@ const Logger = require('../../../utils/logger');
 const dbUtil = require('../../../db/dbUtil');
 const knexUtil = require('../../../db/knexUtil');
 const tableConfig = require('../../../db/table/tableConfig');
-const { getFaceEngine, bufferToFloat32, float32ToBuffer, normalizeL2, protoWeightFactor, pushTopRoot, decideFaceAssignment, selectMergePairs } = require('./faceUtil');
+const { getFaceEngine, bufferToFloat32, float32ToBuffer, normalizeL2, protoWeightFactor, pushTopRoot, decideFaceAssignment, selectMergePairs, isPermanentImageError } = require('./faceUtil');
 const fileService = require('../../../api/modules/file/core/fileService');
 const remoteAssets = require('../../../utils/remoteAssetsManager');
 const { Worker: ThreadWorker, isMainThread, workerData: threadWorkerData } = require('worker_threads');
@@ -92,7 +92,23 @@ const SECOND_MERGE_MIN_FACE_COUNT = Math.max(1, Math.min(1000, Number(process.en
 // ⭐ 2026-10-14 防误合护栏（用户报「好多人的人脸混在了一起」）
 // 1) 认领裕度：最近原型必须比**第二名（另一个人）**明显更像，否则宁可新建人脸组。
 //    0.04 只影响「两个人脸组难分伯仲」的边角样本，对真正同一人的高相似度样本无影响。
-let ASSIGN_MARGIN = Math.max(0, Math.min(0.3, Number(process.env.FACE_ASSIGN_MARGIN ?? 0.04)));
+let ASSIGN_MARGIN = Math.max(0, Math.min(0.3, Number(process.env.FACE_ASSIGN_MARGIN ?? 0.06)));
+
+// ⭐⭐ 2026-10-19 父子 / 表兄弟误合治理（gexuan 账号：本人与儿子、儿子与表哥互相串组）。
+// 这三条都不改模型，只改「谁能进哪一组」的裁决：
+//   1) 已命名组 = 用户确认过的身份 ⇒ 认领门槛再抬 NAMED_EXTRA_REQ，且裕度再加一档。
+//      家族成员相似度天然偏高，只有把「确认过的组」单独加严，才不用牺牲全库召回。
+//   2) 两个都命名了的组 ⇒ 默认**不许**二次合并（除非相似度极高），杜绝「街街」并进表哥。
+//   3) 两组如果**同时出现在过同一张照片里** ⇒ 铁定是两个人，禁止合并（最硬的证据）。
+//   4) 用户手动标了「有问题」的组（is_hide=1）⇒ 直接退出认领与合并。
+//      用户已经用脚投票了，系统再往里塞脸只会让错误越滚越大。
+let NAMED_EXTRA_REQ = Math.max(0, Math.min(0.2, Number(process.env.FACE_NAMED_EXTRA_REQ ?? 0.05)));
+let NAMED_EXTRA_MARGIN = Math.max(0, Math.min(0.2, Number(process.env.FACE_NAMED_EXTRA_MARGIN ?? 0.02)));
+const NAMED_PAIR_MERGE_SIM = Math.max(0.3, Math.min(1, Number(process.env.FACE_NAMED_PAIR_MERGE_SIM ?? 0.72)));
+// 「已命名 / 有问题」集合的内存刷新间隔（每批都全量 SELECT 太重）。
+const NAMED_FLAGS_REFRESH_MS = Math.max(5000, Math.min(10 * 60 * 1000, Number(process.env.FACE_NAMED_FLAGS_REFRESH_MS ?? 60000)));
+// 灰区：刚过门槛的认领不更新原型（避免一次误认领把整组带着漂移）。
+const PROTO_GRAY_ZONE = Math.max(0, Math.min(0.1, Number(process.env.FACE_PROTO_GRAY_ZONE ?? 0.02)));
 // 2) 二次合并要求「互为最近邻」：掐掉 A~B、B~C 把三个人串成一组的链式合并。
 const SECOND_MERGE_MUTUAL = Number(process.env.FACE_SECOND_MERGE_MUTUAL ?? 1) ? true : false;
 
@@ -143,12 +159,24 @@ async function applyFaceTuning() {
       return cur;
     }
   };
-  const prev = { sim: SIM_THRESH, minQ: MIN_QUALITY, merge2: SECOND_MERGE_THRESH, margin: ASSIGN_MARGIN, threads: FACE_THREADS };
+  const prev = {
+    sim: SIM_THRESH,
+    minQ: MIN_QUALITY,
+    merge2: SECOND_MERGE_THRESH,
+    margin: ASSIGN_MARGIN,
+    namedReq: NAMED_EXTRA_REQ,
+    namedMargin: NAMED_EXTRA_MARGIN,
+    threads: FACE_THREADS,
+  };
   SIM_THRESH = await readNum('ai_face_sim_thresh', SIM_THRESH, 0.2, 0.9);
   MIN_QUALITY = await readNum('ai_face_min_quality', MIN_QUALITY, 40, 95);
   SECOND_MERGE_THRESH = await readNum('ai_face_second_merge_thresh', SECOND_MERGE_THRESH, 0.2, 0.9);
   // 认领裕度：目前只有 DB / 环境变量可调（AI 设置页暂无控件）
   ASSIGN_MARGIN = await readNum('ai_face_assign_margin', ASSIGN_MARGIN, 0, 0.3);
+  // ⭐ 2026-10-19 已命名组的额外门槛：父子/表兄弟这类「家族脸」靠它拉开。
+  // 调大 = 更不容易把别人的脸并进已命名人物（代价：同一人可能先裂成两组，可再合并）。
+  NAMED_EXTRA_REQ = await readNum('ai_face_named_extra_req', NAMED_EXTRA_REQ, 0, 0.2);
+  NAMED_EXTRA_MARGIN = await readNum('ai_face_named_extra_margin', NAMED_EXTRA_MARGIN, 0, 0.2);
   // 线程数只在启动时生效（运行中改不热切换，避免半批任务线程数抖动）；
   // 环境变量显式给了则尊重环境变量。
   if (process.env.FACE_THREADS === undefined) {
@@ -159,10 +187,13 @@ async function applyFaceTuning() {
     Math.abs(prev.minQ - MIN_QUALITY) > 1e-9 ||
     Math.abs(prev.merge2 - SECOND_MERGE_THRESH) > 1e-9 ||
     Math.abs(prev.margin - ASSIGN_MARGIN) > 1e-9 ||
+    Math.abs(prev.namedReq - NAMED_EXTRA_REQ) > 1e-9 ||
+    Math.abs(prev.namedMargin - NAMED_EXTRA_MARGIN) > 1e-9 ||
     prev.threads !== FACE_THREADS
   ) {
     Logger.info(
-      `[FaceTuning] 应用新参数 sim=${SIM_THRESH} minQuality=${MIN_QUALITY} secondMerge=${SECOND_MERGE_THRESH} assignMargin=${ASSIGN_MARGIN} threads=${FACE_THREADS}`
+      `[FaceTuning] 应用新参数 sim=${SIM_THRESH} minQuality=${MIN_QUALITY} secondMerge=${SECOND_MERGE_THRESH} assignMargin=${ASSIGN_MARGIN}`
+      + ` namedExtraReq=${NAMED_EXTRA_REQ} namedExtraMargin=${NAMED_EXTRA_MARGIN} threads=${FACE_THREADS}`
     );
   }
 }
@@ -223,6 +254,11 @@ class FaceWorker {
     this.batchSize = Math.max(1, Math.min(50, Number(process.env.FACE_BATCH_SIZE ?? 5)));
     this.faceEngine = null; // 仅在线程全部不可用时的兜底（coordinator 自己推理）
     this.prototypes = new Map();
+    // ⭐ 2026-10-19 已命名（用户确认过）的根人脸 id：认领时额外加严，见 NAMED_EXTRA_REQ
+    this.namedRootIds = new Set();
+    // ⭐ 2026-10-19 用户标记「有问题」的根人脸（photo_faces.is_hide=1）：
+    //    不参与认领、不参与合并。之前这个标记只影响列表展示，worker 照旧往里吸脸。
+    this.hiddenRootIds = new Set();
     this.rootCache = new Map();
     this.protoIds = [];
     this.protoVecs = [];
@@ -481,9 +517,11 @@ class FaceWorker {
       .where(qb => {
         qb.whereNull('belong_face_id').orWhere('belong_face_id', 0);
       })
-      .select('face_id', 'feature', 'face_count', 'belong_face_id')
+      .select('face_id', 'feature', 'face_count', 'belong_face_id', 'name', 'is_hide')
       .catch(() => []);
     this.prototypes.clear();
+    this.namedRootIds.clear();
+    this.hiddenRootIds.clear();
     this.rootCache.clear();
     this.protoIds = [];
     this.protoVecs = [];
@@ -525,6 +563,12 @@ class FaceWorker {
         belongFaceId: belongFaceId > 0 ? belongFaceId : null,
         recentEmbs: [],
       };
+      const nameBuf = r && r.name ? r.name : null;
+      const hasName = nameBuf == null
+        ? false
+        : (Buffer.isBuffer(nameBuf) ? nameBuf.length > 0 : String(nameBuf).length > 0);
+      if (hasName) this.namedRootIds.add(id);
+      if (Number(r && r.is_hide ? r.is_hide : 0) === 1) this.hiddenRootIds.add(id);
       this.prototypes.set(id, proto);
       this.addProtoToSearchIndex(id, proto.vec);
       this.protoCountById.set(id, proto.count);
@@ -632,7 +676,14 @@ class FaceWorker {
       try {
         const rows = await this.getNextBatch();
         if (!rows || rows.length === 0) {
-          await this.maybeRunMaintenance(true);
+          // ⭐⭐ 2026-10-17 空转修复（实测：107 分钟里跑了 1920 次二次合并，一次都没合并成功）。
+          //   原来这里**无条件** force 维护，而下面的 parked 分支是「sleep 3s → continue」循环
+          //   ⇒ 只要还有一张被 park 的图（实测 32 张坏图永远失败），就每 3 秒重跑一次维护；
+          //   其中 355 次是「候选 124750 对」的全量比对，纯烧一个核。
+          //   现在：只有在**真的没活**（连 parked 都清空了）时才做收尾维护。
+          if (this.parkedIds.size === 0) {
+            await this.maybeRunMaintenance(true);
+          }
 
           // ⭐⭐ 2026-10-16 停摆修复（人肉实测：60,363 张待处理却没人跑）。
           // 旧实现在这里无条件 process.exit(0)，而 singletonWorkerManager 的 exit 监听只在
@@ -690,6 +741,15 @@ class FaceWorker {
         // 现在保留 gen_faces=0，并把 id 暂存到 parkedIds（本轮内跳过以免死循环），
         // startLoop 在队列取空后会按 PARK_REQUEUE_MS 重新入队重试。
         const rid = item.row && item.row.id ? Number(item.row.id) : 0;
+        // ⭐ 2026-10-17：永久性图像错误（根本不是图片 / 文件截断损坏）直接判死。
+        //   这些图重试一万次也读不出来，而 park 会让 parkedIds **永不归零** ——
+        //   上面 startLoop 的 parked 分支于是永远走不到退出，形成常驻空转。
+        //   ⚠️ 只对「确认的永久错」markIndexDone；瞬时错（超时/内存/模型未就绪）仍然 park 重试，
+        //      这是 2026-10-16「烧图修复」的红线，不能放宽。
+        if (rid && isPermanentImageError(item.error)) {
+          await this.markIndexDone(rid).catch(() => {});
+          continue;
+        }
         failed.push({ rid, name: item.imagePath || (item.row && item.row.path) || '', err: item.error });
         if (rid) this.parkedIds.add(rid);
         continue;
@@ -774,7 +834,13 @@ class FaceWorker {
         const match = this.findBestPrototype(emb, faceMeta, usedFaceIds);
         const matchFaceId = match ? Number(match.faceId) || 0 : 0;
         const rootMatchFaceId = matchFaceId ? await this.getRootFaceId(trx, matchFaceId) : 0;
-        const faceId = match ? await this.assignToFace(trx, rootMatchFaceId || matchFaceId, emb, { qualityScore: quality }) : await this.createNewFace(trx, emb, { fileHash, quality });
+        const faceId = match
+          ? await this.assignToFace(trx, rootMatchFaceId || matchFaceId, emb, {
+            qualityScore: quality,
+            sim: match.sim,
+            req: match.req,
+          })
+          : await this.createNewFace(trx, emb, { fileHash, quality });
         if (!faceId) continue;
         const rootId = matchFaceId ? rootMatchFaceId : await this.getRootFaceId(trx, faceId);
         if (usedFaceIds.has(rootId)) continue;
@@ -783,7 +849,7 @@ class FaceWorker {
         const sampleFaceId = matchFaceId || rootId;
         await this.upsertSample(trx, fileHash, sampleFaceId, emb, quality);
       }
-      await trx('photo_index').where({ id }).update({ gen_faces: 1 });
+      await trx('photo_index').where({ id }).update({ gen_faces: 1, faces_recognized_at: trx.fn.now() });
     });
   }
 
@@ -807,6 +873,13 @@ class FaceWorker {
     // 每次维护前刷新参数：调完「聚类严格度」后，重聚类/维护即刻用新值
     await applyFaceTuning().catch(() => {});
     const now = Date.now();
+    // ⭐ 2026-10-19 命名/改名/「有问题」都是走 API 直接改库的，worker 内存里的集合需要同步。
+    //    ⨀ 必须节流：这个函数每处理一批（5 张）就会调一次，而每次都是全量 SELECT
+    //    根人脸 —— 几千行 × 每 5 张一次，直接把 DB 压满。
+    if (now - (this.namedFlagsAt || 0) >= NAMED_FLAGS_REFRESH_MS) {
+      this.namedFlagsAt = now;
+      await this.refreshNamedRootIds().catch(() => {});
+    }
     const dueByCount = this.processedImages >= MAINTENANCE_EVERY_IMAGES;
     const dueByTime = now - this.lastMaintenanceAt >= MAINTENANCE_EVERY_MS;
     if (!force && !dueByCount && !dueByTime) return;
@@ -931,11 +1004,13 @@ class FaceWorker {
     for (const id of preferred) {
       const p = this.prototypes.get(id);
       if (!p || p.belongFaceId || !p.vec) continue;
+      if (this.hiddenRootIds.has(Number(id))) continue;
       candidates.push({ id, count: Number(p.count) || 0 });
     }
     if (candidates.length < 2) {
       for (const [id, p] of this.prototypes.entries()) {
         if (!p || p.belongFaceId || !p.vec) continue;
+        if (this.hiddenRootIds.has(Number(id))) continue;
         candidates.push({ id, count: Number(p && p.count ? p.count : 0) || 0 });
         if (candidates.length >= MAINTENANCE_FACE_LIMIT) break;
       }
@@ -967,6 +1042,17 @@ class FaceWorker {
         const sa = bestSampleByFaceId.get(a.id);
         const sb = bestSampleByFaceId.get(b.id);
         const simBest = sa && sb ? dot(sa, sb) : -1;
+        // ⭐ 2026-10-19 两个都已命名的组默认不合并：那是两个用户确认过的身份，
+        //    「街街」和表哥就是这么被并到一起的。只有极高相似度（同一人被误拆两次）才放行。
+        if (
+          this.namedRootIds.has(a.id) &&
+          this.namedRootIds.has(b.id) &&
+          sim < NAMED_PAIR_MERGE_SIM &&
+          simBest < NAMED_PAIR_MERGE_SIM
+        ) {
+          this.namedPairSkipped = (this.namedPairSkipped || 0) + 1;
+          continue;
+        }
         pairs.push({ a: a.id, b: b.id, sim, simBest });
       }
     }
@@ -1023,9 +1109,42 @@ class FaceWorker {
         `（互为最近邻=${SECOND_MERGE_MUTUAL ? '开' : '关'}，上限 ${SECOND_MERGE_MAX}）`
       );
     }
-    for (const c of chosen) {
+    const finalChosen = await this.filterCooccurringPairs(trx, chosen);
+    for (const c of finalChosen) {
       await this.mergeFaceInto(trx, c.dropId, c.keepId);
     }
+  }
+
+  /**
+   * ⭐ 2026-10-19 最硬的一条护栏：两个组如果**同时出现在同一张照片里**，
+   * 那一定是两个人（一张照片里不可能有两个同一个人），禁止合并。
+   * 用 (file_hash, face_id) 唯一索引 join，单次查询很快；只对最终入选的对做，最多 200 对。
+   */
+  async filterCooccurringPairs(trx, chosen) {
+    const list = Array.isArray(chosen) ? chosen : [];
+    if (list.length === 0) return list;
+    const out = [];
+    let blocked = 0;
+    for (const c of list) {
+      const keepId = Number(c && c.keepId ? c.keepId : 0);
+      const dropId = Number(c && c.dropId ? c.dropId : 0);
+      if (!keepId || !dropId) continue;
+      const hit = await trx('photo_face2filehash as a')
+        .join('photo_face2filehash as b', 'a.file_hash', 'b.file_hash')
+        .where('a.face_id', keepId)
+        .where('b.face_id', dropId)
+        .first('a.file_hash')
+        .catch(() => null);
+      if (hit) {
+        blocked += 1;
+        continue;
+      }
+      out.push(c);
+    }
+    if (blocked > 0) {
+      Logger.info(`[faceCluster] 二次合并跳过 ${blocked} 对：两组曾出现在同一张照片里（必是两个不同的人）`);
+    }
+    return out;
   }
 
   async loadBestSamplesForFaces(trx, faceIds) {
@@ -1170,7 +1289,44 @@ class FaceWorker {
       p.belongFaceId = toFaceId;
       this.prototypes.set(id, p);
     }
+    // ⭐ 2026-10-19 同步内存里的「已命名 / 有问题」集合：被并掉的那组不再是身份，
+    //    如果它把名字带给了目标组，目标组从这一刻起按「已命名」加严。
+    this.namedRootIds.delete(fromFaceId);
+    this.hiddenRootIds.delete(fromFaceId);
+    if (inheritName !== undefined) this.namedRootIds.add(toFaceId);
+
     this.rootCache.clear();
+  }
+
+  /**
+   * ⭐ 2026-10-19 从库里重读「已命名 / 已标记有问题」的根人脸。
+   * 命名与「有问题」都是走 API 直接写库的，worker 内存感知不到；
+   * 不刷新就会出现「刚标完有问题，那个组还在继续吸脸」。
+   */
+  async refreshNamedRootIds() {
+    const rows = await this.knex('photo_faces')
+      .select('face_id', 'name', 'is_hide')
+      .where(qb => {
+        qb.whereNull('belong_face_id').orWhere('belong_face_id', 0);
+      })
+      .catch(() => []);
+    const nextNamed = new Set();
+    const nextHidden = new Set();
+    for (const r of rows || []) {
+      const id = Number(r && r.face_id ? r.face_id : 0);
+      if (!id) continue;
+      const nb = r && r.name ? r.name : null;
+      const hasName = nb == null
+        ? false
+        : (Buffer.isBuffer(nb) ? nb.length > 0 : String(nb).length > 0);
+      if (hasName) nextNamed.add(id);
+      if (Number(r && r.is_hide ? r.is_hide : 0) === 1) nextHidden.add(id);
+    }
+    this.namedRootIds = nextNamed;
+    this.hiddenRootIds = nextHidden;
+    if (nextNamed.size > 0 || nextHidden.size > 0) {
+      Logger.info(`[faceCluster] 已命名组 ${nextNamed.size} 个（认领门槛 +${NAMED_EXTRA_REQ}），有问题组 ${nextHidden.size} 个（退出认领/合并）`);
+    }
   }
 
   getRootFaceIdFromPrototypes(faceId) {
@@ -1264,6 +1420,7 @@ class FaceWorker {
         if (!id) continue;
         const rootId = this.getRootFaceIdFromPrototypes(id);
         if (excludeRootFaceIds && excludeRootFaceIds.has(rootId)) continue;
+        if (this.hiddenRootIds.has(rootId)) continue;
         const v = this.protoVecs[idx];
         if (!v) continue;
         let s = 0;
@@ -1309,6 +1466,7 @@ class FaceWorker {
         if (!id) continue;
         const rootId = this.getRootFaceIdFromPrototypes(id);
         if (excludeRootFaceIds && excludeRootFaceIds.has(rootId)) continue;
+        if (this.hiddenRootIds.has(rootId)) continue;
         const v = this.protoVecs[idx];
         if (!v) continue;
         let s = 0;
@@ -1320,6 +1478,7 @@ class FaceWorker {
         if (!p || !p.vec) continue;
         const rootId = this.getRootFaceIdFromPrototypes(id);
         if (excludeRootFaceIds && excludeRootFaceIds.has(rootId)) continue;
+        if (this.hiddenRootIds.has(rootId)) continue;
         const sim = dot(emb, p.vec);
         pushTopRoot(topTwo, rootId, sim);
       }
@@ -1328,11 +1487,17 @@ class FaceWorker {
     const best = topTwo[0] || null;
     if (!best) return null;
     const second = topTwo[1] || null;
+    // ⭐ 2026-10-19：命中的是「已命名组」时抬高门槛。父子/兄弟的相似度本来就高，
+    //    用同一把尺子量，父子必然被并进一个组；确认过的组再严一档，代价只是新脸
+    //    可能先自成一组（可后续合并），比把两个人混在一起好修。
+    const bestNamed = this.namedRootIds.has(best.rootId);
+    const effReq = bestNamed ? Math.min(0.95, req + NAMED_EXTRA_REQ) : req;
+    const effMargin = bestNamed ? ASSIGN_MARGIN + NAMED_EXTRA_MARGIN : ASSIGN_MARGIN;
     const decision = decideFaceAssignment({
       bestSim: best.sim,
       secondSim: second ? second.sim : null,
-      req,
-      margin: ASSIGN_MARGIN,
+      req: effReq,
+      margin: effMargin,
     });
     if (!decision.accepted) {
       if (decision.ambiguous) {
@@ -1342,13 +1507,13 @@ class FaceWorker {
           Logger.info(
             `[faceCluster] 认领被拒 x${this.assignAmbiguousCount}（最近两个人脸组难分伯仲：` +
             `best=${best.sim.toFixed(4)} second=${second ? second.sim.toFixed(4) : 'n/a'} ` +
-            `gap=${Number.isFinite(decision.gap) ? decision.gap.toFixed(4) : 'n/a'} < margin=${ASSIGN_MARGIN} req=${req.toFixed(4)}）`
+            `gap=${Number.isFinite(decision.gap) ? decision.gap.toFixed(4) : 'n/a'} < margin=${effMargin} req=${effReq.toFixed(4)}${bestNamed ? '（已命名组）' : ''}）`
           );
         }
       }
       return null;
     }
-    return { faceId: best.rootId, sim: best.sim, req };
+    return { faceId: best.rootId, sim: best.sim, req: effReq, named: bestNamed };
   }
 
   async createNewFace(trx, emb, meta = null) {
@@ -1386,7 +1551,22 @@ class FaceWorker {
     const oldCount = Number(proto.count) || 0;
     const newCount = oldCount + 1;
     const qualityScore = clampNumber(meta && meta.qualityScore, 0, 100);
-    const canUpdateProto = qualityScore >= PROTO_UPDATE_MIN_QUALITY;
+    let canUpdateProto = qualityScore >= PROTO_UPDATE_MIN_QUALITY;
+    // ⭐ 2026-10-19 灰区保护：相似度只比门槛高一点点时不更新原型。
+    // 一次误认领若同时把原型往错的方向拉，后面会越认越像（父子组就这样被越并越混）。
+    // 这里只拦「原型更新」，映射照常写入 —— 数据不丢，只是不让这一张去改基因。
+    const matchSim = Number(meta && meta.sim);
+    const matchReq = Number(meta && meta.req);
+    if (
+      canUpdateProto &&
+      PROTO_GRAY_ZONE > 0 &&
+      Number.isFinite(matchSim) &&
+      Number.isFinite(matchReq) &&
+      matchSim < matchReq + PROTO_GRAY_ZONE
+    ) {
+      canUpdateProto = false;
+      this.grayZoneCount = (this.grayZoneCount || 0) + 1;
+    }
     let newVec = proto.vec;
     if (canUpdateProto) {
       const baseWeight = computeProtoUpdateWeight(qualityScore);
@@ -1484,7 +1664,7 @@ class FaceWorker {
   async markIndexDone(id) {
     await this.knex('photo_index')
       .where({ id })
-      .update({ gen_faces: 1 })
+      .update({ gen_faces: 1, faces_recognized_at: this.knex.fn.now() })
       .catch(() => {});
   }
 

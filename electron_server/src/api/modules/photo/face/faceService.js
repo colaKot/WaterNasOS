@@ -5,6 +5,7 @@ const sharpUtils = require('../../../../utils/sharpUtils');
 const fileService = require('../../file/core/fileService');
 const tableConfig = require('../../../../db/table/tableConfig');
 const photoPathQueryUtil = require('../timeline/photoPathQueryUtil');
+const Logger = require('../../../../utils/logger');
 
 function clampNumber(v, min, max) {
   if (!Number.isFinite(v)) return min;
@@ -129,13 +130,21 @@ class FaceService {
       };
     }
 
-    let minShowCount = 0;
+    // ⭐⭐ 2026-10-17 默认门槛 0 → 3（对齐 Immich 的 Minimum Recognized Faces 语义）。
+    // 实测本库：2041 个根人脸组里 629 个只有 1 张、967 个不足 3 张 —— 那些是路人/噪点，
+    // 全部铺在列表里正是「人脸不好用」的主要来源。门槛 3 能砍掉约 47%，且不丢任何数据
+    // （只是不展示；等这个人再出现、张数够了会自动浮出来）。
+    // ⚠️ 显式把配置设成 0 仍可关掉这个门槛（不覆盖用户的显式选择）。
+    const DEFAULT_MIN_SHOW_COUNT = 3;
+    let minShowCount = DEFAULT_MIN_SHOW_COUNT;
     try {
       const raw = await tableConfig.getConfigByKey('ai_face_min_show_count');
-      const parsed = Math.floor(Number(raw));
-      minShowCount = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      if (raw !== null && raw !== undefined && raw !== '') {
+        const parsed = Math.floor(Number(raw));
+        minShowCount = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      }
     } catch (_) {
-      minShowCount = 0;
+      minShowCount = DEFAULT_MIN_SHOW_COUNT;
     }
 
     // ⭐ 2026-10-13 计数口径（用户报「列表显示 3300+ 张，点进去只有几十张」）：
@@ -167,13 +176,17 @@ class FaceService {
       .select('face_id', 'face_count', 'belong_face_id', 'is_hide', 'name', 'create_time', 'update_time')
       .where(isRoot);
 
+    // ⭐ 2026-10-17 门槛判定：**已命名的人脸永远展示**，只有未命名的才看张数。
+    // 名字是用户亲手给的，不该因为张数少就藏起来（这点比 Immich 更友好）。
+    const namedOrEnough = '(COALESCE(CAST(name AS TEXT), \'\') <> \'\' OR (?) >= ?)';
     if (visibleCountSub) {
-      totalQuery = totalQuery.whereRaw('(?) >= ?', [visibleCountSub, minVisible]);
-      rowsQuery = rowsQuery.whereRaw('(?) >= ?', [visibleCountSub, minVisible]);
+      totalQuery = totalQuery.whereRaw(namedOrEnough, [visibleCountSub, minVisible]);
+      rowsQuery = rowsQuery.whereRaw(namedOrEnough, [visibleCountSub, minVisible]);
       rowsQuery = rowsQuery.select(this.knex.raw('(?) as visible_count', [buildVisibleCountSub()]));
     } else {
-      totalQuery = totalQuery.where('face_count', '>=', minShowCount);
-      rowsQuery = rowsQuery.where('face_count', '>=', minShowCount);
+      const enoughRaw = '(COALESCE(CAST(name AS TEXT), \'\') <> \'\' OR face_count >= ?)';
+      totalQuery = totalQuery.whereRaw(enoughRaw, [minShowCount]);
+      rowsQuery = rowsQuery.whereRaw(enoughRaw, [minShowCount]);
     }
 
     if (status === 'visible' || status === 'visiable') {
@@ -1467,6 +1480,18 @@ class FaceService {
         err.statusCode = 404;
         throw err;
       }
+
+      // ⭐⭐ 2026-10-19 「移出即重识别」：以前这里只删这一行映射，
+      //    gen_faces 仍是 1，这张脸就永远不再被处理了（用户只能看着它消失）。
+      //    而且 worker 的 prepareInfer 只要看到该 file_hash 还有**任意一行**就会跳过，
+      //    所以必须把这张图上所有人脸的映射与样本一起清掉，再把它放回队列。
+      //    重跑时新护栏（命名组 +0.05、有问题组退出、同图共存禁并）才会生效。
+      await trx('photo_face2filehash').where({ file_hash: fileHash }).del().catch(() => 0);
+      await trx('photo_face_samples').where({ file_hash: fileHash }).del().catch(() => 0);
+      await trx('photo_index')
+        .where({ file_hash: fileHash })
+        .update({ gen_faces: 0 })
+        .catch(() => 0);
 
       await this.refreshFaceAggregateInTrx(trx, faceId, {
         keepCoverHash:

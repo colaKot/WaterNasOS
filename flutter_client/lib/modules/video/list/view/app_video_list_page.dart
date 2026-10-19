@@ -14,7 +14,6 @@ import '../controller/video_list_controller.dart';
 import 'parts/video_list_filter_menu.dart';
 import 'parts/video_list_grid.dart';
 import 'parts/video_list_sort_menu.dart';
-import 'parts/video_list_top_bar.dart';
 
 class AppVideoListPage extends StatefulWidget {
   final String initialMediaType;
@@ -108,49 +107,6 @@ class _AppVideoListPageState extends State<AppVideoListPage> {
       return;
     }
     AppRoutes.back();
-  }
-
-  Future<void> _openSourceSheet(VideoListController controller) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return DraggableScrollableSheet(
-          initialChildSize: 0.55,
-          minChildSize: 0.25,
-          maxChildSize: 0.86,
-          expand: false,
-          builder: (context, scrollController) {
-            return Material(
-              color: theme.colorScheme.surface,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return SingleChildScrollView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.fromLTRB(0, 0, 0, 12),
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 720),
-                        child: VideoListSourcePanel(
-                          controller: controller,
-                          listConstraints: BoxConstraints(
-                            maxHeight: constraints.maxHeight - 56,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   Future<void> _openSortSheet(VideoListController controller) async {
@@ -378,12 +334,19 @@ class _AppVideoListPageState extends State<AppVideoListPage> {
                             );
                           }),
                           const SizedBox(width: 6),
+                          // ⭐ 2026-10-19 「来源」按钮从移动端顶栏撤掉（用户要求：手机上看不到用处），
+                          //    换成封面图 / 缩略图切换；状态按库持久化（同桌面端 setShowFanart）。
                           Obx(() {
+                            final fanart = ctrl.showFanart.value;
                             return CustomBorderedIconButton(
-                              icon: Icons.source_outlined,
-                              onTap: () => _openSourceSheet(ctrl),
-                              tooltip: 'source'.tr,
-                              active: ctrl.selectedPaths.isNotEmpty,
+                              icon: fanart
+                                  ? Icons.crop_16_9
+                                  : Icons.crop_portrait,
+                              onTap: () => ctrl.setShowFanart(!fanart),
+                              tooltip: fanart
+                                  ? 'video_list_image_fanart'.tr
+                                  : 'video_list_image_poster'.tr,
+                              active: fanart,
                             );
                           }),
                           const SizedBox(width: 6),
@@ -463,13 +426,36 @@ class _AppVideoListGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return Obx(() {
       final posterScale = controller.posterScale.value;
+      final showFanart = controller.showFanart.value;
       return SliverLayoutBuilder(
         builder: (context, constraints) {
           final maxWidth = constraints.crossAxisExtent;
+          final spacing = maxWidth < 420 ? 10.0 : 12.0;
+
+          // ⭐ 2026-10-19 缩略图模式：一行一个，宽度自适应整行。
+          //   高度按 3:2 横版反算（= 刮削 backdrop 的真实比例），再加标题区高度。
+          if (showFanart) {
+            final itemWidth = maxWidth;
+            final imageHeight = itemWidth / (3 / 2);
+            final estimatedHeight = imageHeight + 54;
+            return SliverGrid(
+              delegate: SliverChildBuilderDelegate(
+                (context, idx) => _buildItem(idx, itemWidth, true),
+                childCount: controller.items.length,
+                addAutomaticKeepAlives: false,
+              ),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 1,
+                mainAxisSpacing: spacing,
+                crossAxisSpacing: spacing,
+                childAspectRatio: itemWidth / estimatedHeight,
+              ),
+            );
+          }
+
           final baseWidth = maxWidth < 420 ? 120.0 : 140.0;
           final desiredWidth = baseWidth * posterScale;
           final crossAxisCount = (maxWidth / desiredWidth).floor().clamp(2, 6);
-          final spacing = maxWidth < 420 ? 10.0 : 12.0;
           final totalSpacing = spacing * (crossAxisCount - 1);
           final itemWidth = ((maxWidth - totalSpacing) / crossAxisCount)
               .floorToDouble();
@@ -478,23 +464,7 @@ class _AppVideoListGrid extends StatelessWidget {
 
           return SliverGrid(
             delegate: SliverChildBuilderDelegate(
-              (context, idx) {
-                final item = controller.items[idx];
-                return AppVideoItemPoster(
-                  item: item,
-                  width: itemWidth,
-                  progress: null,
-                  onDeleted: (deleted) {
-                    controller.items.removeWhere((e) => e.id == deleted.id);
-                    controller.total.value = (controller.total.value - 1).clamp(
-                      0,
-                      1 << 30,
-                    );
-                  },
-                  onFavoriteChanged: (isFav) =>
-                      controller.updateFavoriteState(item.id, isFav),
-                );
-              },
+              (context, idx) => _buildItem(idx, itemWidth, false),
               childCount: controller.items.length,
               addAutomaticKeepAlives: false,
             ),
@@ -508,6 +478,21 @@ class _AppVideoListGrid extends StatelessWidget {
         },
       );
     });
+  }
+
+  Widget _buildItem(int idx, double width, bool showFanart) {
+    final item = controller.items[idx];
+    return AppVideoItemPoster(
+      item: item,
+      width: width,
+      showFanart: showFanart,
+      progress: null,
+      onDeleted: (deleted) {
+        controller.items.removeWhere((e) => e.id == deleted.id);
+        controller.total.value = (controller.total.value - 1).clamp(0, 1 << 30);
+      },
+      onFavoriteChanged: (isFav) => controller.updateFavoriteState(item.id, isFav),
+    );
   }
 }
 

@@ -2,153 +2,280 @@
 
 > [简体中文](README.md) | **English**
 
-WaterNasOS is a cross-platform NAS software that lets you remotely manage your photos, videos, music, books, and files. It also provides file sharing, Transmission downloads, Docker management, a remote terminal, multi-device folder sync, and more — with the same backend serving phone, desktop, TV, and web clients.
+WaterNasOS is a **self-hosted NAS system that runs on Windows**: phones, desktops, TVs and browsers all talk to the same server.
+Photos, movies, music, books, files, notes, directory sync, downloads and a terminal — all on a machine you own,
+with no public cloud in the loop.
 
-## Origin & License
+- 🖼️ **AI photo library** — faces, scenes, activities, OCR, semantic search, footprint map, memories and life chapters; tens of thousands of photos stay usable
+- 🎬 **Media library** — separate movie / TV / image / mixed libraries, per-codec transcoding tiers, automatic subtitles, playable on phone, TV and desktop
+- 🔄 **Directory sync** — a standalone sync client sharing one engine with the desktop client, three-way comparison, two-way / upload-only / download-only
+- 🧩 **22 built-in apps** — every feature is its own app with its own icon, page stack and server API namespace
 
-> WaterNasOS is a **modified version** of [NasCabOS](https://github.com/nascab/NasCabOS), distributed under **GNU GPL v3.0**.
-> The copyright of the original work belongs to Beijing Yunpiao Piao Technology Co., Ltd. (© 2025), retained verbatim; the copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026).
-> Since **2026-10** this repository has applied the rename, feature changes and project-wide adjustments listed below to that work.
-> The full license text is in [LICENSE](LICENSE) (GPL-3.0). Network protocols, device fingerprints and encrypted data formats remain compatible.
+---
 
-## What This Version Changes
+## Screenshots
 
-Everything changed relative to upstream is listed below: the earlier feature work comes first, followed by **Recent Updates** with the newest additions, and project-wide housekeeping last.
+**Photo library home** — On this day, newly discovered memories, one frame a day, yearly recap.
 
-### Features
+![Photo home](docs/images/photo-home.webp)
 
-- **Multi-device folder sync**: a standalone Windows sync client (`sync_client`) plus a shared core package (`packages/nascab_sync_core`), so the desktop client and the standalone client run the same sync engine and transfer protocol. The backend gains a dedicated `/api/sync` namespace and two new tables (`tableSyncTask`, `tableSyncRecord`).
-- **Sub-account permission system**: an app-level access policy (`appAccessGuard`) together with fine-grained path permissions, letting you restrict each user's accessible folders and operations (`/api/user/access-policy`). See `docs/子账号权限方案.md`.
-- **Multi-library media support**: a new `video_library` entity allows separate movie / TV / photo / mixed libraries, each with its own "show on home" switch; image and mixed libraries get their own grid + full-screen browser. Existing rows are backfilled by `media_type` on upgrade.
-- **Standalone Photos / Music clients**: `photo_client` and `music_client` build `NasCabPhoto.exe` / `NasCabMusic.exe`. They depend on the main client by path and add **zero duplicated business code** — `main.dart` is three lines that set a launch mode (`AppLaunchMode.photo` / `.music`), so each app boots straight into Photos or Music with its own icon and title.
-- **Theme system**: 26 named color schemes selectable at runtime (Settings → Theme), plus a design-token layer (`app_tokens.dart`) that centralizes spacing / corner-radius / control sizes previously scattered as hard-coded numbers.
-- **Content-level dedup for photo backup**: backup now compares size **and content MD5** against the NAS, so re-uploading an unchanged file is skipped instead of transferred again.
-- **Browsing experience for photo / mixed media libraries**:
-  - A new **sort menu** (Name / Taken / Viewed / Added, defaulting to name ascending), shared by photo and mixed libraries and **remembered per library**.
-  - Name sorting now uses **natural order**: `(1) < (2) < (10) < (11)` instead of the textual `1, 10, 11, 2`. This adds a `natural_name` column (with index) to `image_index` / `video_index`, so sorting is served by a covering index.
-  - Two interchangeable views — a **masonry waterfall** (hand-written with zero dependencies, laid out by each photo's real aspect ratio) and a **regular grid** — plus three library-level toggles: **folder hierarchy / flat library**, **cover art / thumbnail**, and **show file names**. All are persisted per library.
-  - Full-screen viewer: previous/next buttons and keyboard arrow keys **wrap around**; in a mixed library, tapping a video goes **straight to the player**.
-  - Thumbnails are **generated on demand** by a resident background worker rather than pre-generated in bulk.
-- **Player and transcoding**:
-  - **Selectable playback quality** (original / 4K / 1080p / 720p / 480p at several bitrates), with a per-library default.
-  - **Audio loudness normalization** (per-library switch): optionally measure loudness during scanning and apply two-pass linear `loudnorm` at transcode time for more consistent output volume.
-  - **Audio downmix** switch (off by default, preserving the source channel layout); videos with unsupported audio are now **audio-only transcoded** (`-c:v copy`) to avoid needless quality loss.
-  - Media info cards show **4K / HDR10+ / Dolby Vision / Dolby Atmos** badges, read directly from ffprobe metadata without rescanning the library.
-- **Per-user photo isolation**: a new `uid` owner dimension means **each user only sees their own photos and albums** (timeline, faces, places, albums, collections, trash and AI search all share one visibility check); the underlying indexes (thumbnails / faces / places / similar photos) remain global, with isolation applied only at the read layer.
-- **AI and recognition**: the face-recognition model was switched to **EdgeFace**; photo search was enhanced; GPU paths for the footprint map and face processing were optimized.
-- **TV clients**: a new playback-settings guide and persisted playback parameters.
-- **UI**: app icon and home-screen icon assets refreshed across all clients.
+**Media library** — poster wall, continue watching, category rows; quality and subtitles are switched in the player.
 
-### Recent Updates
+![Media library](docs/images/movie-library.webp)
 
-- **v1.1.0 (current)**:
-  - **Photo map clustering**: overlapping photos are merged into clusters by **Web Mercator world-pixel distance** (threshold `1.15 × marker diameter`), and each cluster is anchored at the **real coordinates of its densest photo** — so clusters can never overlap. Clustering only re-runs on zoom or data change (**never on pan**), and is independent of window size and map centre. Opening a marker queries exactly the set of geohash cells the cluster covers (comma-joined, matched server-side with `WHERE IN`) ⇒ **the badge number always equals the number of photos listed**.
-  - **Reverse geocoding now uses real distance**: stepping back through geohash levels and picking the smallest `geonameid` labelled the whole Tianhe district "Yuzhu" (10.96 km away) even though Wushan was 2.93 km away. Names are now resolved by actual distance (30 km gate) for footprints, timeline date headings and the properties panel alike.
-  - **Two root causes fixed in face recognition**: ① **stall** — after a fully-failed batch the worker found an empty queue and exited, while the clean-exit callback was empty, so it never restarted; it now restarts on demand and recycles parked tasks. ② **marking images as done on failure** — failed inference still flagged the photo as scanned (`gen_faces=1`), so it was never retried; failures now leave the flag untouched and requeue the photo. Face merging no longer swallows errors, migrates samples on merge, and counts `face_count` by de-duplicated rows.
-  - **Timeline media filter**: the control bar gains an all / photos / videos segmented switch (the old type dropdown became a Live Photos toggle).
-  - **License**: unchanged from upstream — **GNU GPL v3.0**.
-  - **Server**: **development-instance isolation** (the single-instance lock now keys off Electron `userData`), so a dev instance can run alongside the daily one; the file-listing worker falls back to the main thread on failure, fixing occasional "directory listing 400" errors.
-  - **Clients**: all 13 language packs refreshed.
-- **Playback fixes (v1.0.0)**:
-  - Fixed **H.265 / AV1 transcodes that could not play**: the fMP4 init segment `init.mp4` is now written with an absolute path into the transcode directory, and `#EXT-X-MAP` URIs inside the m3u8 are normalized. The relative path previously sent ffmpeg writing it into the process working directory, so the transcode folder held only `.m4s` segments and no `init.mp4` — the client's request for the init segment always returned 404.
-  - A failed transcode now **falls back to H.264 automatically** and resumes from the current position; on Android, HLS / transcode URLs may also take the **FFmpeg software-decode fallback**.
-  - **Quality tiers are grouped by codec**: H.264 and HEVC each get their own list, with 1440p and low-bitrate 4K tiers added for HEVC (at the same bitrate 265 carries far higher resolutions than 264); switching codec refreshes the available bitrates.
-  - The close button on the Android movie detail page is now **aligned to the right edge**.
-- **Subtitles**: a new **default subtitle language** setting (Simplified Chinese / Traditional Chinese / English / Japanese / Korean / none) auto-selects a matching sidecar subtitle during playback. Language detection covers the usual naming — Simplified `cn / chs / chi / sc / hans`, Traditional `tw / hk / cht / hant`, plus `en / ja / ko`.
-- **Sign-in**: desktop and Android clients **sign in automatically** once the server and account are remembered, instead of requiring a manual tap each time; signing out explicitly disables auto sign-in again.
-- **UI fallback**: the desktop home screen now has a default wallpaper, so it is no longer blank on entry.
-- **Photo backup**: the on/off switch and the "choose folders" button now **request photo permission**, guiding to system settings when denied; fixed the "uploaded / skipped" counters that stayed at 0 (content-dedup and already-backed-up skips are now counted); the total is estimated from the actual album item count, avoiding the double counting caused by Android's overlapping albums.
-- **Server stability**: when the file-list worker fails, the request **falls back to the main thread** running the same implementation, fixing the occasional "directory list 400" error.
-- **Releases**: **v1.1.0** is the current version, shipping the Windows server / desktop / sync clients and the Android main / Photos / Music APKs — see [Releases](https://github.com/colaKot/WaterNasOS/releases); the first stable release was v1.0.0.
+---
 
-### Project-wide
+## Three core features
 
-- **Renamed**: the project and every client display name is now **WaterNasOS** (WaterNasOSServer for the Windows server, WaterNasOS TV for the TV clients); the Flutter package name changed from `NasCabOS` to `WaterNasOS`. The desktop main client program is **WaterNasClient**, the standalone sync client is **WaterNasSync**.
-- **Backward compatible**: application identifiers such as `applicationId`, the iOS Bundle ID and the HarmonyOS `bundleName` are **left unchanged**, so existing installs can upgrade in place; network protocols, device fingerprints and encrypted data formats are untouched.
-- **Slimmed repository**: third-party runtime binaries (sftpgo, openlist, ffmpeg, ffprobe, rclone, transmission), AI models (`onnx_models`), CocoaPods trees and the geonames database are no longer bundled; run `tool/fetch_nascab_assets.py` to fetch them from the official manifest.
-- **Contact & donations**: updated to the maintainer's QR code and email.
+### 1. AI photo library
 
-## Built-in Apps
+**Browsing and organisation**
 
-Every feature in WaterNasOS is a **standalone app**: its own icon, its own page stack and its own
-server-side API namespace, and on desktop it can be opened in a separate window apart from the
-main shell. The default app list is served by the backend (`defaultApps` in
-`electron_server/src/config/config.js`); users can hide or reorder apps in Settings.
+- **Timeline** grouped by day, waterfall (true aspect ratio) or grid view, with an "All / Photos / Videos" filter.
+- **Albums**: user albums, smart albums (condition based), collections, plus a restorable trash.
+- **Folder view** on top of the album semantics.
+- **Per-user isolation**: every account only sees the photos it owns (timeline, faces, places, albums, favourites, trash and AI search share one visibility rule).
+  The underlying thumbnail / face / place indexes stay global — isolation lives in the read layer.
+- **Undoable bulk operations**: bulk delete is logged in `photo_operation_log` with preview → execute → undo.
+
+**On-device AI (no cloud)**
+
+| Capability | Implementation |
+| --- | --- |
+| Faces | **EdgeFace**; detect → 512-d embedding → clustering, with merge / split / rename / sample management |
+| Scenes | **SigLIP2 base-224 + DETR-R50** multi-label with a "judgeability" gate |
+| Activities | A separate activity dimension (swimming, running, laughing, group photo, wedding, party…), independently resettable |
+| OCR | **PP-OCRv6 small** (falls back to v5 when v6 is absent, thresholds per version) |
+| Semantics | CLIP dual tower + **Chinese phrase maximum matching** (512 local phrases, ordered binding) + a multilingual second recall path |
+| Vector search | Vectors pushed down into SQLite (`sqlite-vec`); ~509ms → ~106ms on tens of thousands of photos |
+
+**Memories and storytelling**
+
+- **Memories**: candidates are computed per "same day + same place + many photos"; only a confirmation turns one into a memory.
+  The card reads "place · what happened · photo count"; photos can be removed from a memory without deleting the originals.
+- **Life chapters**: a book per year, one page per day — large photo + daily picks on the left, diary / place / tags on the right, arrow keys to flip.
+- **One frame a day / yearly recap / ticket wallet / time comparison / trip replay**, plus a single discovery page with 7 tabs.
+
+**Footprint map**
+
+- Overlapping photos are clustered by **world-pixel distance** (`1.15 × marker diameter`); the cluster lands on the densest photo's **real coordinate**
+  ⇒ clusters can never overlap visually. Recomputed only on zoom or data change, never on pan.
+- Opening a cluster queries the **set** of geohash cells it covers (`WHERE IN`) ⇒ **the badge number equals the list length exactly**.
+- Reverse geocoding picks the nearest name by real distance (30km gate) and shows **one language only**.
+
+**Duplicate / similar cleanup**
+
+- Content-level dedupe via `content_md5` (computed lazily) and feature clustering for similar shots.
+  Metadata is merged only when exactly one copy survives (favourites / albums / scenes / activities / faces / location);
+  OCR and visibility are not copied. Every cleanup is undoable.
+
+### 2. Media library
+
+- **Multiple libraries**: movie / TV / image / mixed, each with its own "show on home" switch. Image and mixed libraries get a dedicated grid + fullscreen viewer
+  (natural-order sorting, waterfall, folder hierarchy, cover/thumbnail toggles, remembered per library).
+- **Playing**: quality tiers (original / 4K / 1440p / 1080p / 720p / 480p) with **separate tier tables for H.264 and HEVC**,
+  default quality remembered per (user, client).
+- **HLS fMP4 transcoding** with an absolute `init.mp4` path; on failure the player automatically falls back to H.264 and resumes from the same position.
+- **Audio**: optional loudness normalisation (two-pass `loudnorm`), downmix switch, and audio-only transcoding (`-c:v copy`) for videos without audio.
+- **Subtitles**: default language (Simplified / Traditional Chinese, English, Japanese, Korean, off), automatic sidecar matching,
+  text tracks rendered client-side and bitmap tracks burned in; **subtitles always float inside the picture**, never in the letterbox bars.
+- **Fill / fit**: the picture fills the screen by default (edges cropped) and can be switched back to "fit" at any time.
+  Android flips the native `PlayerView` resize mode; desktop and web use `BoxFit.cover`.
+
+### 3. Directory sync
+
+- **One engine, two clients**: the standalone `sync_client` (`WaterNasSync.exe`) and the desktop client share `packages/nascab_sync_core`.
+- **Three-way comparison**: local state vs local baseline (`sync.db`) vs remote, so nothing is re-uploaded wholesale.
+- **Same-file test**: equal size and mtime within 2000ms; **both directions write mtime back**, which stops the "re-download every round" loop.
+- **Modes**: two-way / upload-only / download-only, with include / exclude rules and per-folder tasks.
+- **Device identity**: Windows `MachineGuid`, macOS `IOPlatformUUID`, Linux `machine-id`.
+- **Tasks and records**: `/api/sync` namespace plus task and record tables — every run leaves a trace.
+
+---
+
+## Built-in apps
+
+Every feature is an **independent app**: its own icon, page stack and server API namespace, and on desktop it can be opened as its own window.
+The default app list is served by the backend (`defaultApps` in `electron_server/src/config/config.js`) and can be hidden / reordered per user.
 
 | App | key | Description |
 | --- | --- | --- |
-| Files | `folder` | Browse, upload/download and share files |
-| Photos | `photo` | Timeline, albums, smart albums, collections, face & scene recognition, similar-photo grouping, GPS geotagging, footprint map, "On this day", trash; **isolated per user**, each user sees only their own photos |
-| Movies | `movie` | Movies and TV shows, common video formats, multiple libraries (movie / TV / photo / mixed); photo and mixed libraries support sorting (natural order), waterfall/grid views and folder hierarchy |
-| Books | `book` | E-book reader supporting EPUB / MOBI / AZW3 / PDF / TXT |
-| Music | `music` | Songs, albums, artists, playlists, collections and favorites, with a built-in full-screen player (dynamic lyrics, disc animation, background playback) |
+| Files | `folder` | Browse, upload/download, share |
+| Photos | `photo` | AI photo library (see above) |
+| Media | `movie` | Movie / TV / image / mixed libraries |
+| Books | `book` | EPUB / MOBI / AZW3 / PDF / TXT |
+| Music | `music` | Songs, albums, artists, playlists, collections; fullscreen player with animated lyrics |
 | Notes | `note` | Rich-text notes |
-| Encrypted | `encrypted` | AES-encrypted storage; the password is stored encrypted in the local database |
-| Media Tool | `media_tool` | Batch image compression and video conversion |
-| Sync | `sync` | Folder sync between your computer and the NAS: two-way / download-only / upload-only, with filter rules |
-| Terminal | `terminal` | Remote terminal with sensitive commands (rm, unlink, ...) blocked |
-| Transmission | `transmission` | BitTorrent download management |
-| Docker | `docker` | Images, containers and tasks on the host |
-| Backup | `backup` | Phone photo and file backup |
-| Mounts | `mounts` | Mount network disks into server directories |
-| Share | `share` | Share disks over WebDAV / FTP / SFTP |
-| Monitor | `monitor` | Real-time hardware usage |
-| Task Center | `task_center` | Background jobs |
-| Security | `security` | Login and security settings |
-| Users | `user` | Users and permissions |
-| Process | `process` | Process viewer |
+| Encrypted space | `encrypted` | AES-encrypted storage, password stored encrypted locally |
+| Media tools | `media_tool` | Batch image compression, video conversion |
+| Sync | `sync` | Directory sync tasks and records |
+| Terminal | `terminal` | Remote shell with destructive commands blocked |
+| Transmission | `transmission` | BitTorrent |
+| Docker | `docker` | Images, containers, tasks |
+| Backup | `backup` | Phone photo / file backup |
+| Mounts | `mounts` | Mount network shares into server folders |
+| Sharing | `share` | WebDAV / FTP / SFTP shares |
+| Monitor | `monitor` | Live hardware usage |
+| Task centre | `task_center` | Background tasks |
+| Security | `security` | Sign-in and security |
+| Users | `user` | Users, app-level allow-lists, path-level permissions |
+| Processes | `process` | Process list |
 | Service | `nascab_service` | Server status and account |
-| Settings | `setting` | Global settings |
+| Settings | `setting` | Theme / language / cache location / playback / AI |
 
-> `transmission`, `terminal`, `user`, `mounts`, `docker`, `nascab_service`, `monitor` and `process`
-> are hidden from regular users by default and visible only to administrators. If an app is missing
-> from the home screen, it is most likely filtered out by the "hidden apps" setting — restore it in
-> Settings.
+> `transmission`, `terminal`, `user`, `mounts`, `docker`, `nascab_service`, `monitor`, `process` are admin-only by default.
 
-## Project Structure
+---
 
-This repository contains the following projects:
+## What's new in v2.0.0
+
+### Smart discovery (new)
+
+- **Memories**: candidate discovery → confirm / ignore / restore; cards read "place · what happened · photo count"; photos can be removed without deleting files.
+- **One frame a day**, **ticket wallet** (train / flight / cinema tickets grouped by trip), **yearly recap**, **time comparison**, **trip replay**.
+- **Duplicates and similar shots**: `content_md5` groups plus feature clustering, with preview → execute → undo.
+- **Model catalogue**: faces / OCR / scenes / CLIP in one place, switchable.
+
+### Timeline and activities
+
+- The timeline now consumes the **activity** dimension (separate from scenes) with activity filters and semantic re-ranking.
+- New "All / Photos / Videos" segmented filter.
+
+### Memories and life chapters
+
+- Memory page with three states (mine / pending / ignored) and a red dot for pending candidates.
+- Life-chapter book: one year per book, one day per page, two-page spread, keyboard and mouse paging.
+- Big search bar on the photo home; submitting it makes the first screen the results.
+
+### Media
+
+- **Fill / fit** fullscreen: fills the screen by default, no black frame; subtitles avoid the letterbox and stay on the picture.
+- Android: a `setResizeMode` method channel on the native `PlayerView`, and player events now carry the real `videoWidth` / `videoHeight`.
+
+### Platform and engineering
+
+- **MCP open platform**: `/api/mcp` exposes 6 **read-only** tools secured by a dedicated `wnos_` token (not the login JWT); the plaintext token is shown only when rotated.
+- **Model API settings** with a real outbound test request.
+- **AI queue control**: pause / resume the recognition queue, reset OCR for the whole library, reset the activity dimension separately.
+- **Self-hosted CJK fallback fonts** for the web build — no more "box with an X" on isolated networks.
+- **Packaging slimming**: `onnx_models/**` is no longer packed into the asar (previously +886MB per build).
+- **Group-photo combo albums removed**: the co-occurrence grouping was not accurate, so the entry point and page were dropped.
+
+### Licence
+
+- Back to **GPL-3.0 only** (the earlier GPL + AGPL split was withdrawn and `LICENSE-AGPL-3.0.txt` removed).
+
+---
+
+## Everything changed versus upstream (NasCabOS)
+
+### Architecture and platform
+
+- **Multi-device directory sync**: `sync_client` + `packages/nascab_sync_core`; new `/api/sync` namespace with `tableSyncTask` / `tableSyncRecord`.
+- **Sub-account permissions**: app-level allow-list (`appAccessGuard`) plus path-level policies (`/api/user/access-policy`).
+- **Multi-library media**: a `video_library` entity with movie / TV / image / mixed types, each with its own home visibility switch; legacy rows backfilled by `media_type`.
+- **Dedicated photo / music clients** that reuse the main client through a path dependency (no duplicated business code).
+- **Per-user photo isolation**: `photo_source` gains `uid`; visibility funnels through `PhotoTimeLineService.getValidPaths` with **no role exception**
+  (super admins only see their own sources); write operations keep the super-admin override.
+- **Dev instance isolation**: the single-instance lock moved to Electron `userData`.
+- **Theme system**: 26 runtime colour schemes plus a design-token layer, applied through a single `ThemeApplyService`.
+
+### Photos
+
+- **Content-level dedupe on backup** (size + `content_md5`).
+- **Faces**: EdgeFace; two root-cause fixes (worker never restarted after a clean exit; failed inference was marked as scanned so it never retried); merge logic fixed.
+- **Scenes**: SigLIP2 + DETR with a judgeability gate and bounded retries.
+- **Semantic search**: Chinese phrase matching with ordered binding and late fusion.
+- **OCR**: PP-OCRv6 preferred (dictionary must be swapped together with the model).
+- **Footprint map**: clustering, cluster scope and reverse geocoding all reworked.
+- **Image / mixed library browsing**: sort menu (name / shot time / view time / added time, per library), natural ordering, waterfall, folder hierarchy, looping fullscreen viewer.
+- **Phone backup**: single machine-wide configuration, permission prompts, corrected upload/skip counters.
+
+### Media
+
+- Per-codec quality tiers, absolute HLS fMP4 init path, automatic fallback to H.264, FFmpeg software fallback on Android,
+  loudness normalisation, downmix, audio-only transcoding, default subtitle language, badge row (4K / HDR10+ / Dolby Vision / Atmos).
+
+### Clients
+
+- **Automatic sign-in** on desktop and Android after remembering server and account; logout can disable it.
+- Refreshed app icons; desktop default wallpaper; 13 maintained locale bundles with key-parity scripts.
+- Full OpenAPI single source of truth: `GET /api/openapi.json` + `tool/dump_openapi.js` (553 paths / 33 modules plus an auth-coverage audit).
+
+### Global
+
+- **Renamed** to **WaterNasOS** (server: WaterNasOSServer, TV: WaterNasOS TV, Flutter package `WaterNasOS`, desktop `WaterNasClient`, sync `WaterNasSync`).
+- **Compatibility kept**: `applicationId`, iOS bundle id and HarmonyOS `bundleName` unchanged; protocol, device fingerprint and encrypted data formats untouched.
+- **Slim repository**: third-party runtimes, AI models and the geonames database are no longer vendored; `tool/fetch_nascab_assets.py` fetches them.
+
+---
+
+## About TrailSnap
+
+[TrailSnap (行影集)](https://github.com/LC044/TrailSnap) is an **independently developed AI photo application** (Vue3 + FastAPI + PostgreSQL/pgvector).
+We read its source as a **productisation reference** for the photo domain. These are the ideas we explicitly borrowed.
+
+**No code, model or data artifact from TrailSnap is included in this project.** The stacks are entirely different
+(Flutter + Node/Express + SQLite versus Vue + Python); only product concepts and interaction patterns were borrowed,
+and every implementation here is our own.
+
+| Borrowed idea | How TrailSnap does it | How it landed in WaterNasOS |
+| --- | --- | --- |
+| **Undoable writes** | `agent_action_plans`: proposed → confirmed → executed → undone, with `preview` / `undo_data` and a 7-day TTL | `photo_operation_log` + `/operation/{undo,recent}`; duplicate cleanup supports `dry_run` preview and undo |
+| **Memories as a product** | Candidate events (recall + evidence + confidence) → user confirms → real memory, six child tables | Three memory states (mine / pending / ignored) with a red dot; each card only offers confirm / ignore; removing photos keeps the originals |
+| **Storytelling layer** | Chapter bookshelf + flip-book diary + AI daily copy | Life-chapter book: one page per day, two-page spread, keyboard paging; copy is assembled from real labels only — **no invented stories** |
+| **One frame a day / yearly recap** | One-frame-a-day renders; 10+ chapter yearly report | One frame a day plus a yearly recap (count / places / people / scenes) behind one discovery page |
+| **Tickets and trips** | YOLO detection + OCR + regex parsing, 3351-station allow-list | Ticket wallet: train / flight / cinema tickets grouped into trips |
+| **Open platform** | MCP server (Streamable HTTP), prefixed agent token, scopes | `/api/mcp` with 6 read-only tools, a `wnos_` token and scope checks — **read-only is deliberate** |
+| **Controllable AI work** | Three priority queues, resource semaphores, per-class pause, idle recycling, exponential backoff | AI worker lifecycle rebuilt (restart on clean exit too), bounded retries, queue pause/resume, serial session creation to avoid ONNX crashes |
+| **Progress visibility** | `TaskManager` + worker subprocess + DB-backed queue + SSE progress | Task centre plus AI queue overview (pending / done / failed / skipped) via `/app_ai/overview` |
+| **Model catalogue** | `model_catalog.json` with 13 models, switchable and downloadable at runtime | Model catalogue page for faces / OCR / scenes / CLIP |
+| **Backup dedupe** | `backup_key` unique index + `check_content` | `check_content` on backup: size pre-filter plus lazily computed `content_md5` |
+
+### What we deliberately did **not** copy
+
+- **The underlying AI stack**: EdgeFace, SigLIP2 + DETR and PP-OCRv6 run locally through ONNX with our own retry and concurrency handling;
+  no closed-set classifier, no VLM descriptions, no llama.cpp.
+- **Cesium 3D maps**: correct aggregation (badge == list length) matters more than 3D; we use our own clustering on a normal map widget.
+- **The in-app agent ecosystem** (agent, skills marketplace, requirement delivery platform): a NAS owns data, not conversations.
+
+---
+
+## Repository layout
 
 | Project | Description |
 | --- | --- |
-| electron_server | Backend, uses electron + express to provide local services |
-| flutter_client | Android + iOS + Windows + Mac clients, built with flutter for cross-platform support |
-| harmony_client | HarmonyOS client, in development |
-| tv_android | Android TV client |
-| tv_apple | Apple TV client |
-| sync_client | Standalone Windows sync client |
-| photo_client | Standalone Windows Photos client (reuses `flutter_client` by path) |
-| music_client | Standalone Windows Music client (reuses `flutter_client` by path) |
-| packages/nascab_sync_core | Shared sync core package used by the PC client and the standalone sync client |
-| tool | Development environment scripts and static self-check scripts |
+| `electron_server` | Backend (Electron + Express + SQLite) |
+| `flutter_client` | Main client (Android / iOS / Windows / macOS) |
+| `photo_client` / `music_client` | Photo / music clients (path dependency on the main client) |
+| `sync_client` | Standalone Windows sync client |
+| `packages/nascab_sync_core` | Shared sync engine |
+| `harmony_client` | HarmonyOS client (work in progress) |
+| `tv_android` / `tv_apple` | Android TV / Apple TV |
+| `tool` | Build and static-check scripts |
 
 ## Running
 
-Server:
-
-First, download the dependency libraries and plugins provided in the releases (<https://github.com/colaKot/WaterNasOS/releases>), then extract the `libs` and `onnx_models` of the corresponding platform to the root directory of `electron_server`. `libs` contains third-party plugins, and `onnx_models` contains OCR model files used for image recognition.
+Server: download the third-party bundle (`libs` plugins, `onnx_models` OCR models) from
+[Releases](https://github.com/colaKot/WaterNasOS/releases) and extract it into `electron_server`.
 
 ```bash
-npm i;
-npm start;
+npm i
+npm start
 ```
 
 Client:
 
 ```bash
-flutter pub get;
-flutter run -d win/ios/android/mac
+flutter pub get
+flutter run -d windows   # or android / ios / macos
 ```
 
-To serve the compiled web client from the server (static web access):
+Web UI: drop the `flutter build web` output into `electron_server/web/main` and open the server port.
 
-```bash
-Build the flutter web version and place it under the electron_server/web/main directory.
-```
+## Support
 
-## Donations
-
-If WaterNasOS is helpful to you, we welcome your support:
+If WaterNasOS is useful to you, a donation is appreciated:
 
 <div align="center">
 
@@ -156,18 +283,18 @@ If WaterNasOS is helpful to you, we welcome your support:
 
 </div>
 
-Business cooperation / Contact us: cola23@126.com
+Contact: cola23@126.com
 
-## License
+## Licence
 
-This repository is a derivative of [NasCabOS](https://github.com/nascab/NasCabOS), distributed under **GNU GPL v3.0**. The full license text is in [LICENSE](LICENSE).
+This repository is a derivative work of [NasCabOS](https://github.com/nascab/NasCabOS), distributed under **GNU GPL v3.0**; see [LICENSE](LICENSE).
 
-- The copyright of the original upstream work belongs to **Beijing Yunpiao Piao Technology Co., Ltd.** (© 2025) and is retained verbatim; it must not be removed.
-- The copyright of the additions and modifications in this repository belongs to **colaKot** (© 2026), also licensed under **GPL-3.0**.
-- Any redistributor must keep the copyright notices above and the full license text; if you convey this software (or a modified version), you must provide the corresponding complete source code (GPL-3.0 §3 / §5).
+- Original upstream copyright **Beijing Yunpiao Piao Technology Co., Ltd.** (© 2025) is retained verbatim.
+- New and modified parts are copyright **colaKot** (© 2026), also under **GPL-3.0**.
+- Redistributors must keep both notices and the full licence text, and must ship the corresponding complete source (GPL-3.0 §3 / §5).
 
-## Third-Party Assets & Acknowledgements
+## Third-party credits
 
-- [Tabler Icons](https://github.com/tabler/tabler-icons): window control buttons and other UI icons (**MIT License**, © Paweł Kuna), consumed via the Dart package `tabler_icons_plus`.
-- [TrailSnap](https://github.com/LC044/TrailSnap): an independently developed AI photo-album app. The **feature planning for the photo/album domain** of this project referenced some of its product ideas — with thanks.
-  > Note: this repository contains **no** code, model or data artefacts from TrailSnap.
+- [Tabler Icons](https://github.com/tabler/tabler-icons) — UI icons (MIT, © Paweł Kuna), via `tabler_icons_plus`.
+- [TrailSnap (行影集)](https://github.com/LC044/TrailSnap) — an independently developed AI photo app whose productisation ideas inspired parts of our photo domain (see "About TrailSnap" above). **No TrailSnap code, model or data is included.**
+- AI models (EdgeFace / SigLIP2 / DETR / PP-OCR / CLIP) remain under their own licences and run locally.

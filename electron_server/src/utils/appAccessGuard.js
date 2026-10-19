@@ -68,6 +68,24 @@ const PUBLIC_API_PREFIXES = [
   '/api/plugin',
 ];
 
+/**
+ * ⚠️ 自带「目标路径级权限校验」的媒体辅助接口 —— 不受应用白名单约束。
+ *
+ * 这些接口挂在 /api/file 前缀下，所以会被 resolveAppKeyByPath 判成 folder 应用。
+ * 但它们内部都已经有 requirePermission(['view'|'download'], path)，本来就只能取到
+ * 用户有权访问的路径；而它们是影视海报、相册缩略图、字幕、合并播放流的**渲染链路**，
+ * 跟「文件夹应用」是否授权无关。
+ *
+ * 踩过的坑（2026-10-18）：只给 movie/music 的子账号，TV 端列表正常但**所有封面空白**，
+ * 因为封面走 /api/file/tiny 被这里 403 掉了。
+ */
+const PATH_LEVEL_GUARDED_API_PREFIXES = [
+  '/api/file/tiny',
+  '/api/file/rawFile',
+  '/api/file/mergeLvpVideo',
+  '/api/file/attributes',
+];
+
 const CACHE_TTL_MS = 3000;
 const _allowedCache = new Map();
 
@@ -100,6 +118,16 @@ function isPublicApiPath(apiPath) {
   const p = String(apiPath || '').trim();
   if (!p) return true;
   return PUBLIC_API_PREFIXES.some(prefix => _isPathUnderPrefix(p, prefix));
+}
+
+/**
+ * 是否为「自带路径级权限校验」的媒体辅助接口（不受应用白名单约束）。
+ * 注意必须整段前缀匹配，不能让 '/api/file' 本身或其它写操作漏过。
+ */
+function isPathLevelGuardedApiPath(apiPath) {
+  const p = String(apiPath || '').trim();
+  if (!p) return false;
+  return PATH_LEVEL_GUARDED_API_PREFIXES.some(prefix => _isPathUnderPrefix(p, prefix));
 }
 
 /** 解析一个请求路径属于哪个应用；返回 null 表示「未登记，不参与白名单判定」 */
@@ -180,6 +208,9 @@ async function checkAppAccess(knex, user, apiPath) {
   const appKey = resolveAppKeyByPath(apiPath);
   if (!appKey) return { allowed: true, appKey: null };
 
+  // 自带路径级权限校验的媒体辅助接口（海报/缩略图/字幕/合并流）不受应用白名单约束
+  if (isPathLevelGuardedApiPath(apiPath)) return { allowed: true, appKey };
+
   const allowedApps = await getAllowedApps(uid);
   if (allowedApps === null) return { allowed: true, appKey };
 
@@ -191,10 +222,12 @@ module.exports = {
   CONFIG_KEY_ALLOWED_APPS,
   APP_API_PREFIXES,
   PUBLIC_API_PREFIXES,
+  PATH_LEVEL_GUARDED_API_PREFIXES,
   getAllowedApps,
   setAllowedApps,
   invalidateCache,
   resolveAppKeyByPath,
   isPublicApiPath,
+  isPathLevelGuardedApiPath,
   checkAppAccess,
 };

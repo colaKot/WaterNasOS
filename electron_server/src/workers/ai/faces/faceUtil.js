@@ -81,10 +81,41 @@ const FEAT_LUMA_TARGET_STD = Number(process.env.FACE_FEAT_LUMA_TARGET_STD ?? 64.
 const FEAT_LUMA_EPS = Number(process.env.FACE_FEAT_LUMA_EPS ?? 1e-6);
 
 function createSharpFromConverted(converted) {
+  // ⭐ 2026-10-17 修：与项目其它 10 处 sharp 调用对齐，补 failOnError:false。
+  //   默认行为会把「有 warning 但能解码」的 JPEG 直接判死
+  //   （实测 DSC_0612.JPG 等报 "Warning treated as error due to failOn setting"），
+  //   人脸链路因此把它们 park 掉、每 10 分钟重试一遍、永不处理。
   if (converted && typeof converted === 'object' && !Buffer.isBuffer(converted) && converted.input && converted.options) {
-    return sharp(converted.input, converted.options);
+    return sharp(converted.input, { ...converted.options, failOnError: false });
   }
-  return sharp(converted);
+  return sharp(converted, { failOnError: false });
+}
+
+/**
+ * ⭐ 2026-10-17 永久性图像错误判定。
+ *
+ * ⚠️ 正则表与 `places/placesUtil.js` 的 PERMANENT_IMAGE_ERROR_RE **刻意保持一字不差**，
+ *   但这里复制一份而不是 require 对方：placesUtil 顶部会 require onnxruntime-node 与
+ *   places 模型工具链，faceWorker 只为一条正则去拉整套依赖不划算（且可能重复初始化 ONNX）。
+ *   改这里时请同步改 placesUtil。
+ */
+const PERMANENT_IMAGE_ERROR_RE = [
+  /unsupported image format/i,
+  /Input (file|buffer) contains unsupported/i,
+  /VipsJpeg/i,
+  /VipsPng/i,
+  /VipsForeign/i,
+  /Corrupt (JPEG|PNG|image)/i,
+  /premature end of data/i,
+  /unsupported file type/i,
+  /Not a valid/i,
+  /VipsError/i,
+];
+
+function isPermanentImageError(err) {
+  if (!err) return false;
+  const msg = `${err.message || ''} ${err.code || ''} ${err.name || ''}`;
+  return PERMANENT_IMAGE_ERROR_RE.some(re => re.test(msg));
 }
 
 function bgrToRgbUint8(data) {
@@ -889,4 +920,5 @@ module.exports = {
   pushTopRoot,
   decideFaceAssignment,
   selectMergePairs,
+  isPermanentImageError,
 };

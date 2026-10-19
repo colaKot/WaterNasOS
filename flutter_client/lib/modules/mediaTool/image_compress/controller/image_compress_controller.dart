@@ -223,17 +223,15 @@ class ImageCompressController extends GetxController {
 
     try {
       busy.value = true;
-      final res = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
+      final res = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: _supportedImageExtensions,
-        withData: kIsWeb,
       );
-      if (res == null || res.files.isEmpty) return;
+      if (res.isEmpty) return;
 
       final supported = <PlatformFile>[];
       var hasUnsupported = false;
-      for (final f in res.files) {
+      for (final f in res) {
         if (_isSupportedImagePath(f.name)) {
           supported.add(f);
         } else {
@@ -333,7 +331,7 @@ class ImageCompressController extends GetxController {
     if (kIsWeb) return;
     if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) return;
 
-    final dirPath = await FilePicker.platform.getDirectoryPath();
+    final dirPath = await FilePicker.getDirectoryPath();
     if (dirPath == null || dirPath.isEmpty) return;
 
     final files = await _collectImageFiles(dirPath);
@@ -471,8 +469,8 @@ class ImageCompressController extends GetxController {
     final name = f.name;
     dio.MultipartFile multipart;
     if (kIsWeb) {
-      final bytes = f.bytes;
-      if (bytes == null) return;
+      final bytes = await f.readAsBytes();
+      if (bytes.isEmpty) return;
       multipart = dio.MultipartFile.fromBytes(bytes, filename: name);
     } else {
       final filePath = f.path;

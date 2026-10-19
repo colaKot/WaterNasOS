@@ -277,7 +277,9 @@ class UploadController extends GetxController {
       final name = pickedFile.name.trim().isNotEmpty
           ? pickedFile.name.trim()
           : p.basename(path);
-      final size = pickedFile.size;
+      // ⚠ lengthSync() 只在「平台已经报告过文件大小」时才有值，web/部分平台会返回 null。
+      // 直接 ?? 0 会把正常文件当成空文件跳过（下面 size <= 0 分支），所以退回异步 length()。
+      final size = pickedFile.lengthSync() ?? await pickedFile.length() ?? 0;
 
       if (UploadTransferHelper.isFileAlreadyInUpload(tasks, name, targetDir)) {
         ToastUtil.show("file_allready_in_upload_queue".tr);
@@ -371,15 +373,12 @@ class UploadController extends GetxController {
         final supported = await ensureSupported();
         if (!supported) return;
       }
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
+      final result = await FilePicker.pickFiles(
         type: FileType.any,
-        withReadStream: false,
-        withData: false,
       );
 
       if (result != null) {
-        await _addPickedPlatformFilesToUpload(result.files, targetDir);
+        await _addPickedPlatformFilesToUpload(result, targetDir);
       }
     } catch (e) {
       ToastUtil.show('Failed to pick files: $e', title: 'Error'.tr);
@@ -405,7 +404,7 @@ class UploadController extends GetxController {
         final supported = await ensureSupported();
         if (!supported) return;
       }
-      final dirPath = await FilePicker.platform.getDirectoryPath();
+      final dirPath = await FilePicker.getDirectoryPath();
       if (dirPath == null) return;
       await _addFolderToUpload(dirPath, targetDir);
     } catch (e) {

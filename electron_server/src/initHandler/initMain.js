@@ -79,25 +79,12 @@ module.exports = {
     const aiGpuPrefer = await tableConfig.getConfigByKey('ai_gpu_prefer');
     process.env.AI_GPU_PREFER = aiGpuPrefer === '0' ? '0' : '1';
 
-    // 启动OCR Worker 如果配置已开启
-    const aiOcrEnable = await tableConfig.getConfigByKey('ai_ocr_enable');
-    if (aiOcrEnable === '1') {
-      this.startOcrWorker();
-    }
-    // 启动人脸检测 Worker 如果配置已开启
-    const aiFaceEnable = await tableConfig.getConfigByKey('ai_face_enable');
-    if (aiFaceEnable === '1') {
-      this.startFaceWorker();
-    }
-    // 启动场景识别 Worker 如果配置已开启
-    const aiPlaceEnable = await tableConfig.getConfigByKey('ai_place_enable');
-    if (aiPlaceEnable === '1') {
-      this.startPlacesWorker();
-    }
-    const aiSimilarEnable = await tableConfig.getConfigByKey('ai_similar_enable');
-    if (aiSimilarEnable === '1') {
-      this.startSimilarWorker();
-    }
+    // 启动各 AI Worker：统一走 isAiWorkerEnabled（口径＝**只有显式 '1' 才算开**，见 workers.js）。
+    // ⚠️ 2026-10-17 P5：原先是 `=== '1'`，而「暂停后恢复」那条路把「缺行」当成开 ⇒ 两套口径。
+    if (await this.isAiWorkerEnabled('ai_ocr_enable')) this.startOcrWorker();
+    if (await this.isAiWorkerEnabled('ai_face_enable')) this.startFaceWorker();
+    if (await this.isAiWorkerEnabled('ai_place_enable')) this.startPlacesWorker();
+    if (await this.isAiWorkerEnabled('ai_similar_enable')) this.startSimilarWorker();
     // 检查是否支持 shell
     const isShellSupported = !!shell;
 

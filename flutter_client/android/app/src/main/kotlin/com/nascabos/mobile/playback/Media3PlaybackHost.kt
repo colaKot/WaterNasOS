@@ -46,6 +46,9 @@ object Media3PlaybackHost {
                     "positionMs" to position,
                     "durationMs" to duration,
                     "bufferedPositionMs" to buffered,
+                    // ⭐ 2026-10-19 真实画面尺寸：客户端算字幕避让黑边要用
+                    "videoWidth" to player.videoSize.width,
+                    "videoHeight" to player.videoSize.height,
                 ),
             )
         }

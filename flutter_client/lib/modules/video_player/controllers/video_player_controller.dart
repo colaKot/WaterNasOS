@@ -74,6 +74,12 @@ class PlayerController extends GetxController with WindowListener {
   /// 是否已初始化
   final RxBool isInitialized = false.obs;
 
+  /// 当前画面宽高比（拿不到就按 16:9）。字幕避让黑边时要按真实比例算。
+  double get videoAspectRatio {
+    final ar = playbackEngine.value?.value.aspectRatio ?? 0;
+    return (ar > 0.1 && ar.isFinite) ? ar : (16 / 9);
+  }
+
   /// 是否应挂载 [PlaybackVideoSurface]。
   /// Media3 须先创建 PlatformView 才能完成 openUrl，不能等 [isInitialized] 为 true。
   bool get shouldMountVideoSurface {
@@ -103,6 +109,11 @@ class PlayerController extends GetxController with WindowListener {
 
   /// 是否全屏
   final RxBool isFullscreen = false.obs;
+
+  /// ⭐ 2026-10-19 画面缩放：true = 铺满屏幕（裁掉溢出，四周不留黑边），
+  /// false = 适应（完整画面，留黑边）。手机全屏原来按原始比例居中，
+  /// 画面显得很小 ⇒ 默认改成铺满，可随时切回适应，选择记在本机。
+  final RxBool isVideoCover = true.obs;
 
   final RxBool isLandscape = false.obs;
 
@@ -334,6 +345,7 @@ class PlayerController extends GetxController with WindowListener {
     }
     if (playlist.isEmpty) return;
     await loadPlaybackEnginePreference();
+    await loadVideoScaleMode();
     await loadDefaultPlayQuality();
     await _initializePlayer(keepPosition: false);
   }

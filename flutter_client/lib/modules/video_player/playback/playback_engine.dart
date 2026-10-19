@@ -43,6 +43,10 @@ abstract class PlaybackEngine extends ChangeNotifier {
     String? sourcePath,
   });
 
+  /// 画面缩放：'zoom' = 铺满（裁掉溢出）/ 'fit' = 适应（留黑边）。
+  /// 桌面 / Web 由 Widget 侧缩放；原生内核在这里改自己的渲染视图。
+  Future<void> setVideoResizeMode(String mode) async {}
+
   /// 绑定原生 PlatformView（由 [PlaybackVideoSurface] 在创建后调用）。
   Future<void> attachNativeView(int viewId);
 

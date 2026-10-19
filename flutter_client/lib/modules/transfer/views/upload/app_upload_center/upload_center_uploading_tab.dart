@@ -8,6 +8,7 @@ import 'package:WaterNasOS/utils/toast_util.dart';
 import 'package:cross_file/cross_file.dart';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
@@ -248,19 +249,26 @@ class UploadCenterUploadingTab extends StatelessWidget {
       return;
     }
 
-    final res = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
+    final res = await FilePicker.pickFiles(
       type: FileType.any,
-      withData: false,
-      withReadStream: false,
     );
-    if (res == null) return;
+    // 注意：新 API 取消时返回空列表（旧 API 返回 null）
+    if (res.isEmpty) return;
 
     final files = <XFile>[];
-    for (final f in res.files) {
+    for (final f in res) {
       final pathStr = f.path?.trim() ?? '';
-      if (pathStr.isEmpty) continue;
-      files.add(XFile(pathStr, name: _pickPreferredUploadName(f)));
+      final name = _pickPreferredUploadName(f);
+      if (pathStr.isNotEmpty) {
+        files.add(XFile(pathStr, name: name));
+      } else {
+        // ⚠ web / blob 场景：PlatformFile.path 恒为 null（uri 不是 file://），
+        // 但它可以按需读出字节。这里必须走内存分支，否则会被下面的判断整条丢弃，
+        // 表现为「勾选完文件什么都没发生、也不报错」。
+        final bytes = await f.readAsBytes();
+        if (bytes.isEmpty) continue;
+        files.add(XFile.fromData(bytes, name: name));
+      }
     }
     await _enqueueAndConfirm(files, target);
   }
@@ -343,7 +351,7 @@ class UploadCenterUploadingTab extends StatelessWidget {
       return n;
     }
 
-    final id = (f.identifier ?? '').trim();
+    final id = f.uri.toString().trim();
     if (id.isNotEmpty) {
       final fromId = _extractNameFromIdentifier(id);
       if (fromId != null &&
@@ -606,7 +614,10 @@ class _SettingsCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (Platform.isIOS) ...[
+              // ⚠ 必须带 !kIsWeb：web 上访问 Platform.isIOS 会抛
+              // "Unsupported operation: Platform._operatingSystem"，
+              // 而这里是 _SettingsCard 的 build 路径 ⇒ 整个上传页会渲染成灰块。
+              if (!kIsWeb && Platform.isIOS) ...[
                 Divider(height: 1, color: theme.dividerColor),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 10),

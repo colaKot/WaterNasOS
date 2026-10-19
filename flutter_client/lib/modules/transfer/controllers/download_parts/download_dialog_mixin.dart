@@ -165,7 +165,7 @@ mixin DownloadDialogMixin on DownloadStateMixin {
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () async {
-                    final dir = await FilePicker.platform.getDirectoryPath();
+                    final dir = await FilePicker.getDirectoryPath();
                     if (dir != null) {
                       defaultPathRx.value = dir;
                     }

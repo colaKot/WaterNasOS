@@ -28,6 +28,11 @@ class PhotoLeftMenu extends StatelessWidget {
         expanded: controller.isAllExpanded,
         items: [
           TwoLevelSideMenuItem(
+            title: 'photo_home_title'.tr,
+            key: 'home',
+            icon: Icons.home_outlined,
+          ),
+          TwoLevelSideMenuItem(
             title: 'photo_menu_all_timeline'.tr,
             key: 'all.timeline',
             icon: Icons.timeline_outlined,
@@ -36,11 +41,6 @@ class PhotoLeftMenu extends StatelessWidget {
             title: 'photo_menu_all_footprint'.tr,
             key: 'all.footprint',
             icon: Icons.place_outlined,
-          ),
-          TwoLevelSideMenuItem(
-            title: 'photo_menu_all_the_day'.tr,
-            key: 'all.the_day',
-            icon: Icons.calendar_today,
           ),
           TwoLevelSideMenuItem(
             title: 'favorites'.tr,
@@ -56,6 +56,36 @@ class PhotoLeftMenu extends StatelessWidget {
             title: 'recycle_bin'.tr,
             key: 'recycle_bin',
             icon: Icons.delete_sweep_outlined,
+          ),
+        ],
+      ),
+      // ⭐ 2026-10-19 回忆域：记忆 / 每日一帧 / 票夹 / 年度总结
+      //    每日一帧原来是「智能发现」里的第一个标签（列表形态），现在独立成页（大图网格），
+      //    紧跟在记忆下面 —— 两者都是「被记住的那几天」，放在一起才顺手。
+      SideMenuTwoLevelGroup(
+        title: 'photo_menu_recall'.tr,
+        icon: Icons.auto_stories_outlined,
+        expanded: controller.isMemoryExpanded,
+        items: [
+          TwoLevelSideMenuItem(
+            title: 'photo_memory_title'.tr,
+            key: 'memory',
+            icon: Icons.auto_stories_outlined,
+          ),
+          TwoLevelSideMenuItem(
+            title: 'photo_day_frame_title'.tr,
+            key: 'memory.day_frame',
+            icon: Icons.auto_awesome_mosaic_outlined,
+          ),
+          TwoLevelSideMenuItem(
+            title: 'photo_tickets_title'.tr,
+            key: 'tickets',
+            icon: Icons.receipt_long_outlined,
+          ),
+          TwoLevelSideMenuItem(
+            title: 'photo_annual_title'.tr,
+            key: 'annual',
+            icon: Icons.bar_chart,
           ),
         ],
       ),
@@ -96,14 +126,9 @@ class PhotoLeftMenu extends StatelessWidget {
             key: 'ai.scene',
             icon: Icons.landscape_outlined,
           ),
-          // ⭐ 2026-10-16 P1/P2 智能发现：一日一帧 / 票据行程 / 记忆 / 重复照片 /
-          //            年度报告 / 旅程回放 / 模型目录 —— 全部只读聚合
-          if (isAdmin)
-            TwoLevelSideMenuItem(
-              title: 'photo_menu_ai_insight'.tr,
-              key: 'ai.insight',
-              icon: Icons.insights_outlined,
-            ),
+          // ⭐ 2026-10-19：「智能发现」整组入口撤掉 —— 每日一帧去回忆、票夹与年度总结
+          //    已经在回忆域、重复照片走「相似照片」、模型目录归设置，剩下的旅程回放暂时没人用，
+          //    代码留在 PhotoInsightView 里不删，等它长出真正的价值再单独给入口。
           if (isAdmin)
             TwoLevelSideMenuItem(
               title: 'photo_menu_ai_similar'.tr,
@@ -145,6 +170,13 @@ class PhotoLeftMenu extends StatelessWidget {
               key: 'settings.ai',
               icon: Icons.tag_faces_outlined,
             ),
+          // ⭐ 2026-10-19：模型目录从「智能发现」挪进设置（只读：模型包 / 文件数 / 占用）
+          if (isSuperAdmin)
+            TwoLevelSideMenuItem(
+              title: 'photo_models_title'.tr,
+              key: 'settings.models',
+              icon: Icons.memory,
+            ),
         ],
       ),
     ];
@@ -157,6 +189,43 @@ class PhotoLeftMenu extends StatelessWidget {
       toggleExpandTooltip: 'photo_sidebar_expand'.tr,
       toggleCollapseTooltip: 'photo_sidebar_collapse'.tr,
       headerTrailing: Obx(() {
+        // ⭐ 2026-10-19 子页面在侧栏顶部露出「返回时间轴」，不再只能靠窗口 X。
+        //    根页面（首页/时间轴）仍显示照片总数。
+        if (!controller.isRootPageNow) {
+          return Align(
+            alignment: Alignment.centerRight,
+            child: Tooltip(
+              message: 'back'.tr,
+              child: InkWell(
+                onTap: controller.backToTimeline,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.arrow_back,
+                        size: 15,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        'photo_menu_all_timeline'.tr,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
         return Text(
           "total_count".trParams({
             'count': controller.totalCount.value.toString(),

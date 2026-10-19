@@ -141,6 +141,23 @@ class PlacesController {
    * ⭐ 2026-10-16 P0-4 搜索联想：人物 / 场景 / 活动 / 相机 / 文件名 / OCR / 年份 聚合建议。
    * 计数一律按当前用户可见范围重算（不做角色例外）。
    */
+  /** ⭐ 2026-10-18 搜索浮层推荐词 */
+  async hot(req, res) {
+    try {
+      const validPathsRaw = await photoTimeLineService.getValidPaths(req.user);
+      const service = new PlacesService(req.dbPhoto);
+      const result = await service.hotSearches({
+        ...(req.body || {}),
+        locale: getUserLanguage(req),
+        validPaths: (validPathsRaw || []).map(x => (x ? String(x) : '')).filter(Boolean),
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('hotSearches error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  }
+
   async suggest(req, res) {
     try {
       const body = req.body || {};

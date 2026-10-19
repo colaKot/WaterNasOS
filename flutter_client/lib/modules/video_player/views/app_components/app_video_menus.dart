@@ -402,8 +402,7 @@ class AppVideoMenus {
                 ),
                 onTap: () async {
                   Get.back();
-                  final result = await FilePicker.platform.pickFiles(
-                    allowMultiple: false,
+                  final result = await FilePicker.pickFiles(
                     type: FileType.custom,
                     allowedExtensions: const [
                       'srt',
@@ -413,11 +412,8 @@ class AppVideoMenus {
                       'sub',
                       'mks',
                     ],
-                    withData: false,
                   );
-                  final file = (result != null && result.files.isNotEmpty)
-                      ? result.files.first
-                      : null;
+                  final file = result.isNotEmpty ? result.first : null;
                   if (file == null) return;
                   final localPath = file.path?.trim() ?? '';
                   if (localPath.isEmpty) {
@@ -750,6 +746,22 @@ class AppVideoMenus {
                     Get.back();
                     showLoopModeMenu(context, controller);
                   }),
+                  // ⭐ 2026-10-19 画面铺满 / 适应：全屏看着小就是这里切
+                  _buildMenuItem(
+                    controller.isVideoCover.value
+                        ? Icons.fit_screen
+                        : Icons.aspect_ratio,
+                    'player_aspect_ratio'.tr,
+                    () {
+                      Get.back();
+                      controller.toggleVideoScaleMode();
+                      ToastUtil.show(
+                        controller.isVideoCover.value
+                            ? 'player_fit_cover'.tr
+                            : 'player_fit_contain'.tr,
+                      );
+                    },
+                  ),
                   if (controller.canUseMedia3Engine)
                     _buildMenuItem(
                       Icons.memory,

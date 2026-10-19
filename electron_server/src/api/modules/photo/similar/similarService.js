@@ -1,5 +1,6 @@
 const path = require('path');
 const config = require('../../../../config/config');
+const SimilarRepository = require('../../../../repositories/similarRepository');
 
 function parseCount(row) {
   if (!row) return 0;
@@ -33,9 +34,17 @@ function rawShowExt(item) {
   return '';
 }
 
+/**
+ * 相似（重复候选）组业务层。
+ *
+ * ⭐ 2026-10-17 Repository 层试点：SQL 全部下沉到 `src/repositories/similarRepository.js`，
+ *    本层只留下「校验 → 组装返回结构」。
+ *    好处是过滤口径（is_file / in_trash / type）只在一处定义，不会再漂。
+ */
 class SimilarService {
   constructor(knex) {
     this.knex = knex;
+    this.repo = new SimilarRepository(knex);
   }
 
   async listSimilarGroups(params = {}) {
@@ -43,18 +52,8 @@ class SimilarService {
     const pageSize = Math.max(1, Math.min(200, Number(params.pageSize ?? params.page_size) || 20));
     const offset = (page - 1) * pageSize;
 
-    const totalRow = await this.knex('photo_similar')
-      .count({ count: '*' })
-      .first()
-      .catch(() => null);
-    const total = parseCount(totalRow);
-
-    const rows = await this.knex('photo_similar')
-      .select('id', 'index_id', 'similar_file_hash', 'create_time')
-      .orderBy('id', 'desc')
-      .limit(pageSize)
-      .offset(offset)
-      .catch(() => []);
+    const total = parseCount(await this.repo.countGroups());
+    const rows = await this.repo.listGroups({ limit: pageSize, offset });
 
     const items = [];
     for (const r of rows) {
@@ -63,26 +62,13 @@ class SimilarService {
 
       const fileHashes = parseFileHashArray(r && r.similar_file_hash);
       if (fileHashes.length === 0) {
-        await this.knex('photo_similar')
-          .where({ id })
-          .del()
-          .catch(() => {});
+        await this.repo.deleteGroup(id);
         continue;
       }
 
-      const photoRows = await this.knex('photo_index')
-        .whereIn('file_hash', fileHashes)
-        .andWhere({ is_file: 1, in_trash: 0, type: 1 })
-        .select('id', 'path', 'filename', 'size', 'is_lvp', 'type', 'width', 'height', 'original_date', 'original_time', 'duration', 'file_hash', 'live_filename', 'raw_filename', 'ext')
-        .orderBy('original_time', 'desc')
-        .orderBy('id', 'desc')
-        .catch(() => []);
-
+      const photoRows = await this.repo.loadPhotosByHashes(fileHashes);
       if (!photoRows || photoRows.length < 2) {
-        await this.knex('photo_similar')
-          .where({ id })
-          .del()
-          .catch(() => {});
+        await this.repo.deleteGroup(id);
         continue;
       }
 
@@ -115,30 +101,14 @@ class SimilarService {
   async batchDeleteSimilarRecords(ids = []) {
     const cleanIds = (Array.isArray(ids) ? ids : []).map(v => Number(v)).filter(v => Number.isFinite(v) && v > 0);
     if (cleanIds.length === 0) return 0;
-    const deleted = await this.knex('photo_similar')
-      .whereIn('id', cleanIds)
-      .del()
-      .catch(() => 0);
-    return Number(deleted) || 0;
+    return Number(await this.repo.deleteGroupsByIds(cleanIds)) || 0;
   }
 
   async resetSimilarScan() {
     await this.knex.transaction(async trx => {
-      await trx('photo_similar')
-        .del()
-        .catch(() => {});
-      await trx('photo_index')
-        .where({ type: 1, is_file: 1, in_trash: 0 })
-        .whereNotNull('phash')
-        .andWhere('phash', '!=', '')
-        .update({ gen_phash: 1 })
-        .catch(() => {});
-
-      await trx('photo_index')
-        .where({ type: 1, is_file: 1, in_trash: 0 })
-        .where(builder => builder.whereNull('phash').orWhere('phash', ''))
-        .update({ gen_phash: 0 })
-        .catch(() => {});
+      await this.repo.clearAllGroups(trx);
+      await this.repo.markAllPhashPending(trx);
+      await this.repo.markMissingPhashPending(trx);
     });
     return true;
   }

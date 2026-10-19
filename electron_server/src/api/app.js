@@ -91,7 +91,7 @@ app.use(cookieParser()); // 使用cookie-parser中间件
 app.use(initI18nMiddleware()); // 使用i18n中间件
 app.use(require('./middleware/decryptMiddleware')); // 参数解密中间件
 
-// 健康检查路由
+
 app.use('/health', (req, res) => {
   res.status(200).json({
     success: true,
@@ -125,6 +125,13 @@ app.use((req, res, next) => {
 
   next();
 });
+
+// 健康检查路由
+// ⭐ 2026-10-17 OpenAPI 单一真源：从**真实挂载的路由表**自动产出接口清单。
+// 现在能提供：①接口清单（方法/路径）②鉴权覆盖审计（列出没挂 authenticateJWT 的接口）
+// ③未来生成 Dart/TS 客户端的输入。请求/响应 schema 用 x-schema-status:todo 显式标出，不假装已有。
+// ⚠️ 必须挂在静态资源兜底之前，否则会被 express.static 吞掉。
+app.get('/api/openapi.json', authenticateJWT, require('./openapi').openApiHandler);
 
 //静态资源映射
 app.use(`/wallpaper`, authenticateJWT, express.static(path.join(config.appRootPath, 'web', 'wallpaper'), { dotfiles: 'deny' }));
@@ -336,6 +343,32 @@ app.use((req, res) => {
 
 // 错误处理中间件
 app.use((err, req, res, next) => {
+  // ⭐ 2026-10-18：请求体本身有问题不是服务端故障。
+  //   body-parser 抛的错误带 type：entity.parse.failed(畸形 JSON) / entity.too.large(超限) /
+  //   encoding.unsupported 等，原来一律 500 + ERROR 日志，既误导排查也污染错误率。
+  const errType = err && err.type ? String(err.type) : '';
+  if (errType === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      message: 'Malformed JSON body',
+      code: 'INVALID_JSON_BODY',
+    });
+  }
+  if (errType === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      message: 'Request body too large',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+  }
+  if (errType === 'encoding.unsupported' || errType === 'charset.unsupported') {
+    return res.status(415).json({
+      success: false,
+      message: 'Unsupported content encoding',
+      code: 'UNSUPPORTED_ENCODING',
+    });
+  }
+
   Logger.error('Express error:', err, {
     url: req.url,
     method: req.method,

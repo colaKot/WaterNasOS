@@ -27,9 +27,15 @@ rem     且 exe 的版本资源还是 electron 出厂值（FileDescription=Elect
 rem     导致 Windows 任务管理器「进程」页显示的应用名是 Electron 而不是 WaterNasOSServer。
 rem     这里在构建成功后用 rcedit 把 libs\logo.ico 和版本字符串补写进 win-unpacked 下的主 exe。
 if "%RC%"=="0" call :set_icon
+rem --- 瘦身：删掉 onnxruntime 的非 win32-x64 二进制与无引用的 echarts（约 170M）
+if "%RC%"=="0" call :slim
 echo ==== EXITCODE=%RC% %DATE% %TIME% ==== >> "%LOG%"
 rem ⚠️ 必须 exit /b 带出真实退出码（见 build_web.bat 同处注释）。
 endlocal & exit /b %RC%
+
+:slim
+python "G://work//nascab//tool//_slim_server_pack.py" %OUT% >> "%LOG%" 2>&1
+goto :eof
 
 :set_icon
 set RCEDIT=node_modules\electron-winstaller\vendor\rcedit.exe

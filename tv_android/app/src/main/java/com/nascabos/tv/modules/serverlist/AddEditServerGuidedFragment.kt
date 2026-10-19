@@ -270,6 +270,8 @@ class AddEditServerGuidedFragment : GuidedStepSupportFragment() {
                 "save: applyLoginResult updated serverId='${updated.serverId.trim()}' url='${updated.serverUrl.trim()}' inputUrl='${updated.userInputUrl.trim()}' user='${maskUser(updated.username)}' passLen=${updated.password.length}",
             )
             viewModel.upsertNow(updated)
+            // 保存的账号密码可再次用于启动自动登录
+            MainActivity.setAutoLoginEnabled(requireContext(), true)
             ApiController.setBaseUrl(baseUrl)
             ApiController.setTokens(
                 updated.accessToken,

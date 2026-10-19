@@ -15,12 +15,17 @@ class AiSceneItem {
   final bool isHide;
   final AiSceneCover? cover;
 
+  /// ⭐ 2026-10-18 大类（food/travel/stay/nature/architecture/sport/pet/people/work），
+  /// 空串 = 未归类（界面上归到「其他」）。由服务端 photoCategoryUtil 给。
+  final String category;
+
   AiSceneItem({
     required this.placeName,
     required this.placeNameRaw,
     required this.photoCount,
     required this.isHide,
     this.cover,
+    this.category = '',
   });
 
   factory AiSceneItem.fromJson(Map<String, dynamic> json) {
@@ -37,6 +42,7 @@ class AiSceneItem {
           (json['photoCount'] as num?)?.toInt() ??
           0,
       isHide: (json['is_hide'] as num?)?.toInt() == 1,
+      category: json['category']?.toString() ?? '',
       cover: coverRaw is Map
           ? AiSceneCover.fromJson(coverRaw.cast<String, dynamic>())
           : null,

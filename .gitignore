@@ -113,3 +113,7 @@ flutter_client/tool/
 # 本地临时产物（2026-10-16）：MCP 明文令牌、输出稿 —— 禁止入库
 /lingpai.txt
 /outputs/
+
+# 本地整包输出目录（build_server_pack.bat 的产物，体积 2GB+）
+/electron_server/d4*/
+/electron_server/dist_v*/

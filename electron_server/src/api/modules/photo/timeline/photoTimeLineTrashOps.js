@@ -387,6 +387,38 @@ function createTrashOps({ getKnex, getValidPaths, indexFields }) {
   }
 
   /**
+   * ⭐ 2026-10-17 回滚「重复清理」合并过的元数据。
+   * 只删**自己加进去的那些**（按 (file_hash, 业务键) 精确定位），不做范围删除，
+   * 避免把用户后来自己加的东西一起干掉。
+   * @returns {Promise<number>} 回滚的条目数
+   */
+  async function revertMergedMetadata(knex, merge) {
+    let n = 0;
+    for (const f of Array.isArray(merge.favorite) ? merge.favorite : []) {
+      n += await knex('photo_favorite').where({ uid: Number(f.uid) || 0, file_hash: String(f.file_hash) }).del().catch(() => 0);
+    }
+    for (const a of Array.isArray(merge.album) ? merge.album : []) {
+      n += await knex('photo_album_index').where({ album_id: Number(a.album_id) || 0, file_hash: String(a.file_hash) }).del().catch(() => 0);
+    }
+    for (const p of Array.isArray(merge.people) ? merge.people : []) {
+      n += await knex('photo_face2filehash').where({ file_hash: String(p.file_hash), face_id: Number(p.face_id) || 0 }).del().catch(() => 0);
+    }
+    for (const p of Array.isArray(merge.places) ? merge.places : []) {
+      n += await knex('photo_places2filehash').where({ file_hash: String(p.file_hash), place_name: String(p.place_name) }).del().catch(() => 0);
+    }
+    for (const a of Array.isArray(merge.activities) ? merge.activities : []) {
+      n += await knex('photo_activity2filehash').where({ file_hash: String(a.file_hash), act_key: String(a.act_key) }).del().catch(() => 0);
+    }
+    if (merge.location && Number(merge.location.id) > 0) {
+      // 位置无法知道「原来是多少」⇒ 只能回到 0（无坐标）。这是可接受的降级：
+      // 合并前那次判定要求保留的那张**本来就没有坐标**。
+      await knex('photo_index').where({ id: Number(merge.location.id) }).update({ latitude: 0, longitude: 0 }).catch(() => {});
+      n += 1;
+    }
+    return n;
+  }
+
+  /**
    * ⭐ 2026-10-16 P0-6 撤销：按 undo_data 回滚索引层。
    * 只认 status='executed' + 未过期 + 本人（或管理员）；重复撤销直接拒绝，不做幂等吞掉
    * —— 让用户明确知道「这次没生效」比悄悄成功更安全。
@@ -423,9 +455,20 @@ function createTrashOps({ getKnex, getValidPaths, indexFields }) {
       throw err;
     }
 
+    // ⭐ 2026-10-17 两种 undo_data 形状都要认：
+    //   数组  = 老的「批量删除」（只含 {id, in_trash}）
+    //   对象  = 新的「重复清理合并」{ trashed: [...], merge: {...} }
+    //   ⛔ 老形状的行为一个字都不能变。
     let undoList = [];
+    let mergeUndo = null;
     try {
-      undoList = JSON.parse(String(row.undo_data || '[]'));
+      const parsed = JSON.parse(String(row.undo_data || '[]'));
+      if (Array.isArray(parsed)) {
+        undoList = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        undoList = Array.isArray(parsed.trashed) ? parsed.trashed : [];
+        mergeUndo = parsed.merge && typeof parsed.merge === 'object' ? parsed.merge : null;
+      }
     } catch (_) {
       undoList = [];
     }
@@ -439,12 +482,23 @@ function createTrashOps({ getKnex, getValidPaths, indexFields }) {
       await knex('photo_index').whereIn('id', restoreOutOfTrash).update({ in_trash: 0, in_trash_time: null });
     }
 
+    // ⭐ 2026-10-17 合并过的元数据也要回滚（把「搬过去的」再删掉 / 复原坐标）
+    let mergeReverted = 0;
+    if (mergeUndo) {
+      try {
+        mergeReverted = await revertMergedMetadata(knex, mergeUndo);
+      } catch (err) {
+        // 元数据回滚失败不能让回收站回滚也失败：明确的日志 + 继续
+        Logger.error('undo merge revert failed:', err);
+      }
+    }
+
     await knex('photo_operation_log')
       .where({ id })
       .update({ status: 'undone', undone_time: new Date() })
       .catch(() => {});
 
-    return { undone: undoList.length, operationId: id };
+    return { undone: undoList.length, operationId: id, mergeReverted };
   }
 
   return {

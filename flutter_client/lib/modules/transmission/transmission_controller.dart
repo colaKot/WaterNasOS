@@ -583,11 +583,7 @@ class TransmissionController extends GetxController {
           paused: paused,
         );
       } else if (torrentFile != null) {
-        final bytes = torrentFile.bytes ??
-            await XFile(
-              torrentFile.path ?? '',
-              name: torrentFile.name,
-            ).readAsBytes();
+        final bytes = await torrentFile.readAsBytes();
         final metainfo = base64Encode(bytes);
         res = await _api.addTorrent(
           metainfo: metainfo,

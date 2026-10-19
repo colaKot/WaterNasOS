@@ -15,6 +15,8 @@ class PcPhotoTimelineView extends GetView<PhotoTimelineController> {
   final int? smartAlbumId;
   final int? faceId;
   final String? placeName;
+  /// ⭐ 2026-10-19 首页搜索栏跳过来时带的搜索词（只作用于首次创建控制器）
+  final String? initialSearch;
   final bool loadTheDay;
   final String? geohash;
 
@@ -32,6 +34,7 @@ class PcPhotoTimelineView extends GetView<PhotoTimelineController> {
     this.smartAlbumId,
     this.faceId,
     this.placeName,
+    this.initialSearch,
     this.loadTheDay = false,
     this.geohash,
     this.precisionOverride = 0,
@@ -70,6 +73,7 @@ class PcPhotoTimelineView extends GetView<PhotoTimelineController> {
         initialSmartAlbumId: smartAlbumId,
         initialFaceId: faceId,
         initialPlaceName: placeName,
+        initialSearch: initialSearch,
         initialLoadTheDay: loadTheDay,
         initialGeohash: geohash,
         precisionOverride: precisionOverride,

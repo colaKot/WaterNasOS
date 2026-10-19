@@ -300,7 +300,9 @@ const MT_HIDDEN = 768;
 // ⭐ 内存是硬成本：实测 fp32 塔常驻 **+437MB RSS**（96→522MB），而 API 进程要服务所有模块。
 //    所以搜完一段空闲就**主动卸载**（释放 ONNX 会话、把内存交还），下次查询再懒加载（~0.5s）。
 //    ⛔ 不做常驻：NAS 上为了搜一次照片长期多占 400MB 不划算。可用 MT_IDLE_UNLOAD_MS 调整（默认 10 分钟）。
-const MT_IDLE_UNLOAD_MS = Math.max(1000, Number(process.env.MT_IDLE_UNLOAD_MS ?? 600000));
+// ⭐ 2026-10-17 默认从 10 分钟收到 5 分钟（对齐 Immich 的 model_ttl 默认 300s）：
+//    重载代价只有 ~0.5s，而常驻成本是 +437MB ⇒ 早点还回去更划算。
+const MT_IDLE_UNLOAD_MS = Math.max(1000, Number(process.env.MT_IDLE_UNLOAD_MS ?? 300000));
 let _mtLastUse = 0;
 
 let _mtAvailable = null;
@@ -473,6 +475,41 @@ async function ensureMultilingualReady() {
  * 把一句中文编码成 512 维单位向量（CLIP 图像空间的句子嵌入）。
  * @returns {Promise<Float32Array|null>} 不可用时返回 null（调用方必须容忍）
  */
+/**
+ * ⭐ 2026-10-17 查询嵌入 LRU 缓存（设计借鉴 Immich 的服务端嵌入缓存形态）。
+ * 同一句搜索会被翻页 / 连续搜索反复问到，命中一次就省一次塔前向。
+ * 只缓存**文本**嵌入（很小），不缓存图像。
+ */
+const MT_CACHE_MAX = Math.max(0, Number(process.env.MT_EMB_CACHE_MAX ?? 200));
+const _mtEmbCache = new Map(); // text -> Float32Array
+let _mtCacheHit = 0;
+let _mtCacheMiss = 0;
+
+function _mtCacheGet(text) {
+  if (MT_CACHE_MAX <= 0) return null;
+  const hit = _mtEmbCache.get(text);
+  if (!hit) return null;
+  // LRU：命中后挪到队尾（Map 保持插入序）
+  _mtEmbCache.delete(text);
+  _mtEmbCache.set(text, hit);
+  _mtCacheHit += 1;
+  return hit;
+}
+
+function _mtCacheSet(text, vec) {
+  if (MT_CACHE_MAX <= 0 || !vec) return;
+  _mtEmbCache.set(text, vec);
+  while (_mtEmbCache.size > MT_CACHE_MAX) {
+    const oldest = _mtEmbCache.keys().next();
+    if (oldest.done) break;
+    _mtEmbCache.delete(oldest.value);
+  }
+  _mtCacheMiss += 1;
+  if ((_mtCacheHit + _mtCacheMiss) % 100 === 0) {
+    Logger.info(`[placesQuery] 查询嵌入缓存 hit=${_mtCacheHit} miss=${_mtCacheMiss} size=${_mtEmbCache.size}`);
+  }
+}
+
 async function encodeMultilingual(text) {
   const ready = await ensureMultilingualReady();
   if (!ready) return null;
@@ -480,6 +517,8 @@ async function encodeMultilingual(text) {
   _scheduleIdleUnload();
   const raw = String(text || '').trim();
   if (!raw) return null;
+  const cachedEmb = _mtCacheGet(raw);
+  if (cachedEmb) return cachedEmb;
   try {
     const ort = require('onnxruntime-node');
     const ids = _mtEncodeIds(raw);
@@ -517,6 +556,7 @@ async function encodeMultilingual(text) {
     for (let i = 0; i < MT_DIM; i += 1) norm += vec[i] * vec[i];
     norm = Math.sqrt(norm) || 1;
     for (let i = 0; i < MT_DIM; i += 1) vec[i] /= norm;
+    _mtCacheSet(raw, vec);
     return vec;
   } catch (err) {
     Logger.warn(`[placesQuery] 多语言编码失败（本条查询退回词表路线）：${err && err.message ? err.message : err}`);

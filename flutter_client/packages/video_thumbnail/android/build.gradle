@@ -1,0 +1,39 @@
+group 'xyz.justsoft.video_thumbnail'
+version '1.0-SNAPSHOT'
+
+// fork 自 pub 上的 video_thumbnail 0.5.6（该包已停更，最后发布 2019 年）。
+// 只改构建脚本，Dart 与原生代码保持原样，API 完全不变。
+//
+// 原版 build.gradle 的两处问题（会在 Gradle 9 / AGP 9 下直接失败）：
+//   1) buildscript 与 rootProject.allprojects 里共有两处 jcenter()。
+//      Gradle 9 已彻底移除该方法 ⇒ 报 "Could not find method jcenter()"。
+//   2) buildscript 里硬编码 classpath 'com.android.tools.build:gradle:4.1.0'，
+//      等于把插件自己的 AGP 钉死在 4.1。宿主升 AGP 后必然冲突，且会让
+//      ':video_thumbnail' 找不到 com.android.library 插件。
+// 现在统一使用宿主工程提供的 AGP，仓库改用 google() + mavenCentral()。
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    // 原版是 33。AGP 9 起 AAR 元数据检查更严：依赖链里的
+    // androidx.fragment 1.7.1 / window 1.2.0 / lifecycle 2.7.0 等都要求使用者
+    // 至少 compile against API 34，否则 checkReleaseAarMetadata 直接失败。
+    // 这里对齐主工程（Flutter 3.47 的 compileSdkVersion = 36）。
+    compileSdkVersion 36
+    namespace 'xyz.justsoft.video_thumbnail'
+
+    defaultConfig {
+        minSdkVersion 16
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+}

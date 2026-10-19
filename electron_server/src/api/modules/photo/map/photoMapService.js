@@ -482,7 +482,8 @@ class PhotoMapService {
           rejectedByDistance = true;
           break;
         }
-        if (localName && enName && localName !== enName) return `${localName} ${enName}`;
+        // ⭐ 2026-10-19 只显示一种语言：本地名（中文）有就不拼英文，
+        // 否则「广州 Guangzhou」这种双写在界面上很怪；没有本地名才退回英文名。
         return localName || enName;
       }
       // 这一级最近的一条都太远 ⇒ 更粗的格只会更远，不必再回退

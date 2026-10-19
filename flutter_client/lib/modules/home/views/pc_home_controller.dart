@@ -17,6 +17,7 @@ import '../../gallery/views/custom_gallery.dart';
 import '../../monitor/monitor_view.dart';
 import '../../transfer/views/task_center_view.dart';
 import '../../photo/photo_main/view/photo_home_view.dart';
+import '../../photo/photo_main/controller/photo_home_controller.dart';
 import '../../video/video_main/view/video_main_view.dart';
 import '../../book/book_main/view/book_main_view.dart';
 import '../../music/music_main/view/music_main_view.dart';
@@ -542,6 +543,11 @@ class PcHomeController extends GetxController {
   }
 
   void closeApp(String app) {
+    // ⭐ 2026-10-19 相册分层关闭：子页面（足迹/相册/AI/回忆/设置…）按 X 只回时间轴，
+    // 只有「首页」和「时间轴」这两个根层级才真的关窗。
+    if (app == 'photo' && Get.isRegistered<PhotoHomeController>()) {
+      if (Get.find<PhotoHomeController>().interceptWindowClose()) return;
+    }
     if (app.startsWith('editor_')) {
       if (Get.isRegistered<EditorSessionController>(tag: app)) {
         Get.delete<EditorSessionController>(tag: app, force: true);

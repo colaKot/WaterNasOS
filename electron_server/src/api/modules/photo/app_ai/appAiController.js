@@ -3,6 +3,7 @@ const { getUserLanguage } = require('../../../../utils/i18nUtil');
 const AppAiService = require('./appAiService');
 const photoTimeLineService = require('../timeline/photoTimeLineService');
 const userUtil = require('../../../../utils/userUtil');
+const Logger = require('../../../../utils/logger');
 
 class AppAiController {
   async overview(req, res) {
@@ -34,10 +35,14 @@ class AppAiController {
 
   async _scopeParams(req) {
     const params = { ...(req.body || {}) };
-    if (!userUtil.isAdmin(req.user)) {
-      const validPathsRaw = await photoTimeLineService.getValidPaths(req.user);
-      params.validPaths = (validPathsRaw || []).map(x => (x ? String(x) : '')).filter(Boolean);
-    }
+    // ⭐⭐ 2026-10-17 隐私修复（实测越界 187 处）：原实现是
+    //   `if (!userUtil.isAdmin(req.user))` —— 管理员**不传** validPaths ⇒
+    //   AppAiService._scope() 看 hasScope=false ⇒ 不加路径过滤 ⇒ 直接查全库。
+    //   于是超管打开「回忆集 / 票根 / 重复照片清理」能看到另一个账号的照片：
+    //   duplicates 100 条 / tickets 53 条 / memories 34 条均属于另一个用户。
+    //   铁律：可见性零角色例外（超管也只看自己的源），这里不做任何角色判断。
+    const validPathsRaw = await photoTimeLineService.getValidPaths(req.user);
+    params.validPaths = (validPathsRaw || []).map(x => (x ? String(x) : '')).filter(Boolean);
     return params;
   }
 
@@ -51,6 +56,31 @@ class AppAiController {
       Logger.error('timeCompare error', err);
       const code = err && err.statusCode ? Number(err.statusCode) : 500;
       return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  }
+
+  /** ⭐⭐ 2026-10-18 相册 AI 问答（配了模型走模型，没配走本地规则） */
+  async ask(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const result = await service.ask(await this._scopeParams(req));
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('ask error', err);
+      const code = err && err.statusCode ? Number(err.statusCode) : 500;
+      return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  }
+
+  /** ⭐ 2026-10-18 相册首页看板（我的照片 / 拍摄时光 / 足迹 / 人物） */
+  async homeSummary(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const result = await service.homeSummary(await this._scopeParams(req));
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('homeSummary error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }
   }
 
@@ -84,11 +114,65 @@ class AppAiController {
       const service = new AppAiService(req.dbPhoto);
       const params = await this._scopeParams(req);
       params.uid = req.user && req.user.id ? Number(req.user.id) : 0;
+      // ⭐ 2026-10-19 记忆卡片的「地点」要反查 geonames（独立库）：
+      // 和 chapter_book 同一口径，dbGeo + 用户语言都必须给，否则 place 恒为空。
+      params.dbGeo = req.dbGeo;
+      params.locale = params.locale || getUserLanguage(req);
       const result = await service.memoryCandidates(params);
       return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
     } catch (err) {
       Logger.error('memories error', err);
       return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  }
+
+  /** ⭐ 2026-10-19 记忆详情：某一天某一簇的全部照片 */
+  async memoryPhotos(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const params = await this._scopeParams(req);
+      params.uid = req.user && req.user.id ? Number(req.user.id) : 0;
+      const result = await service.memoryPhotos(params);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('memoryPhotos error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  }
+
+  /** ⭐ 2026-10-19 记忆详情：把选中的照片「移出记忆」（只改记忆，不删原图） */
+  async excludeMemoryPhotos(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const body = req.body || {};
+      const params = await this._scopeParams(req);
+      const result = await service.excludeMemoryPhotos({
+        ...params,
+        ...body,
+        uid: req.user && req.user.id ? Number(req.user.id) : 0,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('excludeMemoryPhotos error', err);
+      const code = err && err.statusCode ? Number(err.statusCode) : 500;
+      return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  }
+
+  /** ⭐ 2026-10-19 人生章节「书本」：某一年的每一天 */
+  async chapterBook(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const params = await this._scopeParams(req);
+      params.uid = req.user && req.user.id ? Number(req.user.id) : 0;
+      // 地名反查走 geonames（独立库），必须把 dbGeo 传进去
+      params.dbGeo = req.dbGeo;
+      const result = await service.chapterBook(params);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('chapterBook error', err);
+      const code = err && err.statusCode ? Number(err.statusCode) : 500;
+      return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
     }
   }
 
@@ -106,6 +190,39 @@ class AppAiController {
       Logger.error('saveMemory error', err);
       const code = err && err.statusCode ? Number(err.statusCode) : 500;
       return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  }
+
+  /** ⭐ 2026-10-18 记忆：忽略候选（不再推荐，但不删照片） */
+  async ignoreMemory(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const body = req.body || {};
+      const result = await service.ignoreMemory({
+        ...body,
+        uid: req.user && req.user.id ? Number(req.user.id) : 0,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('ignoreMemory error', err);
+      const code = err && err.statusCode ? Number(err.statusCode) : 500;
+      return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  }
+
+  /** ⭐ 2026-10-18 记忆：把忽略的候选捡回来 */
+  async restoreIgnored(req, res) {
+    try {
+      const service = new AppAiService(req.dbPhoto);
+      const body = req.body || {};
+      const result = await service.restoreIgnored({
+        ...body,
+        uid: req.user && req.user.id ? Number(req.user.id) : 0,
+      });
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('restoreIgnored error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }
   }
 
@@ -283,6 +400,40 @@ class AppAiController {
       return ResponseUtil.error(req, res, 'common.ERROR', 500);
     }
   }
+  /**
+   * ⭐ 2026-10-17 重复清理：把待删那几张的元数据并到保留的那张，然后送回收站。
+   * ⚠️ 写成**箭头类字段**而不是普通方法 —— 普通方法一旦被路由裸引用就会丢 `this`
+   *   （这次就是踩了这个坑，见 photoRouter 里 7 个 /app_ai/* 的修复）。
+   */
+  resolveDuplicates = async (req, res) => {
+    try {
+      const params = await this._scopeParams(req);
+      params.uid = req.user && req.user.id ? Number(req.user.id) : 0;
+      const service = new AppAiService(req.dbPhoto);
+      const result = await service.resolveDuplicates(params);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('resolveDuplicates error', err);
+      const code = Number(err && err.statusCode) || 500;
+      return ResponseUtil.error(req, res, (err && err.message) || 'common.ERROR', code);
+    }
+  };
 }
+
+  /**
+   * ⭐ 2026-10-17 P5：补齐 content_md5（**只算 size 撞车的候选**），让「重复照片」页能真的出数据。
+   * 写成箭头类字段：与 resolveDuplicates 保持一致，避免将来被裸方法引用时丢 `this`。
+   */
+  backfillDuplicates = async (req, res) => {
+    try {
+      const params = await this._scopeParams(req);
+      const service = new AppAiService(req.dbPhoto);
+      const result = await service.backfillContentMd5(params);
+      return ResponseUtil.success(req, res, result, 'common.SUCCESS', 200);
+    } catch (err) {
+      Logger.error('backfillDuplicates error', err);
+      return ResponseUtil.error(req, res, 'common.ERROR', 500);
+    }
+  };
 
 module.exports = new AppAiController();

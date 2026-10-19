@@ -225,11 +225,61 @@ async function extractVideoMeta(fullPath) {
   return { width, height, duration, camera, latitude, longitude, originalTimeMs };
 }
 
+/** ⭐ 2026-10-17 扩展名不可信：实测库里 1677 个 `.MOV`/`.mp4` 的内容其实是 JPEG
+ *  （手机备份/导出写成这样，与同名 `.jpg` 逐字节相同），在相册里会显示成
+ *  「灰底沙漏 + 00:00」的假视频。这里按文件头判定真实类型。 */
+const IMAGE_MAGIC_PREFIXES = [
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0x47, 0x49, 0x46, 0x38], // GIF8
+  [0x42, 0x4d], // BM (BMP)
+];
+
+async function sniffImageMagic(filePath) {
+  try {
+    const fh = await fs.promises.open(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(12);
+      const { bytesRead } = await fh.read(buf, 0, 12, 0);
+      if (!bytesRead || bytesRead < 4) return false;
+      return IMAGE_MAGIC_PREFIXES.some(prefix => prefix.every((byte, i) => buf[i] === byte));
+    } finally {
+      await fh.close().catch(() => {});
+    }
+  } catch (_) {
+    return false;
+  }
+}
+
 async function indexOneFile({ knex, fullPath, dirPath, filename, ext }) {
-  const mediaType = getMediaTypeByExt(ext);
+  let mediaType = getMediaTypeByExt(ext);
   if (mediaType !== 1 && mediaType !== 2) {
     console.log('不支持的文件类型', ext);
     return false;
+  }
+
+  // ⭐ 2026-10-17 候选视频若内容其实是图片：按图片处理；若同目录已有同名图片入过库，
+  //    直接跳过（同一张图不重复收两份）。见 sniffImageMagic 的注释。
+  if (mediaType === 2 && (ext === '.mp4' || ext === '.mov')) {
+    const isImageContent = await sniffImageMagic(fullPath);
+    if (isImageContent) {
+      const picBase = path.parse(filename).name;
+      const siblingNames = [];
+      for (const picExt of ['.jpg', '.jpeg', '.png', '.heic', '.heif']) {
+        siblingNames.push(picBase + picExt, picBase + picExt.toUpperCase());
+      }
+      const sibling = await knex('photo_index')
+        .where({ path: dirPath, is_file: 1 })
+        .whereIn('filename', siblingNames)
+        .first('id')
+        .catch(() => null);
+      if (sibling && sibling.id) {
+        console.log('[photoIndex] 跳过「图片冒充视频」的文件（已有同名图片）：' + filename);
+        return false;
+      }
+      console.log('[photoIndex] 扩展名是视频但内容是图片，改按图片收录：' + filename);
+      mediaType = 1;
+    }
   }
 
   const isRaw = mediaType === 1 && photoIndexRawUtil.isRawExt(ext);

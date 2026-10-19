@@ -141,6 +141,7 @@ extension PhotoTimelineControllerPagination on PhotoTimelineController {
     }
 
     var incoming = List<TimelinePhotoItem>.from(payload.photoList);
+    incoming = _clusterSearchByDate(incoming);
 
     if (incoming.isEmpty) {
       _lastFetchResult = FetchResult(
@@ -155,11 +156,14 @@ extension PhotoTimelineControllerPagination on PhotoTimelineController {
       // 全量重建
       final newItems = <TimelineListItem>[];
       String? currentDate;
+      final sparse = _searchSparseDates(incoming);
 
       for (final p in incoming) {
         if (p.originalDate != currentDate) {
           currentDate = p.originalDate;
-          newItems.add(TimelineListDateHeader(date: currentDate));
+          if (!sparse.contains(currentDate)) {
+            newItems.add(TimelineListDateHeader(date: currentDate));
+          }
         }
         newItems.add(TimelineListPhoto(photo: p));
       }
@@ -182,6 +186,13 @@ extension PhotoTimelineControllerPagination on PhotoTimelineController {
     required bool isUp,
   }) {
     if (photos.isEmpty) return;
+
+    // ⭐ 2026-10-19 搜索结果按日期归并：跨页出现同一天时不再新起一个分组头，
+    //    而是插回那一天的组里（否则同一天会被拆成好几段，每段一两张）。
+    if (_isSearchResultMode) {
+      _mergeSearchPhotos(photos, isUp: isUp);
+      return;
+    }
 
     // 构建新数据的 TimelineListItem 列表
     final newItems = <TimelineListItem>[];
@@ -259,4 +270,120 @@ extension PhotoTimelineControllerPagination on PhotoTimelineController {
       });
     }
   }
+
+  /// 是否是「搜索结果」视图（搜索框有关键词）。
+  bool get _isSearchResultMode => searchKeyword.value.trim().isNotEmpty;
+
+  /// 搜索模式下，照片数少于该值的日期不再单独占一个分组头。
+  /// 理由：搜索结果通常散落在几十天里，每天只命中一两张，
+  /// 一天一个标题会把列表拉得极长（用户反馈「一行只有一两张、行数特别多」）。
+  static const int _searchSparseDateMax = 2;
+
+  /// 搜索结果按日期**聚拢**：同一天的照片连续排列，组间顺序沿用相关性顺序
+  /// （即该日期第一次出现的位置），组内保持服务端返回的相似度顺序。
+  List<TimelinePhotoItem> _clusterSearchByDate(List<TimelinePhotoItem> photos) {
+    if (!_isSearchResultMode || photos.length < 2) return photos;
+    final order = <String>[];
+    final buckets = <String, List<TimelinePhotoItem>>{};
+    for (final p in photos) {
+      final d = p.originalDate;
+      var list = buckets[d];
+      if (list == null) {
+        list = <TimelinePhotoItem>[];
+        buckets[d] = list;
+        order.add(d);
+      }
+      list.add(p);
+    }
+    if (order.length <= 1) return photos;
+    final out = <TimelinePhotoItem>[];
+    for (final d in order) {
+      out.addAll(buckets[d]!);
+    }
+    return out;
+  }
+
+  /// 本批数据里「稀疏」的日期集合（不插分组头）。
+  Set<String> _searchSparseDates(List<TimelinePhotoItem> photos) {
+    if (!_isSearchResultMode) return const <String>{};
+    final counts = <String, int>{};
+    for (final p in photos) {
+      counts[p.originalDate] = (counts[p.originalDate] ?? 0) + 1;
+    }
+    final out = <String>{};
+    final order = <String>[];
+    counts.forEach((date, n) {
+      order.add(date);
+      if (n <= _searchSparseDateMax) out.add(date);
+    });
+    // 全部日期都是稀疏组时只保留第一个日期做锚点（滚动定位也要一个起点），
+    // 其余照旧并排，避免整屏一个分组头都没有、也不知道滑到哪段时间。
+    if (out.length == counts.length && counts.length > 1) {
+      out.remove(order.first);
+    }
+    return out;
+  }
+
+  /// 搜索结果的合并：能归到已有日期组就插回去，否则追加到当前端。
+  void _mergeSearchPhotos(
+    List<TimelinePhotoItem> photos, {
+    required bool isUp,
+  }) {
+    final groups = <String, List<TimelinePhotoItem>>{};
+    final order = <String>[];
+    for (final p in photos) {
+      final d = p.originalDate;
+      var list = groups[d];
+      if (list == null) {
+        list = <TimelinePhotoItem>[];
+        groups[d] = list;
+        order.add(d);
+      }
+      list.add(p);
+    }
+    final pendingHead = <TimelineListItem>[];
+    for (final date in order) {
+      final list = groups[date]!;
+      // TimelinePhotoItem 不是 TimelineListItem，插入 photoItems 前要包一层。
+      final wrapped = list
+          .map<TimelineListItem>((e) => TimelineListPhoto(photo: e))
+          .toList();
+      final headerIdx = photoItems.indexWhere(
+        (e) => e is TimelineListDateHeader && e.date == date,
+      );
+      if (headerIdx < 0) {
+        // 稀疏日期：与首屏策略保持一致，不新开分组头，直接接在当前端继续排，
+        // 否则翻页时又会出现「一个标题底下一两张」。
+        if (list.length <= _searchSparseDateMax) {
+          if (isUp) {
+            pendingHead.addAll(wrapped);
+          } else {
+            photoItems.addAll(wrapped);
+          }
+          continue;
+        }
+        final block = <TimelineListItem>[
+          TimelineListDateHeader(date: date),
+          ...wrapped,
+        ];
+        if (isUp) {
+          pendingHead.addAll(block);
+        } else {
+          photoItems.addAll(block);
+        }
+        continue;
+      }
+      // 已有该日期：插到这一组的末尾（下一个 header 之前）
+      var lastIdx = headerIdx;
+      for (var i = headerIdx + 1; i < photoItems.length; i++) {
+        if (photoItems[i] is TimelineListDateHeader) break;
+        lastIdx = i;
+      }
+      photoItems.insertAll(lastIdx + 1, wrapped);
+    }
+    if (pendingHead.isNotEmpty) {
+      photoItems.insertAll(0, pendingHead);
+    }
+  }
+
 }

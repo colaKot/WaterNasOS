@@ -158,6 +158,8 @@ class ServerActionsGuidedFragment : GuidedStepSupportFragment() {
                 )
                 viewModel.upsert(updated)
                 viewModel.setLastSelected(updated)
+                // 用户主动登录成功后恢复「下次自动登录」
+                MainActivity.setAutoLoginEnabled(requireContext(), true)
                 ApiController.setTokens(
                     updated.accessToken,
                     updated.refreshToken,
@@ -401,6 +403,8 @@ class ServerActionsGuidedFragment : GuidedStepSupportFragment() {
                     )
                     viewModel.upsert(updated)
                     viewModel.setLastSelected(updated)
+                    // 用户主动登录成功后恢复「下次自动登录」
+                    MainActivity.setAutoLoginEnabled(requireContext(), true)
                     ApiController.setTokens(
                         updated.accessToken,
                         updated.refreshToken,
@@ -479,14 +483,14 @@ class ServerActionsGuidedFragment : GuidedStepSupportFragment() {
     }
 }
 
-private enum class ResolveFailure { NoDirectUrl, NoPairCode, NetworkFailed, NotNasCab }
+internal enum class ResolveFailure { NoDirectUrl, NoPairCode, NetworkFailed, NotNasCab }
 
-private data class ResolveOutcome(
+internal data class ResolveOutcome(
     val resolved: ResolvedChannel?,
     val failure: ResolveFailure,
 )
 
-private data class ResolvedChannel(
+internal data class ResolvedChannel(
     val baseUrl: String,
     val serverForAuth: ServerInfo,
 )
@@ -530,7 +534,7 @@ fun pickDirectBaseUrls(server: ServerInfo): List<String> {
     return urls.toList()
 }
 
-private suspend fun resolveChannelForLogin(
+internal suspend fun resolveChannelForLogin(
     server: ServerInfo,
     mode: ApiController.DevConnectMode,
 ): ResolveOutcome {

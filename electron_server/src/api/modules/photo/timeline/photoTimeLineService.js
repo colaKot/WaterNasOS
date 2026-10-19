@@ -1,4 +1,5 @@
 const knexUtil = require('../../../../db/knexUtil');
+const sqliteVec = require('../../../../utils/sqliteVecUtil');
 const dbUtil = require('../../../../db/dbUtil');
 const path = require('path');
 const fs = require('fs');
@@ -534,8 +535,83 @@ class PhotoTimeLineService {
    * ⛔ 不用绝对阈值 —— 本项目早在语义搜索实验里就实测过「CLIP 的绝对阈值不可靠」。
    * 代价：一次全库扫描（分批 4000，上限 20 万行）；只在 SQL 召回 < 20 时触发。
    */
+  /**
+   * ⭐⭐ 2026-10-17 向量索引召回（sqlite-vec）。
+   *
+   * 为什么加：旧实现是「分批全表扫 + JS 逐个点积」，实测 2.6 万张就要 +1.7s
+   *（原注释自己也标了这个数字和「把向量放 sqlite-vec」这个方向）。
+   * 改走 vec0 后 KNN 在 C 里跑，本机实测 30k×512 单次 ≈ 70ms，
+   * 且不必把几十 MB 的 Buffer 搬进 JS 堆。
+   *
+   * 策略 = **先 over-fetch 再过滤**：vec0 只支持分区键过滤，
+   * 可见集（路径前缀）与时间窗都得在 JOIN 回主表时应用，所以先放大召回倍数再截断。
+   *
+   * @returns {Promise<Array<{hash:string,cos:number}>|null>} null = 索引不可用，调用方退回旧全表扫
+   */
+  async _recallByVecIndex(queryVec, validPaths, winStart, winEnd, limit) {
+    if (!sqliteVec.isAvailable()) return null;
+    // 可见集为空 = 这个用户什么都看不到。与旧实现一致：直接给空，别退回慢路径。
+    if (!Array.isArray(validPaths) || validPaths.length === 0) return [];
+
+    const knex = this.getKnex();
+    const topN = Math.max(1, Number(limit) || 60);
+    // ⚠️ over-fetch 倍数：vec0 的 KNN 不认识路径可见集，召回少了会把
+    //    「看得见的那些」漏掉。倍数可用环境变量压测调整。
+    const factor = Math.max(1, Number(process.env.PHOTO_VEC_OVERFETCH ?? 20));
+    const fetchN = Math.min(10000, Math.max(Math.round(topN * factor), 1000));
+
+    const knnHits = await sqliteVec.knn(knex, queryVec, fetchN);
+    // 空 = 索引表还没回填 / 扩展刚被卸载 ⇒ 交回旧路径，保证功能不丢。
+    if (knnHits.length === 0) return null;
+
+    const distById = new Map();
+    for (const h of knnHits) distById.set(Number(h.id), Number(h.distance));
+    const ids = Array.from(distById.keys()).filter(Boolean);
+    if (ids.length === 0) return null;
+
+    const qb = knex('photo_index as p')
+      .whereIn('p.id', ids)
+      .where('p.is_file', 1)
+      .where('p.in_trash', 0)
+      .select('p.id', 'p.file_hash');
+    photoPathQueryUtil.applyPathPrefixFilter(qb, 'p.path', validPaths);
+    // ⚠️ 必须带与本次请求相同的时间窗：时间轴按窗口翻页，
+    //    召回若引入窗口外的照片，客户端会把它塞进不属于它的日期分组。
+    if (winStart && winEnd) {
+      const s0 = winStart.getTime() <= winEnd.getTime() ? winStart : winEnd;
+      const e0 = winStart.getTime() <= winEnd.getTime() ? winEnd : winStart;
+      qb.whereBetween('p.original_time', [s0.getTime(), e0.getTime()]);
+    } else if (winStart) {
+      qb.where('p.original_time', '>=', winStart.getTime());
+    } else if (winEnd) {
+      qb.where('p.original_time', '<=', winEnd.getTime());
+    }
+
+    const rows = await qb.catch(() => []);
+    const scored = [];
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const d = distById.get(Number(r.id));
+      if (!Number.isFinite(d)) continue;
+      // 两边都已 L2 归一化 ⇒ 余弦距离 d = 2 - 2·cos ⇒ cos = 1 - d/2
+      scored.push({ hash: String(r.file_hash), cos: 1 - d / 2 });
+    }
+    if (scored.length === 0) return [];
+    scored.sort((a, b) => b.cos - a.cos);
+    const floor = scored[0].cos - 0.05;
+    const out = scored.filter(s => s.cos >= floor).slice(0, topN);
+    if (out.length < topN) {
+      console.log(`[search] vec0 召回 ${out.length}/${topN}（over-fetch ${fetchN}，可见集裁剪后剩 ${scored.length}）`);
+    }
+    return out;
+  }
+
   async _multilingualRecall(queryVec, validPaths, limit, winStart, winEnd) {
     if (!queryVec) return [];
+    // ⭐⭐ 2026-10-17 主路径：vec0 向量索引。返回 null 才表示索引不可用。
+    const viaIndex = await this._recallByVecIndex(queryVec, validPaths, winStart, winEnd, limit);
+    if (viaIndex !== null) return viaIndex;
+
+    // ↓↓↓ 降级路径：`sqlite-vec` 不可用（非 win-x64 / dll 未随包 / 索引未回填）时沿用旧的全表扫。
     const knex = this.getKnex();
     const CHUNK = 4000;
     const MAX_SCAN = 200000;
@@ -579,7 +655,13 @@ class PhotoTimeLineService {
       }
       scanned += rows.length;
       offset += rows.length;
-      if (rows.length < CHUNK || scanned >= MAX_SCAN) break;
+      if (rows.length < CHUNK || scanned >= MAX_SCAN) {
+        // ⚠️ 原来这里是静默 break —— 库一大召回就会「悄悄地少给」而无人察觉。
+        if (scanned >= MAX_SCAN) {
+          console.warn(`[search] ⚠️ 降级全表扫触顶 MAX_SCAN=${MAX_SCAN}，召回可能不完整（请检查 sqlite-vec 索引是否可用）`);
+        }
+        break;
+      }
     }
     if (scored.length === 0) return [];
     scored.sort((a, b) => b.cos - a.cos);
@@ -620,6 +702,13 @@ class PhotoTimeLineService {
     const queryVec = await placesQuery.encodeMultilingual(search);
     if (!queryVec) return list;
 
+    // ⭐ 2026-10-17 当前图像塔标识：用于拒绝跨塔比较（见下面的 emb_model 检查）。
+    let currentModelTag = '';
+    try {
+      const placesClipUtil = require('../../../../workers/ai/places/placesClipUtil');
+      currentModelTag = typeof placesClipUtil.getModelTag === 'function' ? placesClipUtil.getModelTag() : '';
+    } catch (_) {}
+
     const knex = this.getKnex();
 
     // ⭐⭐ 光重排不够：词表解析不出标签的查询（「自然风光」「纸质文件」）SQL 臂**召回就是 0**，
@@ -632,8 +721,12 @@ class PhotoTimeLineService {
     //    想更激进（例如 SQL 少于 N 条就召回）可把配置键 `ai_multilingual_recall_min` 调大。
     //    ⚠️ 后续优化方向：把向量放 sqlite-vec，或进程内缓存一次（67k×512×4B ≈ 137MB）。
     const recallMinRaw = await tableConfig.getConfigByKey('ai_multilingual_recall_min').catch(() => null);
+    // ⭐ 2026-10-17 默认从 1 提到 60：召回已经改走 vec0 索引（本机实测 43.7k 向量 ≈ 106ms，
+    //    对照旧的分批全表扫 509ms），旧门槛「只在必定 0 结果时才召回」已经没有意义。
+    //    现在「SQL 臂召回不足 60 条」就补一轮语义召回 ⇒ 中文自然说法（词表解析不出标签的）
+    //    不会再出现「结果很少」的情况。仍可用配置键 ai_multilingual_recall_min 调回 1。
     const MIN_SQL_RECALL = recallMinRaw === null || recallMinRaw === undefined || recallMinRaw === ''
-      ? 1
+      ? 60
       : Math.max(1, Number(recallMinRaw) || 1);
     const RECALL_LIMIT = 60;
     if (list.length < MIN_SQL_RECALL) {
@@ -718,13 +811,18 @@ class PhotoTimeLineService {
       const embRows = await knex('photo_index')
         .whereIn('file_hash', slice)
         .whereNotNull('clip_emb')
-        .select('file_hash', 'clip_emb')
+        .select('file_hash', 'clip_emb', 'emb_model')
         .catch(() => []);
       for (const r of Array.isArray(embRows) ? embRows : []) {
         const buf = r && r.clip_emb ? (Buffer.isBuffer(r.clip_emb) ? r.clip_emb : Buffer.from(r.clip_emb)) : null;
         if (!buf) continue;
         const dim = Math.floor(buf.byteLength / 4);
         if (dim !== queryVec.length) continue; // 维度不同 = 不是同一套图像塔，宁可不打分
+        // ⭐ 2026-10-17 跨塔拒绝：同维不同塔骗得过上面那道维度检查，
+        //    必须按 emb_model 再拦一次，否则换塔后点积出的是一堆无意义的噪声分。
+        //    NULL = P0-3 时代的老数据，视为当前塔，不阻断。
+        const rowModel = r.emb_model ? String(r.emb_model) : '';
+        if (rowModel && currentModelTag && rowModel !== currentModelTag) continue;
         const vec = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + dim * 4));
         let dot = 0;
         for (let d = 0; d < dim; d += 1) dot += vec[d] * queryVec[d];

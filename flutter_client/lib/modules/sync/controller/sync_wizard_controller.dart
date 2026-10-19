@@ -119,7 +119,7 @@ class SyncWizardController extends GetxController {
   /// 选择电脑上的同步目录
   Future<void> pickLocalDir() async {
     try {
-      final path = await FilePicker.platform.getDirectoryPath();
+      final path = await FilePicker.getDirectoryPath();
       if (path == null || path.trim().isEmpty) return;
       localDir.value = path.trim();
     } catch (e) {

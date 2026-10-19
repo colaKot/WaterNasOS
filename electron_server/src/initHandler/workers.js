@@ -382,7 +382,7 @@ module.exports = {
               .then(r => Number((r && r.total) || 0))
               .catch(() => 0);
             if (pending <= 0) return;
-            Logger.info('🔄 face worker auto-restart, pending:', pending);
+            Logger.info(`🔄 face worker auto-restart, pending: ${pending}`);
             that.startFaceWorker();
           })
           .catch(e => Logger.error('❌ face worker auto-restart failed:', e));
@@ -432,6 +432,66 @@ module.exports = {
   },
 
   startPlacesWorker() {
+    let that = this;
+
+    // ⭐⭐ 2026-10-17 停摆修复（对齐 face / ocr / similar）。
+    //   placesWorker.startLoop() = 场景阶段 → 活动阶段 → process.exit(0)，
+    //   这是**干净退出** ⇒ singletonWorkerManager 只走 onStop，
+    //   而 onStop 原来是空函数 ⇒ 跑完一次就**永久停摆**。
+    //   实测线上后果：活动识别 pending 34683 张（47%）、CLIP 向量 pending 4101 张，
+    //   进度条一直冻在那里，只有重启服务端才推一段，然后再停。
+    //   ⚠️ 必须先查 pending：pending<=0 直接 return，否则就是「起→立刻退→再起」空转循环。
+    //   ⚠️ 必须限次数：活动模型未就绪时 activityReady=false ⇒ 每次起来立刻退出，
+    //      不限次数就是重启风暴。这里用「10 分钟内最多 3 次」兜底。
+    if (!that._placesRestartTimes) that._placesRestartTimes = [];
+    const schedulePlacesRestartIfNeeded = () => {
+      if (that._placesRestartTimer) return;
+      that._placesRestartTimer = setTimeout(() => {
+        that._placesRestartTimer = null;
+        Promise.resolve()
+          .then(async () => {
+            // 关机中 / 用户暂停 ⇒ 绝对不要再拉起
+            if (singletonWorkerManager.shuttingDown) return;
+            if (typeof singletonWorkerManager.isAiPaused === 'function' && singletonWorkerManager.isAiPaused()) return;
+            if (!(await that.isAiWorkerEnabled('ai_place_enable'))) return;
+            if (singletonWorkerManager.isWorkerRunning('placesWorker')) return;
+
+            // 重启风暴防护（滑动窗口 10 分钟 / 最多 3 次）
+            const nowTs = Date.now();
+            that._placesRestartTimes = (that._placesRestartTimes || []).filter(t => nowTs - t < 10 * 60 * 1000);
+            if (that._placesRestartTimes.length >= 3) {
+              Logger.warn('⛔ places worker 自动重启过于频繁（10 分钟内已 3 次），已停止自动重启 —— '
+                + '请检查活动识别模型是否就绪（onnx_models）或手动重试');
+              return;
+            }
+
+            if (!knexUtil.hasConnection(dbUtil.DB_PATHS.PHOTO_DB)) {
+              await knexUtil.init(dbUtil.DB_PATHS.PHOTO_DB);
+            }
+            const knex = knexUtil.getInstance(dbUtil.DB_PATHS.PHOTO_DB);
+            // ⭐ 只看 placesWorker **真正会处理**的两个维度。
+            //   ⛔不能把 `clip_emb IS NULL` 算进去：CLIP 向量只在**场景阶段**
+            //   （gen_place=0 的行）顺便算，存量里有 4101 张
+            //   「gen_place=1 但 clip_emb 空」的常驻缺口（实测多为 150MB~1GB 大图），
+            //   把它们算进 pending 就会在活动跑完后反复空转重启直到吊死。
+            const pending = await knex('photo_index')
+              .where({ is_file: 1, in_trash: 0 })
+              .whereIn('type', [1, 2])
+              .where(qb => qb.where('gen_place', 0).orWhere('gen_activity', 0))
+              .count('* as total')
+              .first()
+              .then(r => Number((r && r.total) || 0))
+              .catch(() => 0);
+            if (pending <= 0) return;
+
+            that._placesRestartTimes.push(nowTs);
+            Logger.info(`🔄 places worker auto-restart, pending: ${pending}`);
+            that.startPlacesWorker();
+          })
+          .catch(e => Logger.error('❌ places worker auto-restart failed:', e));
+      }, 15000);
+    };
+
     return singletonWorkerManager.startWorker('placesWorker', `ai${path.sep}places${path.sep}placesWorker.js`, {
       env: {
         WORKER_TYPE: 'aiPlace',
@@ -444,10 +504,16 @@ module.exports = {
 
       },
       onStop: (code, signal) => {
-
+        // 干净退出（队列跑完 process.exit(0)）也要回来看一眼有没有新活
+        schedulePlacesRestartIfNeeded();
       },
       onError: error => {
         if (error) Logger.error(`❌ places/scene worker error:`, error);
+        // ⭐ 2026-10-17：崩溃退出（带 signal）走 onError、**不会**触发 onStop ——
+        //   只在 onStop 里挂重启的话，模型 OOM / 原生崩溃后就再也不起了。
+        //   冷却（15s）与次数上限（10 分钟 3 次）在 schedulePlacesRestartIfNeeded 里统一管，
+        //   不会变成崩溃重启风暴。
+        schedulePlacesRestartIfNeeded();
       },
     });
   },
@@ -482,7 +548,7 @@ module.exports = {
               .catch(() => 0);
             if (pending <= 0) return;
             if (singletonWorkerManager.isWorkerRunning('ocrWorker')) return;
-            Logger.info('🔄 OCR worker auto-restart, pending:', pending);
+            Logger.info(`🔄 OCR worker auto-restart, pending: ${pending}`);
             this.startOcrWorker();
           })
           .catch(e => {
@@ -514,7 +580,72 @@ module.exports = {
     });
   },
 
+  /**
+   * ⭐ 2026-10-17 P5：AI worker 开关的**唯一判定口径**。
+   *
+   * 修复前是两套口径在打架：
+   *   · 启动时（initMain）      `=== '1'`               ⇒ 缺行 = 关
+   *   · 暂停后恢复（appAiService）缺行/未设 = 开         ⇒ 缺行 = 开
+   * 结果：恢复时会把用户**从未启用**过的 worker 拉起来（similarWorker 起来后读到开关不是 '1'
+   * 就立刻 process.exit(0)，纯属浪费一次线程启动）。
+   * 约定：**只有显式 '1' 才算开**；缺行 / '0' / 'false' 一律关。
+   */
+  async isAiWorkerEnabled(key) {
+    try {
+      const raw = await tableConfig.getConfigByKey(key);
+      return String(raw == null ? '' : raw).trim() === '1';
+    } catch (_) {
+      return false;
+    }
+  },
+
   startSimilarWorker() {
+    let that = this;
+
+    // ⭐ 2026-10-17 P5：对齐 faceWorker 的「干净退出也要重启」修复。
+    // similarWorker 把队列取空后走的是 process.exit(0)（**干净退出** ⇒ 只触发 onStop，
+    // 而 onStop 原本是个空函数）⇒ 扫完一次就**永久停摆**：此后新导入的照片再也不会被算
+    // 指纹、不会进相似分组，用户只有重启服务端才恢复。
+    // ⚠️ 这里必须先查 pending：pending<=0 直接 return，否则就成了「起→立刻退→再起」的空转循环。
+    const scheduleSimilarRestartIfNeeded = () => {
+      if (that._similarRestartTimer) return;
+      that._similarRestartTimer = setTimeout(() => {
+        that._similarRestartTimer = null;
+        Promise.resolve()
+          .then(async () => {
+            if (singletonWorkerManager.shuttingDown) return;
+            if (typeof singletonWorkerManager.isAiPaused === 'function' && singletonWorkerManager.isAiPaused()) return;
+            if (!(await that.isAiWorkerEnabled('ai_similar_enable'))) return;
+            if (singletonWorkerManager.isWorkerRunning('similarWorker')) return;
+
+            if (!knexUtil.hasConnection(dbUtil.DB_PATHS.PHOTO_DB)) {
+              await knexUtil.init(dbUtil.DB_PATHS.PHOTO_DB);
+            }
+            const knex = knexUtil.getInstance(dbUtil.DB_PATHS.PHOTO_DB);
+            // 待办 = 还没算指纹的（gen_phash=0） + 算完但还没比对的（gen_phash=1 且 phash 非空）
+            const scanPending = await knex('photo_index')
+              .where({ is_file: 1, in_trash: 0, type: 1, gen_phash: 0 })
+              .count('* as total')
+              .first()
+              .then(r => Number((r && r.total) || 0))
+              .catch(() => 0);
+            const comparePending = await knex('photo_index')
+              .where({ is_file: 1, in_trash: 0, type: 1, gen_phash: 1 })
+              .whereNotNull('phash')
+              .andWhere('phash', '!=', '')
+              .count('* as total')
+              .first()
+              .then(r => Number((r && r.total) || 0))
+              .catch(() => 0);
+            const pending = scanPending + comparePending;
+            if (pending <= 0) return;
+            Logger.info(`🔄 similar worker auto-restart, pending: ${pending}`);
+            that.startSimilarWorker();
+          })
+          .catch(e => Logger.error('❌ similar worker auto-restart failed:', e));
+      }, 15000);
+    };
+
     return singletonWorkerManager.startWorker('similarWorker', `ai${path.sep}similar${path.sep}similarWorker.js`, {
       env: {
         WORKER_TYPE: 'aiSimilar',
@@ -527,10 +658,12 @@ module.exports = {
 
       },
       onStop: (code, signal) => {
-
+        const normalExit = !signal && Number(code) === 0;
+        if (normalExit) scheduleSimilarRestartIfNeeded();
       },
       onError: error => {
         if (error) Logger.error(`❌ photo dedupe worker error:`, error);
+        scheduleSimilarRestartIfNeeded();
       },
     });
   },

@@ -56,14 +56,11 @@ class MobileMediaFilePicker {
   }
 
   static Future<List<PlatformFile>> pickFiles() async {
-    final res = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
+    final res = await FilePicker.pickFiles(
       type: FileType.any,
-      withData: false,
-      withReadStream: false,
     );
-    if (res == null || res.files.isEmpty) return const <PlatformFile>[];
-    return res.files;
+    if (res.isEmpty) return const <PlatformFile>[];
+    return res;
   }
 
   static Future<bool> _ensurePhotoPermission() async {

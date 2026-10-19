@@ -86,15 +86,13 @@ class _AppWallpaperPickerViewState extends State<AppWallpaperPickerView> {
       String filename = 'wallpaper';
 
       if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) {
-        final result = await FilePicker.platform.pickFiles(
+        final result = await FilePicker.pickFiles(
           type: FileType.image,
-          allowMultiple: false,
-          withData: true,
         );
-        if (result == null || result.files.isEmpty) return;
-        final file = result.files.first;
+        if (result.isEmpty) return;
+        final file = result.first;
         filename = file.name.trim().isNotEmpty ? file.name.trim() : 'wallpaper';
-        bytes = file.bytes;
+        bytes = await file.readAsBytes();
       } else {
         final source = await showMobileUploadSourcePicker(context);
         if (source == null) return;
@@ -119,15 +117,13 @@ class _AppWallpaperPickerViewState extends State<AppWallpaperPickerView> {
               ? n
               : (xf.name.trim().isNotEmpty ? xf.name.trim() : 'wallpaper');
         } else {
-          final result = await FilePicker.platform.pickFiles(
+          final result = await FilePicker.pickFiles(
             type: FileType.image,
-            allowMultiple: false,
-            withData: true,
           );
-          if (result == null || result.files.isEmpty) return;
-          final file = result.files.first;
+          if (result.isEmpty) return;
+          final file = result.first;
           filename = file.name.trim().isNotEmpty ? file.name.trim() : 'wallpaper';
-          bytes = file.bytes;
+          bytes = await file.readAsBytes();
         }
       }
 

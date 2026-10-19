@@ -55,6 +55,8 @@ class _CustomGalleryState extends State<CustomGallery> {
           final liveVideoUrl = ctrl.getLiveVideoUrlForItem(currentItem);
           final isLivePhoto = liveVideoUrl != null;
           ctrl.ensurePanoramaCandidate(currentIndex);
+          // ⭐ 2026-10-17 进来时若当前这张是实况，自动播一次（只在首次进入时播，翻页不打扰）
+          if (isLivePhoto) ctrl.maybeAutoPlayLive(currentIndex);
           final panoramaUrl = ctrl.getPanoramaImageUrlForItem(currentItem);
           final showPanoramaButton =
               panoramaUrl != null && ctrl.isPanoramaCandidate(currentIndex);
@@ -222,6 +224,10 @@ class _CustomGalleryState extends State<CustomGallery> {
                               GalleryTopControls(
                                 onInfoPressed: isMobile
                                     ? openInfoBottomSheet
+                                    : null,
+                                isLivePhoto: isLivePhoto,
+                                onLiveTap: liveVideoUrl != null
+                                    ? () => ctrl.startLivePlayback(currentIndex)
                                     : null,
                               ),
                               GalleryFileName(

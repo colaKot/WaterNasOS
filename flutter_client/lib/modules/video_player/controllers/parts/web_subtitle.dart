@@ -5,10 +5,21 @@ extension PlayerWebSubtitle on PlayerController {
   double transcodeSubtitleBottomPadding(BuildContext context) {
     final mq = MediaQuery.of(context);
     final safe = mq.padding.bottom;
-    if (mq.orientation == Orientation.landscape) {
-      return safe + 24;
+    // ⭐ 2026-10-19 字幕必须落在画面里：适应模式（contain）时画面下方那条黑边
+    // 不属于画面，要把字幕整体抬到画面底边以上；铺满模式画面铺满屏幕，不用抬。
+    var letterbox = 0.0;
+    if (!isVideoCover.value) {
+      final size = mq.size;
+      final ar = videoAspectRatio;
+      final pictureH =
+          (size.width / ar) > size.height ? size.height : (size.width / ar);
+      final rest = size.height - pictureH;
+      if (rest > 0) letterbox = rest / 2;
     }
-    return safe + 88;
+    if (mq.orientation == Orientation.landscape) {
+      return safe + 24 + letterbox;
+    }
+    return safe + 88 + letterbox;
   }
 
   /// Web 全场景；非 Web 转码时文本字幕；原画仅文本外挂——均走 [WebSubtitleOverlay]。

@@ -76,6 +76,10 @@ class Media3PlaybackEngine extends PlaybackEngine {
       return;
     }
 
+    // ⭐ 2026-10-19 原生带上真实画面尺寸：字幕避让黑边要按真实宽高比算
+    final vw = event['videoWidth'];
+    final vh = event['videoHeight'];
+    final ar = (vw is int && vh is int && vw > 0 && vh > 0) ? vw / vh : null;
     final posMs = event['positionMs'];
     final durMs = event['durationMs'];
     final bufferedMs = event['bufferedPositionMs'];
@@ -95,6 +99,7 @@ class Media3PlaybackEngine extends PlaybackEngine {
     _value = _value.copyWith(
       isInitialized: initialized || _value.isInitialized,
       isPlaying: playing,
+      aspectRatio: ar,
       hasError: false,
       errorDescription: null,
       position: pos.isNegative ? Duration.zero : pos,
@@ -272,5 +277,14 @@ class Media3PlaybackEngine extends PlaybackEngine {
       if (label != null) 'label': label,
       if (sourcePath != null) 'sourcePath': sourcePath,
     });
+  }
+
+  /// ⭐ 2026-10-19 铺满/适应下发给原生 PlayerView（RESIZE_MODE_ZOOM / FIT）。
+  @override
+  Future<void> setVideoResizeMode(String mode) async {
+    if (_viewId == null) return;
+    try {
+      await _invoke('setResizeMode', {'mode': mode});
+    } catch (_) {}
   }
 }

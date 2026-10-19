@@ -60,6 +60,8 @@ router.post('/place/parse', authenticateJWT, placesController.parseQuery);
 router.post('/place/search_image', authenticateJWT, placesController.searchImage);
 // ⭐ 2026-10-16 P0-4 搜索联想聚合（人物/场景/活动/相机/文件名/OCR/年份）
 router.post('/search/suggest', authenticateJWT, placesController.suggest);
+// ⭐ 2026-10-18 搜索浮层推荐词（按当前用户自己的库算）
+router.post('/search/hot', authenticateJWT, (req, res) => placesController.hot(req, res));
 router.post('/place/status/set', authenticateJWT, requireAdmin, placesController.setPlaceStatus);
 router.post('/place/reset', authenticateJWT, requireAdmin, placesController.resetPlaces);
 router.post('/place/activity/reset', authenticateJWT, requireAdmin, placesController.resetActivity);
@@ -170,16 +172,56 @@ router.post('/app_ai/model_api/get', authenticateJWT, requireSuperAdmin, appAiCo
 router.post('/app_ai/model_api/set', authenticateJWT, requireSuperAdmin, appAiController.modelApiSet);
 router.post('/app_ai/model_api/test', authenticateJWT, requireSuperAdmin, appAiController.modelApiTest);
 // ⭐ 2026-10-16 P1/P2 智能发现批次（除记忆确认外全部只读）
-router.post('/app_ai/time_compare', authenticateJWT, appAiController.timeCompare);
-router.post('/app_ai/day_frames', authenticateJWT, appAiController.dayFrames);
-router.post('/app_ai/tickets', authenticateJWT, appAiController.tickets);
-router.post('/app_ai/memories', authenticateJWT, appAiController.memories);
+// ⭐ 2026-10-17 修：原来是 `appAiController.timeCompare`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/time_compare', authenticateJWT, (req, res) => appAiController.timeCompare(req, res));
+// ⭐ 2026-10-17 修：原来是 `appAiController.dayFrames`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+// ⭐⭐ 2026-10-18 相册 AI 问答（先算本地统计再交给模型；未配模型时用本地规则）
+router.post('/app_ai/ask', authenticateJWT, (req, res) => appAiController.ask(req, res));
+
+// ⭐ 2026-10-18 相册首页看板：我的照片 / 拍摄时光 / 足迹 / 镜头里的相伴（一次查完）
+router.post('/app_ai/home_summary', authenticateJWT, (req, res) => appAiController.homeSummary(req, res));
+
+router.post('/app_ai/day_frames', authenticateJWT, (req, res) => appAiController.dayFrames(req, res));
+// ⭐ 2026-10-17 修：原来是 `appAiController.tickets`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/tickets', authenticateJWT, (req, res) => appAiController.tickets(req, res));
+// ⭐ 2026-10-17 修：原来是 `appAiController.memories`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/memories', authenticateJWT, (req, res) => appAiController.memories(req, res));
+router.post('/app_ai/memory_photos', authenticateJWT, (req, res) => appAiController.memoryPhotos(req, res));
+// ⭐ 2026-10-19 人生章节书本：某一年每天的照片 + 地点 + 标签 + 已确认记忆文字（只读）
+router.post('/app_ai/chapter_book', authenticateJWT, (req, res) => appAiController.chapterBook(req, res));
 router.post('/app_ai/memory/save', authenticateJWT, appAiController.saveMemory);
 router.post('/app_ai/memory/remove', authenticateJWT, appAiController.removeMemory);
-router.post('/app_ai/duplicates', authenticateJWT, appAiController.duplicates);
+// ⭐ 2026-10-19 记忆详情：把选中的照片移出记忆（只改记忆，不删原图；批量一次提交）
+router.post('/app_ai/memory/exclude', authenticateJWT, (req, res) => appAiController.excludeMemoryPhotos(req, res));
+// ⭐ 2026-10-18 记忆页：忽略 / 恢复候选
+router.post('/app_ai/memory/ignore', authenticateJWT, appAiController.ignoreMemory);
+router.post('/app_ai/memory/restore', authenticateJWT, appAiController.restoreIgnored);
+// ⭐ 2026-10-17 修：原来是 `appAiController.duplicates`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/duplicates', authenticateJWT, (req, res) => appAiController.duplicates(req, res));
+// ⭐ 2026-10-17 P5：补齐 content_md5（只算 size 撞车的候选 ⇒ 省 86% 读盘）。
+// ⚠️ 一律 `(req,res)=>controller.method(...)` 包一层：裸传方法引用会丢 `this`（本项目踩过 7 次）。
+router.post('/app_ai/duplicates/backfill', authenticateJWT, (req, res) => appAiController.backfillDuplicates(req, res));
+// ⭐ 2026-10-17 重复清理：合并元数据 + 回收站，一步到位且可撤销
+router.post('/app_ai/duplicates/resolve', authenticateJWT, (req, res) => appAiController.resolveDuplicates(req, res));
 router.post('/app_ai/models', authenticateJWT, appAiController.models);
-router.post('/app_ai/year_report', authenticateJWT, appAiController.yearReport);
-router.post('/app_ai/travel_lines', authenticateJWT, appAiController.travelLines);
+// ⭐ 2026-10-17 修：原来是 `appAiController.yearReport`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/year_report', authenticateJWT, (req, res) => appAiController.yearReport(req, res));
+// ⭐ 2026-10-17 修：原来是 `appAiController.travelLines`（裸方法引用）⇒ `this` 丢失 ⇒
+// 方法体内的 `this._scopeParams()` 抛 TypeError，接口恒 500。
+// 项目约定是路由层包一层箭头（同 transmissionRouter / securityRouter）。
+router.post('/app_ai/travel_lines', authenticateJWT, (req, res) => appAiController.travelLines(req, res));
 router.post('/file_view/list', authenticateJWT, createFileViewHandler('photo', 'list'));
 router.post('/file_view/search', authenticateJWT, createFileViewHandler('photo', 'globalSearch'));
 

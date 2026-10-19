@@ -31,6 +31,10 @@ import java.io.Serializable
 import java.util.concurrent.TimeUnit
 
 object TvAppUpdate {
+    // ⚠️ 该地址在 2026-10 之前是 NasCabOS 时代的历史配置（android_tv.json 里写着 1.1.0 +
+    // download.nas.cab 的旧 TV 包），与本 App（versionName 1.0.0 / com.nascabos.tv）不同渠道，
+    // 会造成「每次打开都提示升级到 1.1.0」。所以下面 parseJson 增加了渠道校验：
+    // 只有显式声明 app_package 且 version_code 大于本地 versionCode 的配置才被信任。
     private const val UPDATE_URL = "https://nas.cab/config/updateInfo/android_tv.json"
     private const val PREFS_NAME = "tv_app_update"
     private const val KEY_LAST_CHECK_MS = "last_check_ms"
@@ -67,10 +71,25 @@ object TvAppUpdate {
                         val obj = JSONObject(json)
                         val newVersion = obj.optString("new_version").trim()
                         val constraint = obj.optBoolean("constraint", false)
+                        val remoteVersionCode = obj.optInt("version_code", 0)
+                        val apkPackage = obj.optString("apk_package").trim()
 
                         val localVersion = getLocalVersionName(activity)
-                        val shouldUpdate = compareVersions(newVersion, localVersion) > 0
-                        Log.d("nascab", "check: newVersion=$newVersion, localVersion=$localVersion, shouldUpdate=$shouldUpdate")
+                        val localVersionCode = getLocalVersionCode(activity)
+                        // 渠道校验：必须是同一个包（缺省视为同包，便于老配置平滑过渡），
+                        // 且必须显式给出 version_code —— 没有 version_code 的配置是历史遗留（NasCabOS 的 1.1.0），
+                        // 其 APK 与我们不是同一份产物，绝不能提示升级。
+                        val packageMatches = apkPackage.isEmpty() || apkPackage == activity.packageName
+                        val channelValid = remoteVersionCode > 0 && packageMatches
+                        val versionNewer = compareVersions(newVersion, localVersion) > 0
+                        val codeNewer = remoteVersionCode > localVersionCode
+                        val shouldUpdate = channelValid && versionNewer && codeNewer
+                        Log.d(
+                            "nascab",
+                            "check: newVersion=$newVersion localVersion=$localVersion localCode=$localVersionCode " +
+                                "remoteCode=$remoteVersionCode apkPkg='$apkPackage' channelValid=$channelValid " +
+                                "versionNewer=$versionNewer codeNewer=$codeNewer shouldUpdate=$shouldUpdate",
+                        )
                         return UpdateAppBean()
                             .setUpdate(if (shouldUpdate) "Yes" else "No")
                             .setNewVersion(newVersion)
@@ -110,6 +129,18 @@ object TvAppUpdate {
                     override fun noNewApp(error: String) {}
                 },
             )
+    }
+
+    private fun getLocalVersionCode(activity: FragmentActivity): Long {
+        return runCatching {
+            val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+        }.getOrDefault(0L)
     }
 
     private fun getLocalVersionName(activity: FragmentActivity): String {

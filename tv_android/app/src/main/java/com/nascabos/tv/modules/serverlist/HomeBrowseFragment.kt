@@ -38,6 +38,7 @@ import com.nascabos.tv.MainActivity
 import com.nascabos.tv.R
 import com.nascabos.tv.core.api.ApiConfig
 import com.nascabos.tv.core.api.ApiController
+import com.nascabos.tv.core.api.AppAccessStore
 import com.nascabos.tv.core.api.AuthApiService
 import com.nascabos.tv.core.api.p2p.P2pIcePreference
 import com.nascabos.tv.data.model.ServerInfo
@@ -160,6 +161,16 @@ class HomeBrowseFragment : BrowseSupportFragment() {
                 renderRows(viewModel.lastSelected.value)
             }
         }
+
+        // 本账号可用应用（服务端 userAllowedApps 白名单 + 普通用户固定隐藏项）：拿到后重绘，
+        // 没有权限的应用整行不出现（例如只给影视/音乐的账号看不到相册行）。
+        viewLifecycleOwner.lifecycleScope.launch {
+            AppAccessStore.allowedApps.collectLatest {
+                renderRows(viewModel.lastSelected.value)
+                requestInitialFocus()
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch { AppAccessStore.refresh() }
     }
 
     override fun onStart() {
@@ -192,47 +203,53 @@ class HomeBrowseFragment : BrowseSupportFragment() {
         val serverName = server?.serverName?.trim().orEmpty()
         title = if (serverName.isNotEmpty()) serverName else getString(R.string.app_display_name)
 
-        val videoTitle = getString(R.string.home_menu_video)
-        val videoHeader = HeaderItem(0L, videoTitle)
-        val video = ArrayObjectAdapter(cardPresenter).apply {
-            add(HomeEntryCard(HomeEntryKind.VideoMovies, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoTvSeries, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoRecent, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoFavorite, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoCustomAlbums, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoSmartAlbums, subtitle = videoTitle))
-            add(HomeEntryCard(HomeEntryKind.VideoCollections, subtitle = videoTitle))
-        }
-        rowsAdapter.add(ListRow(videoHeader, video))
+        // 行号按实际加入的行依次递增：无权限的应用整行不出现，不能留空 header id
+        var rowId = 0L
 
-        val photoTitle = getString(R.string.home_menu_photo)
-        val photoHeader = HeaderItem(1L, photoTitle)
-        val photo = ArrayObjectAdapter(cardPresenter).apply {
-            add(HomeEntryCard(HomeEntryKind.PhotoTimeline, subtitle = photoTitle))
-            add(HomeEntryCard(HomeEntryKind.PhotoToday, subtitle = photoTitle))
-            add(HomeEntryCard(HomeEntryKind.PhotoFavorite, subtitle = photoTitle))
-            add(HomeEntryCard(HomeEntryKind.PhotoCustomAlbums, subtitle = photoTitle))
-            add(HomeEntryCard(HomeEntryKind.PhotoSmartAlbums, subtitle = photoTitle))
-            add(HomeEntryCard(HomeEntryKind.PhotoCollections, subtitle = photoTitle))
-        }
-        rowsAdapter.add(ListRow(photoHeader, photo))
-
-        val musicTitle = getString(R.string.home_menu_music)
-        val musicHeader = HeaderItem(2L, musicTitle)
-        val music = ArrayObjectAdapter(cardPresenter).apply {
-            if (isMusicPlaying) {
-                add(HomeEntryCard(HomeEntryKind.MusicNowPlaying, subtitle = musicTitle))
+        if (AppAccessStore.allows(APP_KEY_MOVIE)) {
+            val videoTitle = getString(R.string.home_menu_video)
+            val video = ArrayObjectAdapter(cardPresenter).apply {
+                add(HomeEntryCard(HomeEntryKind.VideoMovies, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoTvSeries, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoRecent, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoFavorite, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoCustomAlbums, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoSmartAlbums, subtitle = videoTitle))
+                add(HomeEntryCard(HomeEntryKind.VideoCollections, subtitle = videoTitle))
             }
-            add(HomeEntryCard(HomeEntryKind.MusicTracks, subtitle = musicTitle))
-            add(HomeEntryCard(HomeEntryKind.MusicAlbums, subtitle = musicTitle))
-            add(HomeEntryCard(HomeEntryKind.MusicArtists, subtitle = musicTitle))
-            add(HomeEntryCard(HomeEntryKind.MusicPlaylists, subtitle = musicTitle))
-            add(HomeEntryCard(HomeEntryKind.MusicFavorite, subtitle = musicTitle))
+            rowsAdapter.add(ListRow(HeaderItem(rowId++, videoTitle), video))
         }
-        rowsAdapter.add(ListRow(musicHeader, music))
 
+        if (AppAccessStore.allows(APP_KEY_PHOTO)) {
+            val photoTitle = getString(R.string.home_menu_photo)
+            val photo = ArrayObjectAdapter(cardPresenter).apply {
+                add(HomeEntryCard(HomeEntryKind.PhotoTimeline, subtitle = photoTitle))
+                add(HomeEntryCard(HomeEntryKind.PhotoToday, subtitle = photoTitle))
+                add(HomeEntryCard(HomeEntryKind.PhotoFavorite, subtitle = photoTitle))
+                add(HomeEntryCard(HomeEntryKind.PhotoCustomAlbums, subtitle = photoTitle))
+                add(HomeEntryCard(HomeEntryKind.PhotoSmartAlbums, subtitle = photoTitle))
+                add(HomeEntryCard(HomeEntryKind.PhotoCollections, subtitle = photoTitle))
+            }
+            rowsAdapter.add(ListRow(HeaderItem(rowId++, photoTitle), photo))
+        }
+
+        if (AppAccessStore.allows(APP_KEY_MUSIC)) {
+            val musicTitle = getString(R.string.home_menu_music)
+            val music = ArrayObjectAdapter(cardPresenter).apply {
+                if (isMusicPlaying) {
+                    add(HomeEntryCard(HomeEntryKind.MusicNowPlaying, subtitle = musicTitle))
+                }
+                add(HomeEntryCard(HomeEntryKind.MusicTracks, subtitle = musicTitle))
+                add(HomeEntryCard(HomeEntryKind.MusicAlbums, subtitle = musicTitle))
+                add(HomeEntryCard(HomeEntryKind.MusicArtists, subtitle = musicTitle))
+                add(HomeEntryCard(HomeEntryKind.MusicPlaylists, subtitle = musicTitle))
+                add(HomeEntryCard(HomeEntryKind.MusicFavorite, subtitle = musicTitle))
+            }
+            rowsAdapter.add(ListRow(HeaderItem(rowId++, musicTitle), music))
+        }
+
+        // 设置行永远显示（登出/语言/播放设置不属于任何媒体应用）
         val settingsTitle = getString(R.string.home_settings_section)
-        val settingsHeader = HeaderItem(3L, settingsTitle)
         val settings = ArrayObjectAdapter(cardPresenter).apply {
             if (isDebuggable()) {
                 add(HomeEntryCard(HomeEntryKind.DevNetworkChannel, subtitle = ApiController.connectChannelDisplayValue))
@@ -241,7 +258,7 @@ class HomeBrowseFragment : BrowseSupportFragment() {
             add(HomeEntryCard(HomeEntryKind.SettingsLanguage, subtitle = settingsTitle))
             add(HomeEntryCard(HomeEntryKind.SettingsLogout, subtitle = settingsTitle))
         }
-        rowsAdapter.add(ListRow(settingsHeader, settings))
+        rowsAdapter.add(ListRow(HeaderItem(rowId++, settingsTitle), settings))
     }
 
     private fun onEntryClicked(kind: HomeEntryKind) {
@@ -502,6 +519,11 @@ class HomeBrowseFragment : BrowseSupportFragment() {
     }
 
     companion object {
+        /** 与服务端 config.defaultApps 的 appKey 一致 */
+        private const val APP_KEY_MOVIE = "movie"
+        private const val APP_KEY_PHOTO = "photo"
+        private const val APP_KEY_MUSIC = "music"
+
         fun newInstance(): HomeBrowseFragment = HomeBrowseFragment()
     }
 
@@ -708,6 +730,9 @@ class HomeBrowseFragment : BrowseSupportFragment() {
 
         private fun logout() {
             viewLifecycleOwner.lifecycleScope.launch {
+                // 主动登出后不再自动登录（否则下次启动又被登回去），并清掉权限缓存
+                MainActivity.setAutoLoginEnabled(requireContext(), false)
+                com.nascabos.tv.core.api.AppAccessStore.clear()
                 runCatching { ApiController.disconnectP2p() }
                 ApiController.setBaseUrl("")
                 ApiController.setTokens("", "")

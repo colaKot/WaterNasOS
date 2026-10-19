@@ -58,7 +58,7 @@ class _LocalBackupDialogState extends State<_LocalBackupDialog> {
   }
 
   Future<void> _pickLocalSource() async {
-    final path = await FilePicker.platform.getDirectoryPath();
+    final path = await FilePicker.getDirectoryPath();
     if (path == null || path.trim().isEmpty) return;
     final nextPath = path.trim();
     _sourceCtrl.text = nextPath;

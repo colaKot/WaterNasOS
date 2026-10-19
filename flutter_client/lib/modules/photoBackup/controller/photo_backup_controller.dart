@@ -1016,6 +1016,18 @@ class PhotoBackupController extends GetxController {
       if (light.isLiveVideo) {
         final live = await light.asset.originFileWithSubtype;
         if (live == null) return null;
+        // ⭐ 2026-10-19 修「一张照片备份成两份」：
+        //   没有动图（Motion Photo）的普通 JPEG，Android 上
+        //   `originFileWithSubtype` 会**原样把图片自身返回**，于是每张照片都跟着
+        //   多出一个字节完全相同的 `<同名>.MOV`（实测 xiaomi PTP-AN70 全部如此）。
+        //   按文件头判定真实类型，不是视频就整条丢弃，别传上去当假视频。
+        if (await _looksLikeImageFile(live)) {
+          _photoBackupLog(
+            'skip fake live video (content is image)',
+            '${light.sourceUniqueId} ${live.path}',
+          );
+          return null;
+        }
         file = live;
       } else {
         final f = await light.asset.originFile;
@@ -1037,6 +1049,43 @@ class PhotoBackupController extends GetxController {
       _photoBackupLog('materialize failed', '${light.sourceUniqueId} -> $e');
       return null;
     }
+  }
+
+  /// 文件头是不是图片（JPEG / PNG / GIF / BMP）。
+  ///
+  /// 只用来识别「扩展名说是视频、内容其实是图片」的假实况视频，
+  /// 与 name/扩展名无关 —— 这类文件在库里表现为「灰底沙漏 + 00:00」的假视频。
+  static const List<List<int>> _imageMagics = <List<int>>[
+    <int>[0xFF, 0xD8, 0xFF], // JPEG
+    <int>[0x89, 0x50, 0x4E, 0x47], // PNG
+    <int>[0x47, 0x49, 0x46, 0x38], // GIF8
+    <int>[0x42, 0x4D], // BM
+  ];
+
+  static Future<bool> _looksLikeImageFile(File file) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open();
+      final head = await raf.read(12);
+      for (final magic in _imageMagics) {
+        if (head.length < magic.length) continue;
+        var matched = true;
+        for (var i = 0; i < magic.length; i++) {
+          if (head[i] != magic[i]) {
+            matched = false;
+            break;
+          }
+        }
+        if (matched) return true;
+      }
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+    }
+    return false;
   }
 
   /// size 预检：问服务端「这些 size 在我全部相册源里有没有候选」。

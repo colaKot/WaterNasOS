@@ -1497,13 +1497,10 @@ class EncryptedSpaceDetailController extends GetxController {
         return;
       }
 
-      final res = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withData: false,
-        withReadStream: false,
+      final res = await FilePicker.pickFiles(
         type: FileType.any,
       );
-      final picked = res?.files ?? const <PlatformFile>[];
+      final picked = res;
       final valid = picked.where((f) => (f.path ?? '').trim().isNotEmpty);
       if (valid.isEmpty) return;
       final entries = valid

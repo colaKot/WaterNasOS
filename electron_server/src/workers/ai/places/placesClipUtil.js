@@ -371,6 +371,19 @@ function getDim() {
   return _dim;
 }
 
+/**
+ * ⭐ 2026-10-17 塔标识：用实际加载的视觉模型文件名（去扩展名）当作「向量空间指纹」。
+ * 换塔 / 换量化版本都会变 ⇒ 用来拒绝跨塔比较（见 photo_index.emb_model）。
+ */
+function getModelTag() {
+  try {
+    const p = resolveVisionModelPath();
+    return p ? path.basename(p).replace(/\.[^.]+$/, '') : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 module.exports = {
   isAvailable,
   ensureReady,
@@ -381,6 +394,7 @@ module.exports = {
   getTextEmbeds,
   getDim,
   resolveVisionModelPath,
+  getModelTag,
   CLIP_DIR,
   // ⭐ 2026-10-15「可判性」head
   ensureScorableHead,

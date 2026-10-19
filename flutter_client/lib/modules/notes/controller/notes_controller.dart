@@ -1046,7 +1046,7 @@ class NotesController extends GetxController {
         DialogUtil.dismissLoading();
         loadingShown = false;
       }
-      final savedPath = await FilePicker.platform.saveFile(
+      final savedPath = await FilePicker.saveFile(
         dialogTitle: 'notes_export_pdf'.tr,
         fileName: fileName,
         type: FileType.custom,
@@ -1309,10 +1309,10 @@ class NotesController extends GetxController {
   }
 
   Future<void> insertImageFromPicker() async {
-    final file = await FilePicker.platform.pickFiles(type: FileType.image);
-    final picked = file?.files.single;
+    final files = await FilePicker.pickFiles(type: FileType.image);
+    final picked = files.length == 1 ? files.first : null;
     if (picked == null || currentNote.value == null) return;
-    if ((picked.bytes == null || picked.bytes!.isEmpty) &&
+    if ((await picked.readAsBytes()).isEmpty &&
         (picked.path == null || picked.path!.trim().isEmpty)) {
       return;
     }

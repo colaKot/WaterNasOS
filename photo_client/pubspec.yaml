@@ -2,7 +2,7 @@ name: nascab_photo
 description: "WaterNasOS Photo —— 复用主客户端（WaterNasOS）代码的独立客户端"
 publish_to: 'none'
 
-version: 1.1.0+8
+version: 2.0.0+9
 
 environment:
   sdk: ^3.10.1
@@ -51,3 +51,15 @@ flutter:
     - family: RobotoMono
       fonts:
         - asset: assets/fonts/RobotoMono-Regular.ttf
+
+
+# sqlite3 3.x 的原生库由 Dart build hooks 产出。默认会从 GitHub Releases 下载预编译 DLL，
+# 该地址在受限网络下经常拉不到（报 "Building native assets failed"）。
+# 统一改为用仓库内的官方 amalgamation 源码本地编译，构建完全离线、可重现。
+hooks:
+  user_defines:
+    sqlite3:
+      source: source
+      path: ../third_party/sqlite3/sqlite3.c
+      defines:
+        default_options: true

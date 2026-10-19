@@ -75,20 +75,17 @@ class tableConfig {
     try {
       const knex = knexUtil.getInstance(dbUtil.DB_PATHS.MAIN_DB);
 
-      // 检查配置是否已存在
-      const existingConfig = await knex(this.tableName).where({ key: key, uid: uid }).first();
-
-      if (existingConfig) {
-        // 更新现有配置
-        await knex(this.tableName).where({ key: key, uid: uid }).update({ value: value });
-      } else {
-        // 插入新配置
-        await knex(this.tableName).insert({
-          uid: uid,
-          key: key,
-          value: value,
-        });
-      }
+      // ⭐ 2026-10-18：改成单条 upsert。
+      //   原来是「先查再插/改」，跨进程（cluster 的多个 express worker 首启同时写
+      //   apiPortHttp 之类的配置）会 TOCTOU：两边都查不到 → 两边都 INSERT →
+      //   后到者 UNIQUE constraint failed: config.uid, config.key，配置其实写进去了，
+      //   但日志里每次都留一条 ❌ error（2026-10-18 双实例模拟实测）。
+      //   依赖 config 表上的 UNIQUE(uid, key) 索引；SQLite 3.24+ 支持 ON CONFLICT。
+      await knex.raw(
+        'INSERT INTO `config` (`uid`, `key`, `value`) VALUES (?, ?, ?) ' +
+          'ON CONFLICT(`uid`, `key`) DO UPDATE SET `value` = excluded.`value`',
+        [uid, key, value]
+      );
       return true;
     } catch (err) {
       Logger.error(`❌ save config failed: ${key}`, err);

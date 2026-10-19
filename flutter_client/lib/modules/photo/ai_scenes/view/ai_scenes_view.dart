@@ -5,6 +5,7 @@ import '../../../base/components/app_custom_search_dialog.dart';
 import '../../../../utils/device_utils.dart';
 import '../controller/ai_scenes_controller.dart';
 import 'parts/ai_scene_timeline_overlay.dart';
+import 'parts/ai_scene_category_bar.dart';
 import 'parts/ai_scenes_grid.dart';
 import 'parts/ai_scenes_top_bar.dart';
 
@@ -115,6 +116,7 @@ class AiScenesView extends StatelessWidget {
             ),
             body: Column(
               children: [
+                AiSceneCategoryBar(controller: ctrl),
                 AiScenesSearchSummary(controller: ctrl),
                 Expanded(child: AiScenesGrid(controller: ctrl)),
               ],
@@ -128,6 +130,7 @@ class AiScenesView extends StatelessWidget {
               Column(
                 children: [
                   AiScenesTopBar(controller: ctrl),
+                  AiSceneCategoryBar(controller: ctrl),
                   AiScenesSearchSummary(controller: ctrl),
                   Expanded(child: AiScenesGrid(controller: ctrl)),
                 ],

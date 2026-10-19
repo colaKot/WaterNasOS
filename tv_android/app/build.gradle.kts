@@ -17,8 +17,11 @@ android {
         applicationId = "com.nascabos.tv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.0.0"
+        // 2026-10-18：修复「不自动登录 / 无权限应用仍显示 / 封面全空白」+ 升级渠道校验
+        // ⚠️ 线上已存在 1.1.0（versionCode=10，CN=nascabos 签名），所以这里必须 >1.1.0 / >10，
+        //    否则每次启动仍会提示升级到 1.1.0
+        versionCode = 20
+        versionName = "2.0.0"
     }
 
     packaging {

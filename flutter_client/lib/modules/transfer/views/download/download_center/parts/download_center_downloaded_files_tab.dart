@@ -46,7 +46,9 @@ class _DownloadCenterDownloadedFilesTabState
       final loadingMore = controller.isLoadingMore.value;
       final extra = loadingMore && files.isNotEmpty ? 1 : 0;
 
-      final dirCaption = Platform.isIOS
+      // ⚠ 必须带 !kIsWeb：web 上访问 Platform.isIOS 会抛 Unsupported operation
+      // 而这里是 build 路径 ⇒ 整个 tab 会渲染成灰块。
+      final dirCaption = (!kIsWeb && Platform.isIOS)
           ? 'download_center_completed_dir_ios'.tr
           : '${'download_to'.tr} $dir';
 

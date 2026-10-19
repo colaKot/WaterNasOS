@@ -16,7 +16,6 @@ import '../../smart_album/controller/photo_smart_album_controller.dart';
 import '../../smart_album/service/photo_smart_album_api_service.dart';
 import '../../timeline/view/app_photo_album_timeline_page.dart';
 import 'app_photo_album_list_page.dart';
-import 'app_photo_peer_group_page.dart';
 import '../service/photo_album_api_service.dart';
 import 'dialogs/photo_album_create_edit_dialog.dart';
 
@@ -408,17 +407,6 @@ class _AppPhotoAlbumHomePageState extends State<AppPhotoAlbumHomePage> {
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  _Section(
-                    title: 'photo_peer_group'.tr,
-                    total: 0,
-                    onMore: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AppPhotoPeerGroupPage(),
-                      ),
-                    ),
-                    child: const PhotoPeerGroupStrip(),
                   ),
                 ],
               );

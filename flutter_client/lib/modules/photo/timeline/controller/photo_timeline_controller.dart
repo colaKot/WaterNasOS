@@ -83,6 +83,8 @@ class PhotoTimelineController extends GetxController {
   final int? initialFaceId;
   final List<int>? initialComboFaceIds;
   final String? initialPlaceName;
+  /// ⭐ 2026-10-19 首页大搜索栏带过来的关键词：首次进时间轴就按它搜
+  final String? initialSearch;
   final bool initialLoadTheDay;
   final String? initialGeohash;
 
@@ -104,6 +106,7 @@ class PhotoTimelineController extends GetxController {
     this.initialFaceId,
     this.initialComboFaceIds,
     this.initialPlaceName,
+    this.initialSearch,
     this.initialLoadTheDay = false,
     this.initialGeohash,
     this.precisionOverride = 0,
@@ -415,8 +418,21 @@ class PhotoTimelineController extends GetxController {
         }
       }
     }
+    // ⭐ 2026-10-19 首页搜索栏跳过来：先把关键词塞进控制器，再拉日期列表，
+    // 这样首屏就是搜索结果，不用等 500ms 防抖。
+    final initQ = (initialSearch ?? '').trim();
+    if (initQ.isNotEmpty) {
+      searchKeyword.value = initQ;
+      searchController.text = initQ;
+      searchController.selection =
+          TextSelection.collapsed(offset: initQ.length);
+    }
     _loadSettings();
     _loadDateList();
+    if (initQ.isNotEmpty) {
+      _parseSearch(initQ);
+      _fetchSuggestions(initQ);
+    }
     scrollController.addListener(_onScroll);
   }
 

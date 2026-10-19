@@ -23,6 +23,9 @@ class AiScenesController extends GetxController {
   final RxBool placeEnabled = true.obs;
 
   final RxString statusFilter = 'visiable'.obs;
+
+  /// ⭐ 2026-10-18 大类分组：all / food / travel / stay / nature / architecture / sport / pet / people / work / other
+  final RxString categoryFilter = 'all'.obs;
   final RxString keyword = ''.obs;
   final TextEditingController searchController = TextEditingController();
   Timer? _searchDebounce;
@@ -95,6 +98,27 @@ class AiScenesController extends GetxController {
     isSearching.value = false;
   }
 
+  /// 大类切换：只重算本地列表，不再打接口
+  void setCategoryFilter(String value) {
+    categoryFilter.value = value;
+    _applyFilter();
+  }
+
+  /// 每个大类下的相册数（给 chips 上的角标用；不含隐藏状态过滤，和「全部」口径一致）
+  Map<String, int> get categoryCounts {
+    final map = <String, int>{'all': 0};
+    for (final e in allItems) {
+      if (statusFilter.value != 'all') {
+        final wantHide = statusFilter.value == 'hide' || statusFilter.value == 'hidden';
+        if (wantHide != e.isHide) continue;
+      }
+      map['all'] = (map['all'] ?? 0) + 1;
+      final key = e.category.isEmpty ? 'other' : e.category;
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    return map;
+  }
+
   void _applyFilter() {
     final filter = statusFilter.value;
     final q = keyword.value.trim().toLowerCase();
@@ -105,8 +129,17 @@ class AiScenesController extends GetxController {
       return !e.isHide;
     }
 
+    bool matchCategory(AiSceneItem e) {
+      final c = categoryFilter.value;
+      if (c == 'all') return true;
+      if (c == 'other') return e.category.isEmpty;
+      return e.category == c;
+    }
+
+    bool matchAll(AiSceneItem e) => matchStatus(e) && matchCategory(e);
+
     if (q.isEmpty) {
-      items.assignAll(allItems.where(matchStatus));
+      items.assignAll(allItems.where(matchAll));
       return;
     }
 
@@ -115,7 +148,7 @@ class AiScenesController extends GetxController {
     if (searchOrder.isEmpty) {
       items.assignAll(
         allItems.where(
-          (e) => matchStatus(e) && e.placeName.toLowerCase().contains(q),
+          (e) => matchAll(e) && e.placeName.toLowerCase().contains(q),
         ),
       );
       return;
@@ -127,7 +160,7 @@ class AiScenesController extends GetxController {
     }
     final hit = <AiSceneItem>[];
     for (final e in allItems) {
-      if (!matchStatus(e)) continue;
+      if (!matchAll(e)) continue;
       if (!rank.containsKey(e.placeNameRaw)) continue;
       hit.add(e);
     }

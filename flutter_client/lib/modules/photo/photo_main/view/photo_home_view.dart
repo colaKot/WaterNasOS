@@ -17,6 +17,13 @@ import '../../ai_gps_add/view/ai_gps_add_view.dart';
 import '../../ai_scenes/view/ai_scenes_view.dart';
 import '../../ai_similar/view/ai_similar_view.dart';
 import '../../insight/view/app_photo_insight_view.dart';
+import '../../home_dashboard/view/photo_dashboard_view.dart';
+import '../../recall/view/photo_memory_view.dart';
+import '../../recall/view/photo_day_frame_view.dart';
+import '../../recall/view/photo_tickets_view.dart';
+import '../../recall/view/photo_annual_view.dart';
+import '../../ai_setting/view/photo_models_view.dart';
+import '../../search/view/photo_ask_overlay.dart';
 import '../../preview_setting/view/photo_preview_settings_view.dart';
 import '../../../folder_view/folder_view_module_type.dart';
 import '../../../folder_view/view/pc_folder_view_page.dart';
@@ -33,20 +40,32 @@ class PhotoHomeView extends StatelessWidget {
           final collapsed = ctrl.sidebarCollapsed.value;
           final leftWidth = collapsed ? 64.0 : ctrl.leftWidth.value;
 
-          return Row(
+          // ⭐ 2026-10-18 右下角挂相册 AI 问答浮窗：相册里任何页面都能随手问一句
+          // Row 不套 Positioned.fill：父级若给的是无界高度，Positioned.fill 会算不出尺寸。
+          // 非 positioned 的 Row 按自身尺寸参与 Stack 布局，右下角浮窗照样贴边。
+          return Stack(
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                width: leftWidth,
-                child: PhotoLeftMenu(
-                  controller: ctrl,
-                  collapsed: collapsed,
-                  onToggleCollapse: () =>
-                      ctrl.sidebarCollapsed.value = !collapsed,
-                ),
+              Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    width: leftWidth,
+                    child: PhotoLeftMenu(
+                      controller: ctrl,
+                      collapsed: collapsed,
+                      onToggleCollapse: () =>
+                          ctrl.sidebarCollapsed.value = !collapsed,
+                    ),
+                  ),
+                  Expanded(child: _buildRight(ctrl)),
+                ],
               ),
-              Expanded(child: _buildRight(ctrl)),
+              const Positioned(
+                right: 20,
+                bottom: 20,
+                child: PhotoAskOverlay(),
+              ),
             ],
           );
         });
@@ -63,13 +82,26 @@ class PhotoHomeView extends StatelessWidget {
           color: customColors?.mainContentBgColor ?? theme.colorScheme.surface,
           child: Obx(() {
             final key = ctrl.currentPageKey.value;
-            if (key == 'settings.source') {
+            // ⭐ 2026-10-18 相册首页（看板）：是相册的落地页，不分角色
+            if (key == 'home') {
+              return PhotoDashboardView(onNavigate: ctrl.selectPage);
+            } else if (key == 'memory') {
+              return PhotoMemoryView(onNavigate: ctrl.selectPage);
+            } else if (key == 'memory.day_frame') {
+              return const PhotoDayFrameView();
+            } else if (key == 'tickets') {
+              return const PhotoTicketsView();
+            } else if (key == 'annual') {
+              return PhotoAnnualView(onNavigate: ctrl.selectPage);
+            } else if (key == 'settings.source') {
               return const PhotoSourceSettingsView();
             } else if (key == 'all.timeline') {
-              return const PcPhotoTimelineView(
+              return PcPhotoTimelineView(
                 listType: 'timeline',
-                key: ValueKey('timeline'),
+                key: const ValueKey('timeline'),
                 alertWhenNoSourcePath: true,
+                // 首页搜索栏跳过来时把关键词带进时间线（取一次就清空）
+                initialSearch: ctrl.takePendingSearch(),
               );
             } else if (key == 'favorites') {
               return const PcPhotoTimelineView(
@@ -97,6 +129,8 @@ class PhotoHomeView extends StatelessWidget {
               return const PhotoTheDayView();
             } else if (key == "settings.ai") {
               return const PhotoAiSettingsView();
+            } else if (key == "settings.models") {
+              return const PhotoModelsView();
             } else if (key == "settings.preview") {
               return const PhotoPreviewSettingsView();
             } else if (key == "ai.face") {

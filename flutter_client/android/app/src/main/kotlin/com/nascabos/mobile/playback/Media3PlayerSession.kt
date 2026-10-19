@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
@@ -36,6 +37,9 @@ class Media3PlayerSession(
         private set
 
     private var playerViewRef: PlayerView? = null
+
+    /** ⭐ 2026-10-19 画面缩放：zoom = 铺满（裁边）/ fit = 适应（留黑边）。 */
+    private var resizeMode: String = "zoom"
     private var requestHeaders: Map<String, String> = emptyMap()
 
     private var mainUrl: String? = null
@@ -256,6 +260,23 @@ class Media3PlayerSession(
         playerView.useController = false
         configureSubtitleView(playerView)
         player?.let { playerView.player = it }
+        applyResizeMode()
+    }
+
+    /** ⭐ 2026-10-19 铺满 / 适应：改原生 PlayerView 的 RESIZE_MODE，四周不再留黑边。 */
+    fun setResizeMode(mode: String) {
+        resizeMode = mode
+        applyResizeMode()
+    }
+
+    private fun applyResizeMode() {
+        val view = playerViewRef ?: return
+        view.resizeMode =
+            when (resizeMode) {
+                "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
     }
 
     private fun configureSubtitleView(playerView: PlayerView) {

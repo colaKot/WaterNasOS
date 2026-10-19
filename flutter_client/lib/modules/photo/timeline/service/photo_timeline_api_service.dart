@@ -4,6 +4,37 @@ import '../models/photo_timeline_model.dart';
 class PhotoTimelineApiService extends BaseApiService {
   /// ⭐ 2026-10-16 P0-4：搜索联想（人物 / 场景 / 活动 / 相机 / 文件名 / OCR / 年份）。
   /// 计数按当前用户可见范围重算，可直接展示。
+  /// ⭐ 2026-10-18 \u641c\u7d22\u6d6e\u5c42\u7684\u63a8\u8350\u8bcd\uff1a\u6309\u5f53\u524d\u7528\u6237\u81ea\u5df1\u7684\u5e93\u7b97\u51fa\u6765\u7684\u573a\u666f/\u6d3b\u52a8/\u4eba\u7269\u3002
+  Future<ApiResponse<List<PhotoSearchSuggestion>>> hotSearches({int limit = 16}) async {
+    final res = await apiPost<Map<String, dynamic>>(
+      '/api/photo/search/hot',
+      body: {'limit': limit},
+      showLoading: false,
+    );
+    if (!res.success) {
+      return ApiResponse.failure(
+        res.message ?? 'network_failure',
+        code: res.code,
+        rawResponse: res.rawResponse,
+      );
+    }
+    final data = res.data ?? <String, dynamic>{};
+    final raw = data['items'];
+    final items = raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => PhotoSearchSuggestion.fromJson(e.cast<String, dynamic>()))
+            .where((e) => e.label.isNotEmpty)
+            .toList()
+        : <PhotoSearchSuggestion>[];
+    return ApiResponse.success(
+      items,
+      message: res.message,
+      code: res.code,
+      rawResponse: res.rawResponse,
+    );
+  }
+
   Future<ApiResponse<List<PhotoSearchSuggestion>>> suggestSearch({
     required String query,
     int limit = 8,

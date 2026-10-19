@@ -41,8 +41,81 @@ class DbUtil {
       await this.initConnect(dbPath);
     }
     if (createTableAndIndex) {
-      await this.createAllTablesAndIndexes(); // 创建所有表和索引
+      // ⭐ 跨进程互斥（详见 _acquireInitLock 注释）：clientless/Docker 模式没有单实例锁，
+      // 两个进程指向同一 data 目录会在「建索引」的 TOCTOU 上把后到者打死。
+      const releaseInitLock = await this._acquireInitLock(dbFolder);
+      try {
+        await this.createAllTablesAndIndexes(); // 创建所有表和索引
+      } finally {
+        await releaseInitLock();
+      }
     }
+  }
+
+  /**
+   * 跨进程「schema 初始化」互斥锁。
+   *
+   * 为什么需要：Electron 模式靠 app.requestSingleInstanceLock() 挡住第二个实例，
+   * 但 **clientless / Docker 模式没有那个锁**。两个进程指向同一 data 目录时，
+   * 建表/建索引是「先查后建」的 TOCTOU：都查不到 → 都执行 CREATE INDEX →
+   * 后到者拿到 already exists → 整个 init 失败退出（2026-10-18 双实例模拟实测 rc=1）。
+   * 这里只把「建表 + 建索引 + 跑迁移」串行化，启动完成立即释放，
+   * 之后两个进程仍共用同一个 WAL 库（busy_timeout 在 knexUtil 里已配）。
+   *
+   * 兜底：锁文件里的 PID 已不存在（进程被强杀）⇒ 视为陈旧锁清掉；
+   *      等待超时只告警不阻断启动 —— 宁可冒一次竞态，也不能让用户起不来。
+   */
+  async _acquireInitLock(folder, timeoutMs = 120000) {
+    const lockPath = path.join(folder, 'nascab_init.lock');
+    const noop = async () => {};
+    const deadline = Date.now() + timeoutMs;
+    let fd = null;
+    while (Date.now() < deadline) {
+      try {
+        fd = fs.openSync(lockPath, 'wx');
+        try {
+          fs.writeSync(fd, String(process.pid));
+        } catch (_) {}
+        break;
+      } catch (e) {
+        if (!e || e.code !== 'EEXIST') {
+          Logger.warn('⚠️ init lock unavailable, continue without lock:', e && e.message);
+          return noop;
+        }
+        let stale = false;
+        try {
+          const pid = parseInt(String(fs.readFileSync(lockPath, 'utf8')).trim(), 10);
+          if (Number.isInteger(pid) && pid > 0) {
+            try {
+              process.kill(pid, 0);
+            } catch (err) {
+              if (err && err.code === 'ESRCH') stale = true;
+            }
+          } else if (Date.now() - fs.statSync(lockPath).mtimeMs > 120000) {
+            stale = true;
+          }
+        } catch (_) {}
+        if (stale) {
+          try {
+            fs.unlinkSync(lockPath);
+          } catch (_) {}
+          continue;
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    if (fd === null) {
+      Logger.warn('⚠️ init lock timeout, continue without lock（可能有实例正在初始化）');
+      return noop;
+    }
+    return async () => {
+      try {
+        fs.closeSync(fd);
+      } catch (_) {}
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (_) {}
+    };
   }
   /**
    * 创建所有表和索引 调用此函数前必须先init初始化数据库连接
@@ -199,6 +272,10 @@ class DbUtil {
       },
       {
         fileName: 'tablePhotoIndex', //照片索引表
+        connection: this.getConnectPhotoDb(),
+      },
+      {
+        fileName: 'tablePhotoEmb', //照片向量检索表（sqlite-vec vec0 虚表）
         connection: this.getConnectPhotoDb(),
       },
       {
@@ -397,6 +474,25 @@ class DbUtil {
       await tableClass.createIndexes(tableFileName.connection); //创建索引（如果不存在）
     }
     Logger.info(`✅ Database schema ready`);
+
+    // ⭐ 2026-10-17 结构变更迁移（schema-as-code）。
+    // 位置很关键：必须排在「建表 + 补列」**之后** ——
+    // 迁移描述的是对既有 schema 的增量变更，跑在建表之前会找不到表。
+    // ⛔ 清单不一致（有迁移文件没登记进 _order.js）或迁移本身失败时**拒绝启动**：
+    //    带着未知顺序的 schema 跑下去，比不启动危险得多。
+    try {
+      const migrations = require('./migrations');
+      const result = await migrations.migrate({
+        knexMain: this.getConnectMainDb() && this.getConnectMainDb().knex,
+        knexPhoto: this.getConnectPhotoDb() && this.getConnectPhotoDb().knex,
+      });
+      if (result.applied.length > 0) {
+        Logger.info(`✅ Applied migrations: ${result.applied.join(', ')}`);
+      }
+    } catch (err) {
+      Logger.error('❌ Database migration failed（拒绝启动，避免 schema 与代码不一致）:', err);
+      throw err;
+    }
   }
 
   // 静态方法 - 获取预定义的数据库路径

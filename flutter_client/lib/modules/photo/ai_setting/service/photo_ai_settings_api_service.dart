@@ -104,6 +104,21 @@ class PhotoAiSettingsApiService extends BaseApiService {
   // 2026-10-16 P1/P2 照片域「智能发现」：全部对应 /api/photo/app_ai/* 的只读聚合
   // ---------------------------------------------------------------------------
 
+  /// ⭐⭐ 2026-10-18 相册 AI 问答。返回 { mode, answer, reason, context }，
+  /// mode=rule 说明没配模型（用的是本地统计），界面要如实告知。
+  Future<ApiResponse<Map<String, dynamic>>> ask(String question) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/app_ai/ask',
+      body: {'question': question},
+      showLoading: false,
+    );
+  }
+
+  /// ⭐ 2026-10-18 相册首页看板：我的照片 / 拍摄时光 / 足迹 / 镜头里的相伴 / 那年今日
+  Future<ApiResponse<Map<String, dynamic>>> getHomeSummary() {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/home_summary', body: {}, showLoading: false);
+  }
+
   /// P1-17 一日一帧
   Future<ApiResponse<Map<String, dynamic>>> getDayFrames({int days = 30}) {
     return apiPost<Map<String, dynamic>>('/api/photo/app_ai/day_frames', body: {'days': days}, showLoading: false);
@@ -115,8 +130,47 @@ class PhotoAiSettingsApiService extends BaseApiService {
   }
 
   /// P1-14 记忆：候选 + 已确认
-  Future<ApiResponse<Map<String, dynamic>>> getMemories({int days = 365, int minPhotos = 8}) {
-    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memories', body: {'days': days, 'min_photos': minPhotos}, showLoading: false);
+  Future<ApiResponse<Map<String, dynamic>>> getMemories({int days = 365, int minPhotos = 8, int limit = 60}) {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memories', body: {
+      'days': days,
+      'min_photos': minPhotos,
+      'limit': limit,
+    }, showLoading: false);
+  }
+
+  /// ⭐ 2026-10-19 记忆详情：按记忆 key（`日期|geohash5`）取这一簇的全部照片
+  Future<ApiResponse<Map<String, dynamic>>> getMemoryPhotos(
+    String key, {
+    String date = '',
+    int limit = 500,
+  }) {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memory_photos', body: {
+      'key': key,
+      'date': date,
+      'limit': limit,
+    }, showLoading: false);
+  }
+
+  /// ⭐ 2026-10-19 记忆详情：把选中的照片「移出记忆」（只改记忆，不删原图；一次提交多张）
+  Future<ApiResponse<Map<String, dynamic>>> excludeMemoryPhotos(
+    String key, {
+    String date = '',
+    required List<String> hashes,
+  }) {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memory/exclude', body: {
+      'key': key,
+      'date': date,
+      'hashes': hashes,
+    });
+  }
+
+  /// ⭐ 2026-10-19 人生章节「书本」：某一年的每一天（照片 + 地点 + 标签 + 备注）
+  Future<ApiResponse<Map<String, dynamic>>> getChapterBook(int year) {
+    return apiPost<Map<String, dynamic>>(
+      '/api/photo/app_ai/chapter_book',
+      body: {'year': year, 'max_days': 366, 'per_day': 24},
+      showLoading: false,
+    );
   }
 
   /// P1-14 记忆：确认保存
@@ -127,6 +181,22 @@ class PhotoAiSettingsApiService extends BaseApiService {
   /// P1-14 记忆：删除
   Future<ApiResponse<Map<String, dynamic>>> removeMemory(String key) {
     return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memory/remove', body: {'key': key});
+  }
+
+  /// ⭐ 2026-10-18 记忆：忽略一条候选（不再推荐，不删照片）
+  Future<ApiResponse<Map<String, dynamic>>> ignoreMemory(Map<String, dynamic> candidate) {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memory/ignore', body: {
+      'key': candidate['key'],
+      'date': candidate['date'],
+      'cover_path': candidate['cover_path'],
+      'photo_count': candidate['photo_count'],
+      'scenes': candidate['scenes'],
+    });
+  }
+
+  /// ⭐ 2026-10-18 记忆：把忽略的候选捡回来
+  Future<ApiResponse<Map<String, dynamic>>> restoreMemory(String key) {
+    return apiPost<Map<String, dynamic>>('/api/photo/app_ai/memory/restore', body: {'key': key});
   }
 
   /// P1-16 重复照片工具箱（数据层）

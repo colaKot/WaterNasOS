@@ -343,6 +343,7 @@ class _AppVideoPlayerPageState extends State<AppVideoPlayerPage> {
               children: [
                 PlaybackVideoSurface(
                   engine: engine,
+                  cover: controller.isVideoCover.value,
                   onNativeViewCreated: controller.onMedia3SurfaceReady,
                   onSurfaceTap: controller.handlePlayerTap,
                 ),

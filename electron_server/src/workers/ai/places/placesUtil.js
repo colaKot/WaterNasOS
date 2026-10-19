@@ -332,6 +332,38 @@ async function predictPlace(imagePath) {
   return { index: label ? mappedIndex : first.index, label, prob: first.prob, alt };
 }
 
+/**
+ * ⭐ 2026-10-17 判定「永久性图像错误」——重试一万次也不会成功的那类。
+ *
+ * 依据：这些都是 **sharp / libvips 在解码阶段**报的错，只与文件本身有关
+ *（不是图片、或数据损坏），与模型、内存、并发都无关。
+ *
+ * ⛔ 反面清单（这些是**瞬时**错误，必须重试，绝不能当成永久失败）：
+ *    · 模型/权重加载失败（走 isRemoteModelError 那条路径）
+ *    · SQLITE_BUSY / 磁盘 IO 抖动 / ENOMEM
+ *    所以这里**只按解码错误特征匹配**，不做「什么都算永久」的粗暴兜底。
+ *
+ * 放在这里而不是 worker 入口，是为了能单测：worker 入口 require 即启动进程。
+ */
+const PERMANENT_IMAGE_ERROR_RE = [
+  /unsupported image format/i,
+  /Input (file|buffer) contains unsupported/i,
+  /VipsJpeg/i,
+  /VipsPng/i,
+  /VipsForeign/i,
+  /Corrupt (JPEG|PNG|image)/i,
+  /premature end of data/i,
+  /unsupported file type/i,
+  /Not a valid/i,
+  /VipsError/i,
+];
+
+function isPermanentImageError(err) {
+  if (!err) return false;
+  const msg = `${err.message || ''} ${err.code || ''} ${err.name || ''}`;
+  return PERMANENT_IMAGE_ERROR_RE.some(re => re.test(msg));
+}
+
 module.exports = {
   predictPlace,
   predictPlaceFull,
@@ -339,4 +371,5 @@ module.exports = {
   getPlacesSession,
   ensurePlaces365Ready,
   isRemoteModelError,
+  isPermanentImageError,
 };

@@ -148,3 +148,58 @@ debug 证书 ⇒ **装在同一台手机会互相覆盖**。要并存必须给�
 | 桌面主客户端 | `WaterNasClient-win-x64-<ver>-<date>.zip` |
 | 安卓主客户端 | `WaterNasOS-Android-arm64-<ver>-<date>.apk` |
 | 同步工具 | `WaterNasSync-win-x64-<date>.zip` |
+
+| 安卓 TV | `WaterNasOS-TV-<ver>-<date>.apk`（`tool\build_tv_android.bat release`） |
+
+## 6. 安卓 TV（`tv_android/`）
+
+### 6.1 构建与签名
+
+```bash
+cmd //c "tool\build_tv_android.bat release"   # 约 3~4 分钟，产出并签名到 G://work//_dist//
+```
+
+- 用 `%USERPROFILE%\.android\debug.keystore`（`androiddebugkey`）签名 ⇒ 与历史包同一证书，可覆盖安装。
+- ⛔ **versionCode 必须递增**（当前 20 / versionName 2.0.0）：同 versionCode 的包在很多电视上会提示「应用未安装」。
+
+### 6.2 ⛔ 升级提示 / 版本号 / 签名（2026-10 踩坑）
+
+`https://nas.cab/config/updateInfo/android_tv.json` 指向
+`download.nas.cab/app/android-tv/nascabos-android-tv-1.1.0.apk`（107,515,989 B，2026-10-13）：
+
+- 实测该包：`com.nascabos.tv` / **versionCode=10** / **versionName=1.1.0** / 签名证书 **CN=nascabos**。
+- 本仓库 `app/build.gradle.kts` 当时只有 `versionCode=9 / versionName=1.0.0`，
+  ⇒ 每次启动都判定「有 1.1.0」并弹窗。
+- ⛔ **跨签名的包不能覆盖安装**：本仓库脚本用 `%USERPROFILE%\.android\debug.keystore`
+  （CN=Android Debug），而线上 1.1.0 是 CN=nascabos 签的。装在 1.1.0 上的机器必须先卸载，
+  或改用发布 1.1.0 时的同一 keystore 签名。
+- 现在版本号已抬到 **versionCode 20 / versionName 2.0.0**（必须都大于线上的 10 / 1.1.0，
+  否则那个提示会一直出现）。
+
+`TvAppUpdate.parseJson` 还要求配置**同时**带：
+
+```json
+{ "new_version": "1.1.0", "version_code": 11, "apk_package": "com.nascabos.tv",
+  "apk_file_url": "https://.../xxx.apk", "constraint": false }
+```
+
+- 缺 `version_code` ⇒ 视为非本渠道，**一律不提示**（现有 android_tv.json 就是这种，需要发版时补字段）；
+- `apk_package` 缺省视为同包，但建议显式写；
+- 判定条件：`version_code > 本地 versionCode` **且** `new_version > 本地 versionName`。
+
+### 6.3 应用白名单与图片授权（TV 端不支持应用）
+
+- TV 首页的行（影视/相册/音乐）由 `GET /api/apps/getApps` 的 `all_app` 决定，服务端已按
+  `userAllowedApps`（超管给子账号配的白名单）与 `normalUserNoShowApps` 过滤；无权限的应用整行不出现。
+- ⛔ **封面走 `/api/file/tiny`**，它挂在 `/api/file`（folder 应用）前缀下。只给 `movie`/`music`
+  的账号会因应用白名单 403 ⇒ **列表有、封面全空白**。因此 `appAccessGuard` 对
+  `tiny / rawFile / mergeLvpVideo / attributes` 这四个**自带路径权限校验**的接口做了豁免
+  （见 `PATH_LEVEL_GUARDED_API_PREFIXES`）。新增这类媒体辅助接口时要同步登记。
+
+### 6.4 自动登录
+
+`MainActivity.restoreSessionOrAutoLogin()`：
+
+1. 本地 token 按 `lastLoginTime + expiresIn` 估算未过期且是直连地址 ⇒ 不发请求直接进首页；
+2. 存了账号密码、没勾「每次都要输入密码」、且用户没主动登出（`auth_prefs/auth_auto_login_disabled`）⇒ 静默重登；
+3. 都失败 ⇒ 静默退回服务器列表，用户点一下即可。

@@ -43,6 +43,22 @@ class tablePhotoIndex {
     if (!colNames.has('clip_emb')) {
       await addColumn('clip_emb', 'BLOB');
     }
+    // ⭐ 2026-10-17 记录该向量由哪个塔产出（如 vision_model / vision_model_int8）。
+    // 换塔后历史向量与查询向量**不同空间**，同维塔骗得过维度检查
+    // ⇒ 必须有标记才能拒绝跨塔比较（避免点积出一堆无意义的噪声分）。
+    // NULL = P0-3 时代写入的，视为当前塔，不阻断老数据。
+    if (!colNames.has('emb_model')) {
+      await addColumn('emb_model', 'TEXT');
+    }
+    // ⭐ 2026-10-17 完成时间戳（与布尔位 gen_faces 并存，纯附加、不改既有语义）。
+    // 布尔位只能表达「跑过了」，表达不了「什么时候跑的」⇒ 做增量/调参重跑时
+    // 只能全量重扫（我们已经在 gen_faces 上踩过两次坑：失败被烧成 1、park 后永不再起）。
+    if (!colNames.has('faces_recognized_at')) {
+      await addColumn('faces_recognized_at', 'DATETIME');
+    }
+    // ⚠️ gen_activity_attempts（活动维度尝试次数）走**迁移**管理，不在这里 ensureColumns：
+    //    见 src/db/migrations/0003-gen-activity-attempts.js ——
+    //    新结构变更统一走迁移，避免「同一列有两个来源」对不上。
   }
 
   /**
@@ -107,9 +123,13 @@ class tablePhotoIndex {
         table.integer('gen_gps_add').defaultTo(0); // GPS补充扫描状态：0待扫描 1已扫描/已补充 2已跳过
       });
       Logger.info(`✅ Table ${this.tableName} created`);
-    } else {
-      await this.ensureColumns(knex);
     }
+    // ⭐ 新建库也必须走一遍 ensureColumns
+    // createTable 的列清单只是基线，
+    // 新增列（emb_model / clip_emb / content_md5 等）只在 ensureColumns 里。
+    // 只在「表已存在」分支调 ⇒ 全新库缺列，
+    // 迁移 0002 建 emb_model 索引直接拒绝启动（2026-10-18 实测）。
+    await this.ensureColumns(knex);
   }
 
   /**

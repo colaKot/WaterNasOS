@@ -25,7 +25,11 @@ function parseMinShowCount(body) {
 }
 
 async function getMinShowCount() {
+  // ⭐ 2026-10-17 与 faceService.listFaces 保持同一默认值（3），
+  // 否则「设置页显示的 0」和「列表实际用的 3」会对不上，用户会以为设置没生效。
+  const DEFAULT_MIN_SHOW_COUNT = 3;
   const raw = await tableConfig.getConfigByKey('ai_face_min_show_count');
+  if (raw === null || raw === undefined || raw === '') return DEFAULT_MIN_SHOW_COUNT;
   const parsed = Math.floor(Number(raw));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }

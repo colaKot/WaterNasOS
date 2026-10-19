@@ -1,9 +1,9 @@
 import '../../../../home/views/pc_components/pc_app_window.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../../../base/components/custom_expandable_search_bar.dart';
 import '../../../../base/components/custom_bordered_icon_button.dart';
 import '../../controller/photo_timeline_controller.dart';
+import '../../../search/view/photo_search_overlay.dart';
 import '../../../../base/components/custom_popup_select_button.dart';
 import '../../../../base/components/custom_segmented_icon_toggle.dart';
 import '../../../../../utils/popup_menu_util.dart';
@@ -275,11 +275,13 @@ class PhotoTimelineControlBar extends GetView<PhotoTimelineController> {
                 constraints: const BoxConstraints(maxWidth: 200),
                 child: SizedBox(
                   width: double.infinity,
-                  child: CustomExpandableSearchBar(
-                    controller: controller.searchController,
+                  // ⭐ 2026-10-18 \u6362\u6210\u641c\u7d22\u6d6e\u5c42\u5165\u53e3\uff08\u63a8\u8350\u8bcd + \u8054\u60f3 + \u6700\u8fd1\u641c\u7d22\uff09
+                  child: PhotoSearchEntry(
                     hintText: 'search'.tr,
-                    onChanged: controller.onSearchChanged,
-                    onClear: controller.clearSearch,
+                    onSubmit: (q) {
+                      controller.searchController.text = q;
+                      controller.onSearchChanged(q);
+                    },
                   ),
                 ),
               ),

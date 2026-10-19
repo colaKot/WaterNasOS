@@ -654,14 +654,13 @@ class _AddTorrentDialogState extends State<_AddTorrentDialog> {
   }
 
   Future<void> _pickTorrentFileLocal() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['torrent'],
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (result.isEmpty) return;
     setState(() {
-      _torrentFile = result.files.first;
+      _torrentFile = result.first;
       _serverTorrentPath = null;
     });
   }

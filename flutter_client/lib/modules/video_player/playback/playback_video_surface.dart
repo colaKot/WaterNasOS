@@ -15,6 +15,7 @@ class PlaybackVideoSurface extends StatefulWidget {
     required this.engine,
     this.onNativeViewCreated,
     this.onSurfaceTap,
+    this.cover = false,
   });
 
   final PlaybackEngine? engine;
@@ -24,6 +25,9 @@ class PlaybackVideoSurface extends StatefulWidget {
 
   /// 点击画面（Media3 PlatformView 会吞掉外层 GestureDetector，需单独处理）。
   final VoidCallback? onSurfaceTap;
+
+  /// 铺满（裁边）还是适应（留黑边）。Android 的 Media3 由原生 PlayerView 自己处理。
+  final bool cover;
 
   @override
   State<PlaybackVideoSurface> createState() => _PlaybackVideoSurfaceState();
@@ -53,11 +57,24 @@ class _PlaybackVideoSurfaceState extends State<PlaybackVideoSurface> {
       }
       final ar = vc.value.aspectRatio;
       final safeAr = (ar > 0 && ar.isFinite) ? ar : (16 / 9);
+      final player = VideoPlayer(vc, key: ValueKey(identityHashCode(vc)));
+      if (widget.cover) {
+        // ⭐ 2026-10-19 铺满：按 cover 缩放，溢出屏幕的部分裁掉，四周不再留黑边。
+        return ClipRect(
+          child: SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: safeAr * 1000,
+                height: 1000,
+                child: player,
+              ),
+            ),
+          ),
+        );
+      }
       return Center(
-        child: AspectRatio(
-          aspectRatio: safeAr,
-          child: VideoPlayer(vc, key: ValueKey(identityHashCode(vc))),
-        ),
+        child: AspectRatio(aspectRatio: safeAr, child: player),
       );
     }
 

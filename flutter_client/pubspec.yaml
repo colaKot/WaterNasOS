@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.1.0+33
+version: 2.0.0+37
 environment:
   sdk: ^3.10.1
 
@@ -30,9 +30,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   http: ^1.6.0
   web_socket_channel: ^3.0.0
   async: ^2.13.0
@@ -46,22 +43,23 @@ dependencies:
   crypto: ^3.0.3 # SHA256加密支持
   encrypt: ^5.0.3 # AES加密支持
   get: ^4.7.2
-  connectivity_plus: ^6.0.5
-  device_info_plus: ^12.2.0 # 设备信息
-  package_info_plus: ^9.0.0 # 应用信息
+  connectivity_plus: ^7.3.2
+  device_info_plus: ^13.3.0 # 设备信息
+  package_info_plus: ^10.2.2 # 应用信息
   flutter_box_transform: ^0.4.7 # 应用窗口组件
   flutter_context_menu: ^0.4.0 # 右键菜单组件
   flutter_spinkit: ^5.1.0
-  cached_network_image: ^3.4.1 # 网络图片缓存库
   flutter_cache_manager: ^3.4.1 # 缓存库
   extended_image: ^10.0.1 # 图片扩展库
   dio: ^5.9.0
-  file_picker: ^10.3.7
+  # 12.0 起联邦化重写：PlatformFile 变抽象类，size→lengthSync()、bytes→readAsBytes()、identifier 移除。
+  # ⚠ 与 share_plus/package_info_plus/device_info_plus 被 win32 major 版本绑定，只能整组升降。
+  file_picker: ^13.1.0
   cross_file: ^0.3.5+1 # 跨平台文件操作库
   web: ^1.1.1
   path: ^1.9.0 # 跨平台路径处理
-  latlong2: ^0.9.1
-  desktop_drop: ^0.7.0
+  latlong2: ^0.10.1
+  desktop_drop: ^0.8.0
   flutter_dropzone: ^4.2.1
   intl: ^0.20.2
   url_launcher: ^6.3.2
@@ -75,10 +73,10 @@ dependencies:
     path: packages/video_player_web_hls
   flutter_fullscreen: ^1.2.0
   flutter_map: ^8.2.2
-  panorama_viewer: ^2.0.6
+  panorama_viewer: ^3.0.0
   webview_flutter: ^4.10.0
-  permission_handler: ^11.4.0
-  flutter_lyric: 3.0.2
+  permission_handler: ^13.0.2
+  flutter_lyric: 3.0.2 # 4.x 用 preset 体系取代 LyricStyle，歌词视图需重写；保留 3.0.2
   xterm: ^4.0.0
   code_text_field: ^1.1.0
   linked_scroll_controller: ^0.2.0
@@ -89,29 +87,30 @@ dependencies:
   flutter_quill: 11.6.0
   flutter_quill_extensions: ^11.0.0
   dart_quill_delta: ^10.8.3
-  sqflite_common_ffi: ^2.3.7
-  sqlite3: ^2.9.4
-  sqlite3_flutter_libs: ">=0.5.41 <0.6.0"
-  share_plus: ^10.1.4
-  video_thumbnail: ^0.5.3
+  sqflite_common_ffi: ^2.4.4
+  sqlite3: ^3.7.1
+  share_plus: ^13.3.1
+  # 视频首帧缩略图。fork 自 pub 上的 0.5.6（已停更）：
+  # 原版 android/build.gradle 用 jcenter() + 硬编码 AGP 4.1.0，Gradle/AGP 升级后会直接失败。
+  video_thumbnail:
+    path: packages/video_thumbnail
   photo_manager: ^3.9.0
-  unicode: ^0.3.1
   flutter_webrtc: ^1.3.1
   audio_service: ^0.18.18
-  audio_session: 0.2.2
+  audio_session: 0.2.4
   just_audio: ^0.10.5
-  tray_manager: ^0.5.2
+  tray_manager: ^0.5.2 # 0.8 换用 nativeapi+cnativeapi（需编 C++ 原生库，构建卡死 26 分钟）⇒ 保留 0.5.2
   flutter_read:
     path: packages/flutter_read
   pdfrx: 2.6.5
-  flutter_local_notifications: ^21.0.0
+  flutter_local_notifications: ^22.3.2
   flutter_quill_to_pdf: ^2.3.9
-  pdf: ^3.12.0
-  fvp: ^0.38.1
+  pdf: ^3.13.1
+  fvp: ^0.38.1 # 0.39 首次构建要从 SourceForge 下 mdk-sdk nightly（CMake 不走 HTTP 代理）⇒ 保留 0.38.1
   # 目录同步核心：与 sync_client（Windows 独立同步客户端）共用同一份实现
   nascab_sync_core:
     path: ../packages/nascab_sync_core
-  flex_color_scheme: 8.4.0
+  flex_color_scheme: 8.4.0 # 9.0 改用 Flutter 3.47 新拆分出的 material_ui 包，其 ThemeData 与 package:flutter/material.dart 的类型不兼容；升级需整体迁 material_ui
   tabler_icons_plus: ^3.44.0 # Tabler 开源图标（MIT），窗口控制按钮等使用
 
 dependency_overrides:
@@ -229,3 +228,17 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# sqlite3 3.x 起原生库由 Dart build hooks 负责产出，不再依赖 sqlite3_flutter_libs（已 EOL）。
+# 默认策略是从 GitHub Releases 下载预编译 DLL
+# （https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-x.y.z/...），
+# 该地址在受限网络下经常拉不到，表现为 `flutter build` 报
+# "Building native assets failed" / "This failed (attempted to download ...)"。
+# 因此固定为「用仓库内的官方 amalgamation 源码本地编译」，构建完全离线、可重现。
+hooks:
+  user_defines:
+    sqlite3:
+      source: source
+      path: ../third_party/sqlite3/sqlite3.c
+      defines:
+        default_options: true
