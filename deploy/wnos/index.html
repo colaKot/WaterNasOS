@@ -164,16 +164,19 @@
             <span></span><span></span><span></span><span></span>
             <span></span><span></span><span></span><span></span>
           </div>
-          <h3>按用户隔离的照片库</h3>
-          <p>时间线、自建相册、智能相册、照片合集；人脸与场景识别、相似照片、GPS 补录、足迹地图、那年今日、回收站。
-             每个人只看自己的照片。</p>
+          <h3>按用户隔离的 AI 相册</h3>
+          <p><strong>浏览</strong>：时间线按天分组、瀑布流 / 网格两种视图、自建相册 / 智能相册 / 照片合集、文件夹视图、可还原回收站。<br>
+             <strong>识别（全部本地推理）</strong>：EdgeFace 人脸聚类、SigLIP2 + DETR 场景、独立的活动维度、PP-OCRv6 文字识别、CLIP 语义搜索。<br>
+             <strong>回忆</strong>：自动发现候选记忆 → 你确认才算数，卡片写「地点 · 干了什么 · 张数」；人生章节按年成书，一页一天可翻；一日一帧 / 票夹 / 年度记录 / 时光对照。<br>
+             <strong>地图与清理</strong>：足迹地图按世界像素聚类，角标与列表张数严格相等；重复 / 相似照片清理可预演、可撤销。<br>
+             每个人只看自己的照片，底层索引全局共用。</p>
         </article>
 
         <article class="b b--dark">
           <span class="tag">服务端</span>
           <div class="term-mini">
             <div>$ waternas serve --port 6789</div>
-            <div class="g">✓ 服务端就绪 · v1.1.0</div>
+            <div class="g">✓ 服务端就绪 · v2.0.0</div>
             <div class="g">✓ 照片索引 21,847 项</div>
             <div class="g">✓ 影视库 3 个 · 转码就绪</div>
             <div class="g">✓ 同步通道 2 台设备在线</div>
@@ -182,8 +185,12 @@
 
         <article class="b">
           <span class="tag">影视库</span>
-          <h3>H.264 / HEVC / AV1</h3>
-          <p>电影 / 电视剧 / 图片 / 混合媒体多库管理；自然序排序、瀑布流与网格视图；多档画质转码、音频响度归一化、默认字幕自动匹配。</p>
+          <h3>H.264 / HEVC / AV1 · 全屏铺满</h3>
+          <p><strong>多库</strong>：电影 / 电视剧 / 图片 / 混合四类库独立开关，图片库与混合库有专属网格与全屏查看器（自然序、瀑布流、文件夹层级）。<br>
+             <strong>画质</strong>：原画 / 4K / 1440p / 1080p / 720p / 480p 多档，H.264 与 HEVC 各有档位表，默认档位按「端 + 用户」记忆；HLS fMP4 转码失败自动降级回 H.264 并续播。<br>
+             <strong>音轨与字幕</strong>：两遍 loudnorm 响度归一、降混开关、无音轨视频仅转音频；默认字幕语言（简 / 繁 / 英 / 日 / 韩）自动匹配同名外挂，图形字幕转码烧录。<br>
+             <strong>播放</strong>：全屏默认铺满屏幕（四周无黑边），可切「适应」保留完整画面；字幕按真实宽高比避让黑边，始终压在画面上。<br>
+             影片信息卡直接读 ffprobe 显示 4K / HDR10+ / 杜比视界 / 全景声。</p>
         </article>
 
         <article class="b b--accent">
@@ -206,8 +213,11 @@
 
         <article class="b">
           <span class="tag">多端同步</span>
-          <h3>三种同步方向</h3>
-          <p>Windows 独立同步客户端与主客户端共用同一套引擎；手机相册自动备份，按「大小 + 内容 MD5」去重。</p>
+          <h3>三向比对 · 三种方向</h3>
+          <p><strong>同一套引擎</strong>：Windows 独立同步端 <code>WaterNasSync.exe</code> 与桌面主客户端共用 <code>nascab_sync_core</code>，行为完全一致。<br>
+             <strong>三向比对</strong>：本地状态 vs 本地 baseline（sync.db）vs 远端，先算差异再决定动作，不做全量重传；同一文件判定为「大小相等且 mtime 差 ≤ 2000ms」，上下行都回写 mtime，避免每轮重复下载。<br>
+             <strong>方向与规则</strong>：双向 / 仅上传 / 仅下载，包含与排除规则、按文件夹建任务；每次运行都写同步记录可查。<br>
+             手机相册自动备份，按「大小 + 内容 MD5」去重。</p>
         </article>
 
         <article class="b">
@@ -256,8 +266,8 @@
     <div class="wrap">
       <div class="section__head">
         <span class="section__eyebrow">下载</span>
-        <h2>WaterNasOS v1.1.0</h2>
-        <p>v1.1.0：足迹地图聚合、地名反查与人脸识别修复。安装包托管在 GitHub Releases，点击包名直达下载页。</p>
+        <h2>WaterNasOS v2.0.0</h2>
+        <p>v2.0.0：智能发现与记忆、人生章节书本、影视全屏铺满、地名单语言。安装包托管在 GitHub Releases，点击包名直达下载页。</p>
       </div>
 
       <div class="dl-table">
@@ -266,39 +276,45 @@
         </div>
         <div class="dl-row">
           <span>Windows 服务端 x64</span>
-          <span>WaterNasOS-Server-win-x64-20261016.zip</span>
-          <span>1.05 GB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasOS-Server-win-x64-20261020.zip</span>
+          <span>1.26 GB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
         <div class="dl-row">
           <span>Windows 桌面端 x64</span>
-          <span>WaterNasClient-win-x64-20261016.zip</span>
-          <span>110.9 MB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasClient-win-x64-2.0.0-20261020.zip</span>
+          <span>55.9 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
         <div class="dl-row">
           <span>Windows 同步端 x64</span>
-          <span>WaterNasSync-win-x64-20261016.zip</span>
-          <span>38.2 MB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasSync-win-x64-20261020.zip</span>
+          <span>14.9 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
         <div class="dl-row">
           <span>Android 主端 arm64</span>
-          <span>WaterNasOS-Android-arm64-1.1.0-20261016-1643.apk</span>
-          <span>87.6 MB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasOS-Android-arm64-2.0.0-20261020-0305.apk</span>
+          <span>90.6 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
         <div class="dl-row">
           <span>Android 相册端 arm64</span>
-          <span>WaterNasOS-Photo-Android-arm64-1.1.0-20261016-1647.apk</span>
-          <span>95.7 MB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasOS-Photo-Android-arm64-2.0.0-20261020-0305.apk</span>
+          <span>97.3 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
         <div class="dl-row">
           <span>Android 音乐端 arm64</span>
-          <span>WaterNasOS-Music-Android-arm64-1.1.0-20261016-1657.apk</span>
-          <span>101.8 MB</span>
-          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载</a>
+          <span>WaterNasOS-Music-Android-arm64-2.0.0-20261020-0318.apk</span>
+          <span>103.3 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
+        </div>
+        <div class="dl-row">
+          <span>Android TV</span>
+          <span>WaterNasOS-TV-2.0.0-20261020.apk</span>
+          <span>103.1 MB</span>
+          <a href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载</a>
         </div>
       </div>
 
