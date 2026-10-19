@@ -15,9 +15,9 @@ with no public cloud in the loop.
 
 ## Screenshots
 
-**Photo library home** — On this day, newly discovered memories, one frame a day, yearly recap.
+**Photo library home** — On this day, newly discovered memories, one frame a day, yearly recap. (Photos in the screenshot are pixelated.)
 
-![Photo home](docs/images/photo-home.webp)
+![Photo home](docs/images/photo-home-masked.webp)
 
 **Media library** — poster wall, continue watching, category rows; quality and subtitles are switched in the player.
 
