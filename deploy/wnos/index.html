@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WaterNasOS - 开源 NAS 系统 | Windows 私有云存储 · 照片影音文件管理</title>
-<meta name="description" content="WaterNasOS 是一款开源跨平台 NAS 系统（基于 NasCabOS，GPL-3.0）：Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，覆盖 Windows、Android、TV 与网页端，数据全部保存在自己机器上，v1.1.0 已发布。">
-<meta name="keywords" content="WaterNasOS,NAS系统,开源NAS,Windows NAS,私有云存储,家庭NAS,照片管理,影视库,音乐库,文件同步,NasCabOS,GPL-3.0">
+<title>WaterNasOS - 开源 NAS 系统 | Windows 私有云 · AI 相册 · 影视库 · 目录同步</title>
+<meta name="description" content="WaterNasOS 是一款开源跨平台 NAS 系统（基于 NasCabOS，GPL-3.0）：Windows 服务端常驻运行，AI 相册、影视库、目录同步三大核心能力，照片、影视、音乐、图书、文件一套服务端多端共用，覆盖 Windows、Android、TV 与网页端，数据全部保存在自己机器上。">
+<meta name="keywords" content="WaterNasOS,NAS系统,开源NAS,Windows NAS,私有云存储,家庭NAS,AI相册,照片管理,影视库,目录同步,文件同步,NasCabOS,GPL-3.0">
 <meta name="author" content="colaKot">
 <link rel="canonical" href="https://wnos.gexuan.net/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="WaterNasOS - 开源跨平台 NAS 系统">
-<meta property="og:description" content="Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在自己机器上。">
+<meta property="og:description" content="Windows 服务端常驻运行：AI 相册、影视库、目录同步三大核心能力，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在自己机器上。">
 <meta property="og:url" content="https://wnos.gexuan.net/">
 <meta property="og:site_name" content="WaterNasOS">
 <meta property="og:locale" content="zh_CN">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="WaterNasOS - 开源跨平台 NAS 系统">
-<meta name="twitter:description" content="Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在自己机器上。">
+<meta name="twitter:description" content="Windows 服务端常驻运行：AI 相册、影视库、目录同步三大核心能力，数据全部保存在自己机器上。">
 <!-- 百度搜索资源平台验证：添加站点后把 code 填进来（ziyuan.baidu.com → 站点管理 → 验证） -->
 <meta name="baidu-site-verification" content="PLACEHOLDER-BAIDU-CODE">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v=20261020">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -29,11 +29,11 @@
   "alternateName": ["WaterNasOS NAS 系统", "Windows NAS"],
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "Windows, Android, Android TV, Apple TV, Web",
-  "description": "开源跨平台 NAS 系统：Windows 服务端常驻运行，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在本地。",
-  "softwareVersion": "1.1.0",
+  "description": "开源跨平台 NAS 系统：Windows 服务端常驻运行，AI 相册、影视库、目录同步三大核心能力，照片、影视、音乐、图书、文件一套服务端多端共用，数据全部保存在本地。",
+  "softwareVersion": "2.0.0",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "url": "https://wnos.gexuan.net/",
-  "downloadUrl": "https://github.com/colaKot/WaterNasOS/releases",
+  "downloadUrl": "https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0",
   "sameAs": ["https://github.com/colaKot/WaterNasOS"],
   "author": {
     "@type": "Organization",
@@ -60,10 +60,11 @@
     </a>
     <nav class="site-nav">
       <a class="active" href="index.html">首页</a>
+      <a href="#core">核心功能</a>
       <a href="#server">Windows NAS</a>
-      <a href="#features">功能特性</a>
       <a href="#clients">全端覆盖</a>
       <a href="#download">下载</a>
+      <a href="#apps">内置应用</a>
       <a href="#github">GitHub</a>
     </nav>
   </div>
@@ -71,46 +72,124 @@
 
 <section class="hero">
   <div class="wrap">
-    <span class="hero__eyebrow"><b></b>开源 · GPL-3.0 · 基于 NasCabOS 二次开发</span>
+    <span class="hero__eyebrow"><b></b>v2.0.0 已发布 · 开源 · GPL-3.0 · 基于 NasCabOS 二次开发</span>
     <h1>把数据搬回自己家</h1>
     <p class="hero__lead">
-      一台跑在 Windows 上的自托管 NAS 服务端，手机、电脑、电视与网页全打通。照片、影音、音乐、图书、文件，
-      全都跑在你自己的机器上——不依赖任何公有云，数据始终属于你自己。
+      一台跑在 Windows 上的自托管 NAS 服务端。AI 相册、影视库、目录同步三大核心能力，
+      照片、音乐、图书、文件与备份全部在你自己的机器上——手机、电脑、电视、浏览器连的都是同一个它，
+      不依赖任何公有云。
     </p>
     <div class="hero__actions">
-      <a class="btn btn--primary" href="https://github.com/colaKot/WaterNasOS/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">下载 v1.1.0</a>
+      <a class="btn btn--primary" href="https://github.com/colaKot/WaterNasOS/releases/tag/v2.0.0" target="_blank" rel="noopener noreferrer">下载 v2.0.0</a>
+      <a class="btn btn--ghost" href="#core">看看能做什么</a>
       <a class="btn btn--ghost" href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
     </div>
     <ul class="hero__facts">
       <li><b>22</b><span>个内置应用</span></li>
+      <li><b>3 大</b><span>核心能力</span></li>
       <li><b>4 类</b><span>终端覆盖</span></li>
       <li><b>GPL-3.0</b><span>开源许可</span></li>
     </ul>
+
+    <div class="hero-shot">
+      <span class="hero-shot__tag">Windows 桌面端 · 影视库海报墙</span>
+      <div class="window window--tilt">
+        <div class="window__bar">
+          <span class="window__dots"><i></i><i></i><i></i></span>
+          <span class="window__title">WaterNasClient — 影视库</span>
+        </div>
+        <img src="assets/shots/media-library.webp?v=20261020" width="1680" height="798" alt="WaterNasOS 桌面端影视库界面：左侧应用栏与影片分类，主区为海报墙与最近播放" loading="eager">
+      </div>
+      <div class="hero-shot__float">
+        <div class="window">
+          <div class="window__bar">
+            <span class="window__dots"><i></i><i></i><i></i></span>
+            <span class="window__title">文件管理</span>
+          </div>
+          <img src="assets/shots/files.webp?v=20261020" width="1680" height="798" alt="WaterNasOS 文件管理界面：服务器盘符、快捷访问与文件图标网格" loading="lazy">
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
 <main>
 
-  <section class="section section--alt" id="server">
+  <section class="section section--alt" id="core">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">三大核心能力</span>
+        <h2>不是网盘，是一整套私有云</h2>
+        <p>相册负责「留住」，影视负责「看」，同步负责「不丢」。三块都是自己写到底的完整实现，不是壳套壳。</p>
+      </div>
+
+      <div class="core-grid">
+        <a class="core" href="#photo">
+          <span class="core__no">01 / AI 相册</span>
+          <h3>把照片变成能问、能找、能回忆的东西</h3>
+          <p>不是把照片按日期排一遍：本地推理认出人脸、场景、活动与票面，再用语义搜索、足迹地图和记忆把它们重新串起来。</p>
+          <ul>
+            <li>EdgeFace 人脸聚类 · SigLIP2 场景 · PP-OCRv6 文字</li>
+            <li>中文语义搜索，数万张照片近邻检索 106ms</li>
+            <li>记忆 / 人生章节 / 一日一帧 / 票夹 / 年度记录</li>
+            <li>按用户隔离：每个人只看自己的照片</li>
+          </ul>
+          <span class="core__more">查看相册能力 →</span>
+        </a>
+
+        <a class="core core--dark" href="#movie">
+          <span class="core__no">02 / 影视库</span>
+          <h3>海报墙点开即播，画质字幕随手切</h3>
+          <p>电影、电视剧、图片、混合四类库各自独立；按编码分档转码，HLS fMP4 切片，手机、电视、桌面都能顺畅播。</p>
+          <ul>
+            <li>H.264 / HEVC 各有档位表，默认画质按端记忆</li>
+            <li>转码失败自动降级回 H.264 并续播</li>
+            <li>两遍 loudnorm 响度归一、降混、仅转音频</li>
+            <li>字幕自动匹配，永远压在画面上</li>
+          </ul>
+          <span class="core__more">查看影视能力 →</span>
+        </a>
+
+        <a class="core" href="#sync">
+          <span class="core__no">03 / 目录同步</span>
+          <h3>三向比对，不做全量重传</h3>
+          <p>独立同步端与桌面主客户端共用同一套引擎：先算「本地 / baseline / 远端」的差异，再决定动作，每次运行都留记录。</p>
+          <ul>
+            <li>双向 / 仅上传 / 仅下载三种方向</li>
+            <li>同一文件判定：大小相等且 mtime 差 ≤ 2000ms</li>
+            <li>上下行都回写 mtime，不会每轮重复下载</li>
+            <li>按文件夹建任务，包含 / 排除规则</li>
+          </ul>
+          <span class="core__more">查看同步能力 →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="server">
     <div class="wrap">
       <div class="section__head">
         <span class="section__eyebrow">Windows NAS · 服务端</span>
         <h2>一台 Windows 电脑，就是你的 NAS</h2>
-        <p>WaterNasOS 属于 Windows NAS 范畴：服务端常驻运行在 Windows 上，不用刷机、不用折腾群晖，一台普通电脑就能变成全家共用的私有云存储。</p>
+        <p>不用刷机、不用买专用设备、不用折腾群晖。服务端常驻在普通 Windows 机器上，一个进程同时提供 API、索引、转码、识别与同步通道。</p>
       </div>
 
       <div class="server-split">
         <div class="server-split__text">
           <h3>它是什么</h3>
-          <p>服务端（electron_server）是整套系统的心脏，基于 Electron + Express 实现，常驻 Windows x64 运行，
-             负责照片与影视索引、ffmpeg 转码、AI 识别、同步通道和全部 API。桌面端、安卓、TV 与网页端，连的都是同一个它。</p>
+          <p>服务端（<code>electron_server</code>）是整套系统的心脏，基于 Electron + Express 实现，常驻 Windows x64 运行，
+             负责照片与影视索引、ffmpeg 转码、AI 识别、同步通道和全部 553 个 API 路径。桌面端、安卓三端、TV 与网页端，连的都是同一个它。</p>
           <h3>数据只在你自己家</h3>
           <p>所有数据落在本地磁盘与 SQLite，不经过任何公有云；多用户账号、相册按用户隔离、AES 加密空间全部在本地完成。
-             对外拔掉网线，内网照用不误。</p>
+             拔掉外网，内网照用不误；缩略图与索引缓存目录还能整体搬到别的盘。</p>
+          <h3>能跑在什么机器上</h3>
+          <p>Windows 10 / 11 x64 即可，普通家用机、旧笔记本、迷你主机都行。有 NVIDIA 显卡时自动用 DirectML 加速推理，没有就用 CPU，
+             模型与第三方运行时随安装包一起给，解压即用。</p>
           <div class="tag-row">
-            <span class="tag">Windows x64</span>
+            <span class="tag">Windows 10 / 11 x64</span>
             <span class="tag">Electron + Express</span>
             <span class="tag">SQLite 本地库</span>
+            <span class="tag">DirectML / CPU 推理</span>
             <span class="tag">网页端内置</span>
             <span class="tag">多用户隔离</span>
           </div>
@@ -122,14 +201,16 @@
           <div class="spec-row"><span>数据位置</span><b>本地磁盘，不上公有云</b></div>
           <div class="spec-row"><span>网页端</span><b>服务端内置，浏览器直连</b></div>
           <div class="spec-row"><span>视频能力</span><b>ffmpeg 转码 · 多档画质</b></div>
-          <div class="spec-row"><span>识别能力</span><b>onnx 模型 · 人脸 / 场景 / OCR</b></div>
+          <div class="spec-row"><span>识别能力</span><b>本地 ONNX · 人脸 / 场景 / OCR</b></div>
+          <div class="spec-row"><span>开放接口</span><b>OpenAPI + 只读 MCP</b></div>
+          <div class="spec-row"><span>当前版本</span><b>v2.0.0</b></div>
         </div>
       </div>
 
       <div class="steps">
         <div class="step">
           <h3>下载服务端</h3>
-          <p>GitHub Releases 获取 Windows x64 服务端包（v1.1.0），第三方依赖与识别模型已内置，解压即用。</p>
+          <p>从 GitHub Releases 取 Windows x64 服务端包（1.26 GB），第三方运行时与识别模型已内置，解压即用。</p>
         </div>
         <div class="step">
           <h3>一键启动</h3>
@@ -147,84 +228,472 @@
     </div>
   </section>
 
-  <section class="section" id="features">
+  <section class="section section--alt" id="photo">
     <div class="wrap">
       <div class="section__head">
-        <span class="section__eyebrow">核心能力</span>
-        <h2>一台自己的 NAS，能做什么</h2>
-        <p>每一项功能都是独立的 App：有自己的图标、独立页面栈和独立的服务端 API，可在设置中隐藏或重新排序。</p>
+        <span class="section__eyebrow">核心能力 01</span>
+        <h2>AI 相册：把几十万张照片<br>变成能回忆的东西</h2>
+        <p>四层结构：先把照片管好，再让模型看懂，然后把它们重新串成故事，最后保证这些能力只对照片的主人可见。</p>
       </div>
 
-      <div class="bento">
-        <article class="b b--wide b--tall b--dark">
-          <span class="tag">照片管理</span>
-          <div class="ph-grid" aria-hidden="true">
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
+      <div class="pill-nav">
+        <a href="#photo-browse">浏览与组织</a>
+        <a href="#photo-ai">本地 AI 识别</a>
+        <a href="#photo-memory">回忆与叙事</a>
+        <a href="#photo-map">足迹地图</a>
+        <a href="#photo-clean">清理与隐私</a>
+      </div>
+
+      <div class="split" id="photo-browse">
+        <div class="split__text">
+          <span class="eyebrow-sm">浏览与组织</span>
+          <h3>先把「找得到」这件事做扎实</h3>
+          <p>时间线按天分组，瀑布流按真实宽高比排版，也可以在网格里快速扫。相册不止一种：自建相册、条件组合的智能相册、照片合集，
+             再叠一层文件树视图，语义与目录互不干扰。</p>
+          <ul class="bullets">
+            <li><b>三段筛选</b>：全部 / 图片 / 视频一键切换，时间线不再被视频打断。</li>
+            <li><b>大搜索栏</b>：点开即搜索，推荐词 + 联想 + 最近搜索，提交后首屏直接是结果。</li>
+            <li><b>回收站可还原</b>：误删先进回收站，能还原也能彻底清空。</li>
+            <li><b>批量操作可撤销</b>：批量删除写入操作日志，支持「预演 → 执行 → 撤销」，撤销不是靠猜。</li>
+          </ul>
+        </div>
+        <div class="split__media">
+          <div class="mock">
+            <div class="mock__bar">
+              <span class="mock__dots"><i></i><i></i><i></i></span>
+              <span class="mock__title">相册 · 首页</span>
+              <span class="mock__badge">界面示意图</span>
+            </div>
+            <div class="mock__body">
+              <div class="mock__rail"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="mock__side">
+                <div class="hd">全部照片 19,227 张</div>
+                <div class="it on">首页</div>
+                <div class="it">时间轴</div>
+                <div class="it">我的足迹</div>
+                <div class="it">收藏</div>
+                <div class="it">文件视图</div>
+                <div class="it">回收站</div>
+                <div class="grp">回忆</div>
+                <div class="it">记忆</div>
+                <div class="it">每日一帧</div>
+                <div class="it">票夹</div>
+                <div class="it">年度总结</div>
+                <div class="grp">相册</div>
+                <div class="it">自建相册</div>
+                <div class="it">智能相册</div>
+                <div class="it">照片合集</div>
+              </div>
+              <div class="mock__main">
+                <div class="mock__h1">首页</div>
+                <div class="mock__sub">这一整座照片，长什么样</div>
+                <div class="mock__search">⌕ 搜索照片、人物、地点，或描述一句话<b>AI</b></div>
+                <div class="mock__sec">那年今日<s>重温往日的回忆</s><span>全部查看 ›</span></div>
+                <div class="mock__row3">
+                  <div class="ph g1"><em>2025年10月19日 · 37 张</em></div>
+                  <div class="ph g2"><em>2024年10月20日 · 21 张</em></div>
+                  <div class="ph g3"><em>2023年10月20日 · 18 张</em></div>
+                </div>
+                <div class="mock__sec">发现新的记忆<s>有人、有地点，才能成为记忆</s><span>全部查看 ›</span></div>
+                <div class="mock__row3 mock__row3--sm">
+                  <div class="ph g4"><em>2025-10-02 · 26 张</em></div>
+                  <div class="ph g6"><em>2026-02-16 · 26 张</em></div>
+                  <div class="ph g8"><em>2026-10-05 · 25 张</em></div>
+                </div>
+                <div class="mock__banner">为今天留一个瞬间<s>每天一张，记住此刻的真实</s></div>
+              </div>
+            </div>
           </div>
-          <h3>按用户隔离的 AI 相册</h3>
-          <p><strong>浏览</strong>：时间线按天分组、瀑布流 / 网格两种视图、自建相册 / 智能相册 / 照片合集、文件夹视图、可还原回收站。<br>
-             <strong>识别（全部本地推理）</strong>：EdgeFace 人脸聚类、SigLIP2 + DETR 场景、独立的活动维度、PP-OCRv6 文字识别、CLIP 语义搜索。<br>
-             <strong>回忆</strong>：自动发现候选记忆 → 你确认才算数，卡片写「地点 · 干了什么 · 张数」；人生章节按年成书，一页一天可翻；一日一帧 / 票夹 / 年度记录 / 时光对照。<br>
-             <strong>地图与清理</strong>：足迹地图按世界像素聚类，角标与列表张数严格相等；重复 / 相似照片清理可预演、可撤销。<br>
-             每个人只看自己的照片，底层索引全局共用。</p>
-        </article>
+          <p class="cap"><b>示意图说明</b>：相册真实截图含个人照片，官网统一用界面示意图替代——布局照原界面复刻，照片位置以渐变占位。</p>
+        </div>
+      </div>
 
-        <article class="b b--dark">
-          <span class="tag">服务端</span>
-          <div class="term-mini">
-            <div>$ waternas serve --port 6789</div>
-            <div class="g">✓ 服务端就绪 · v2.0.0</div>
-            <div class="g">✓ 照片索引 21,847 项</div>
-            <div class="g">✓ 影视库 3 个 · 转码就绪</div>
-            <div class="g">✓ 同步通道 2 台设备在线</div>
+      <div class="split split--rev" id="photo-ai">
+        <div class="split__text">
+          <span class="eyebrow-sm">本地 AI 识别</span>
+          <h3>所有推理都在你自己的机器上跑</h3>
+          <p>没有云端调用、没有上传队列、没有按次计费。模型随安装包给到本地，ONNX Runtime 直接在本机推理，
+             断网也能持续识别；NVIDIA 显卡走 DirectML，没有显卡就用 CPU 慢慢跑。</p>
+          <ul class="bullets">
+            <li><b>人脸</b>：EdgeFace 检测 → 512 维特征 → 聚类成「人物」，可合并、拆分、命名、管理样本。</li>
+            <li><b>场景</b>：SigLIP2 base-224 + DETR-R50 多标签，带「可判性」闸门——人像与静物不会乱贴风景标签。</li>
+            <li><b>活动</b>：独立维度（游泳 / 跑步 / 大笑 / 合影 / 婚礼 / 聚会…），与场景分开存储、可单独重置。</li>
+            <li><b>语义</b>：CLIP 双塔 + 512 条中文短语最大匹配 → 有序绑定，中文描述不用先翻英文。</li>
+          </ul>
+        </div>
+        <div class="split__media">
+          <div class="mock">
+            <div class="mock__bar">
+              <span class="mock__dots"><i></i><i></i><i></i></span>
+              <span class="mock__title">相册 · 人脸识别</span>
+              <span class="mock__badge">界面示意图</span>
+            </div>
+            <div class="mock__body">
+              <div class="mock__rail"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="mock__side">
+                <div class="hd">记忆</div>
+                <div class="it">记忆</div>
+                <div class="it">每日一帧</div>
+                <div class="it">票夹</div>
+                <div class="it">年度总结</div>
+                <div class="grp">AI</div>
+                <div class="it on">人脸识别</div>
+                <div class="it">场景识别</div>
+                <div class="it">照片去重</div>
+                <div class="it">GPS 补充</div>
+                <div class="grp">设置</div>
+                <div class="it">来源设置</div>
+                <div class="it">AI 设置</div>
+              </div>
+              <div class="mock__main">
+                <div class="mock__h1">人脸识别</div>
+                <div class="mock__sub">已识别完成：65,911 / 65,911 张 · 按出现次数排序</div>
+                <div class="mock__faces">
+                  <div class="face"><i class="g1"></i><b>添加名字</b><span>共 570 张</span></div>
+                  <div class="face"><i class="g2"></i><b>添加名字</b><span>共 229 张</span></div>
+                  <div class="face"><i class="g3"></i><b>添加名字</b><span>共 104 张</span></div>
+                  <div class="face"><i class="g5"></i><b>添加名字</b><span>共 75 张</span></div>
+                  <div class="face"><i class="g8"></i><b>添加名字</b><span>共 73 张</span></div>
+                  <div class="face"><i class="g10"></i><b>添加名字</b><span>共 64 张</span></div>
+                  <div class="face"><i class="g4"></i><b>添加名字</b><span>共 61 张</span></div>
+                  <div class="face"><i class="g6"></i><b>添加名字</b><span>共 55 张</span></div>
+                  <div class="face"><i class="g7"></i><b>添加名字</b><span>共 55 张</span></div>
+                  <div class="face"><i class="g9"></i><b>添加名字</b><span>共 53 张</span></div>
+                  <div class="face"><i class="g11"></i><b>添加名字</b><span>共 51 张</span></div>
+                  <div class="face"><i class="g12"></i><b>添加名字</b><span>共 50 张</span></div>
+                  <div class="face"><i class="g3"></i><b>添加名字</b><span>共 48 张</span></div>
+                  <div class="face"><i class="g1"></i><b>添加名字</b><span>共 47 张</span></div>
+                  <div class="face"><i class="g5"></i><b>添加名字</b><span>共 47 张</span></div>
+                  <div class="face"><i class="g8"></i><b>添加名字</b><span>共 46 张</span></div>
+                </div>
+              </div>
+            </div>
           </div>
-        </article>
+          <p class="cap">人脸按出现次数聚类展示；<b>头像位置同样以渐变占位</b>，不展示真实人物。</p>
+        </div>
+      </div>
 
-        <article class="b">
-          <span class="tag">影视库</span>
-          <h3>H.264 / HEVC / AV1 · 全屏铺满</h3>
-          <p><strong>多库</strong>：电影 / 电视剧 / 图片 / 混合四类库独立开关，图片库与混合库有专属网格与全屏查看器（自然序、瀑布流、文件夹层级）。<br>
-             <strong>画质</strong>：原画 / 4K / 1440p / 1080p / 720p / 480p 多档，H.264 与 HEVC 各有档位表，默认档位按「端 + 用户」记忆；HLS fMP4 转码失败自动降级回 H.264 并续播。<br>
-             <strong>音轨与字幕</strong>：两遍 loudnorm 响度归一、降混开关、无音轨视频仅转音频；默认字幕语言（简 / 繁 / 英 / 日 / 韩）自动匹配同名外挂，图形字幕转码烧录。<br>
-             <strong>播放</strong>：全屏默认铺满屏幕（四周无黑边），可切「适应」保留完整画面；字幕按真实宽高比避让黑边，始终压在画面上。<br>
-             影片信息卡直接读 ffprobe 显示 4K / HDR10+ / 杜比视界 / 全景声。</p>
-        </article>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr><th>能力</th><th>实现与取舍</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>人脸</td><td><b>EdgeFace</b>：检测 → 512 维特征 → 聚类成「人物」，支持合并 / 拆分 / 命名 / 样本管理；展示层有最小出现次数闸门，具名人物不受限。</td></tr>
+            <tr><td>场景</td><td><b>SigLIP2 base-224 + DETR-R50</b> 多标签，含可判性闸门与重试封顶：永久错误立即弃、暂时错误最多 3 次。</td></tr>
+            <tr><td>活动</td><td>独立的活动维度（游泳 / 跑步 / 大笑 / 合影 / 婚礼 / 聚会…），与场景分开存储，可单独关闭与重置。</td></tr>
+            <tr><td>OCR</td><td><b>PP-OCRv6 small</b>，缺 v6 时自动回退 v5，阈值按版本走；票面、截图、路牌、文档都能读。</td></tr>
+            <tr><td>语义搜索</td><td>CLIP 双塔 + 本地词表最大匹配 + 有序绑定 + 迟到融合；另有多语言第二路召回兜底，不用绝对阈值硬判。</td></tr>
+            <tr><td>向量检索</td><td>向量下沉 SQLite（<code>sqlite-vec</code>），数万张照片的近邻检索从 <b>509ms 降到 106ms</b>。</td></tr>
+          </tbody>
+        </table>
+      </div>
 
-        <article class="b b--accent">
-          <span class="tag">全端</span>
-          <div class="stat">4 类<small>终端覆盖</small></div>
-          <p>Windows 服务端 / 桌面端<br>Android 三端 · TV · 网页端</p>
-        </article>
+      <div class="split" id="photo-memory">
+        <div class="split__text">
+          <span class="eyebrow-sm">回忆与叙事</span>
+          <h3>机器提议，人来确认</h3>
+          <p>「同一天 + 同一片地方 + 一堆照片」会先算成候选记忆，只有你点了确认才算数。卡片上写清楚「地点 · 干了什么 · 张数」，
+             不编故事、不硬凑；不想看的可以忽略，也能把某张照片移出这段记忆（原图不动）。</p>
+          <ul class="bullets">
+            <li><b>人生章节</b>：按年成书，一页 = 一天；左页大图 + 本日精选，右页影像日记 + 地点 + 标签，键盘与鼠标都能翻。</li>
+            <li><b>一日一帧</b>：每天挑一张代表作，配当日标签与地点。</li>
+            <li><b>票夹</b>：识别火车票 / 机票 / 电影票，按行程归组，出差与旅行自动整理成册。</li>
+            <li><b>年度记录与时光对照</b>：按年统计张数、覆盖地点、活跃人物、常用场景；同一地点可跨年份对照。</li>
+          </ul>
+        </div>
+        <div class="split__media">
+          <div class="mock">
+            <div class="mock__bar">
+              <span class="mock__dots"><i></i><i></i><i></i></span>
+              <span class="mock__title">相册 · 记忆</span>
+              <span class="mock__badge">界面示意图</span>
+            </div>
+            <div class="mock__body">
+              <div class="mock__rail"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="mock__side">
+                <div class="hd">回忆</div>
+                <div class="it">首页</div>
+                <div class="it">时间轴</div>
+                <div class="it">我的足迹</div>
+                <div class="grp">回忆</div>
+                <div class="it on">记忆</div>
+                <div class="it">每日一帧</div>
+                <div class="it">票夹</div>
+                <div class="it">年度总结</div>
+                <div class="grp">相册</div>
+                <div class="it">自建相册</div>
+                <div class="it">智能相册</div>
+                <div class="it">照片合集</div>
+              </div>
+              <div class="mock__main">
+                <div class="mock__h1">记忆</div>
+                <div class="mock__sub">把散落的照片，重新连成一段经历</div>
+                <div class="mock__sec">人生章节<s>每年一本书，翻成自己的日记本</s></div>
+                <div class="mock__books">
+                  <div class="g4"><b>2026 年</b><i>1,369 张</i></div>
+                  <div class="g6"><b>2025 年</b><i>886 张</i></div>
+                  <div class="g2"><b>2024 年</b><i>742 张</i></div>
+                  <div class="g3"><b>2022 年</b><i>1,015 张</i></div>
+                </div>
+                <div class="mock__tabs"><b class="on">我的记忆 <i>77</i></b><b>待确认 <i>0</i></b><b>已忽略 <i>5</i></b></div>
+                <div class="mock__grid3">
+                  <div class="mcard">
+                    <div class="ph g2"></div><b>2023 年 06 月 15 日</b><span>37 张 · 沙漠 · 越野 · 酒店</span>
+                    <u><i>打开记忆</i><i>移除</i></u>
+                  </div>
+                  <div class="mcard">
+                    <div class="ph g1"></div><b>2023 年 06 月 16 日</b><span>38 张 · 沙漠 · 越野 · 日落</span>
+                    <u><i>打开记忆</i><i>移除</i></u>
+                  </div>
+                  <div class="mcard">
+                    <div class="ph g3"></div><b>2026 年 02 月 12 日</b><span>30 张 · 徒步 · 瀑布 · 山林</span>
+                    <u><i>打开记忆</i><i>移除</i></u>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="cap">记忆卡片只给「打开 / 移除」两个动作，确认权始终在人手里。</p>
+        </div>
+      </div>
 
-        <article class="b">
-          <span class="tag">音乐与图书</span>
-          <h3>播放器 + 阅读器</h3>
-          <p>歌曲、专辑、歌手、播放列表与收藏，内置全屏播放器（动态歌词、后台播放）；EPUB / MOBI / AZW3 / PDF / TXT 即点即读。</p>
-        </article>
+      <div class="split split--rev" id="photo-map">
+        <div class="split__text">
+          <span class="eyebrow-sm">足迹地图</span>
+          <h3>角标写多少张，点开就是多少张</h3>
+          <p>同一位置的照片会互相压盖，几乎每个相册都有这个毛病。WaterNasOS 用世界像素距离聚成簇，
+             落点取簇内最密那张的真实坐标——聚合后在数学上不可能互相压盖；平移不重算，只在缩放或数据变化时重算。</p>
+          <ul class="bullets">
+            <li><b>点开范围 = 格集合</b>：某簇覆盖的 geohash 格用 <code>WHERE IN</code> 一次取回，角标数字与列表张数严格相等。</li>
+            <li><b>地名取真实最近</b>：按经纬度实际距离取最近地名（30km 闸门），只显示一种语言，有中文就不拼英文。</li>
+            <li><b>精度按需解析</b>：按格子数上限解析式选择精度，不会为了全量加载把内存撑爆。</li>
+            <li><b>可切换地图源</b>：默认内置瓦片，也能换成自己的底图。</li>
+          </ul>
+        </div>
+        <div class="split__media">
+          <div class="mock">
+            <div class="mock__bar">
+              <span class="mock__dots"><i></i><i></i><i></i></span>
+              <span class="mock__title">相册 · 我的足迹</span>
+              <span class="mock__badge">界面示意图</span>
+            </div>
+            <div class="mock__body">
+              <div class="mock__rail"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="mock__side">
+                <div class="hd">时间轴</div>
+                <div class="it">全部照片</div>
+                <div class="it">首页</div>
+                <div class="it">时间轴</div>
+                <div class="it on">我的足迹</div>
+                <div class="it">收藏</div>
+                <div class="it">文件视图</div>
+                <div class="it">回收站</div>
+                <div class="grp">AI</div>
+                <div class="it">人脸识别</div>
+                <div class="it">场景识别</div>
+              </div>
+              <div class="mock__main mock__main--flush">
+                <div class="mock__map"></div>
+                <span class="mock__mapback">‹ 时间轴</span>
+                <span class="mock__maptool">⇱ 切换地图</span>
+                <span class="cluster" style="left:23%;top:25%"><u class="g1"></u>641</span>
+                <span class="cluster" style="left:31%;top:19%"><u class="g2"></u>276</span>
+                <span class="cluster" style="left:44%;top:20%"><u class="g6"></u>320</span>
+                <span class="cluster" style="left:52%;top:33%"><u class="g3"></u>107</span>
+                <span class="cluster" style="left:38%;top:39%"><u class="g4"></u>208</span>
+                <span class="cluster" style="left:57%;top:47%"><u class="g5"></u>1,356</span>
+                <span class="cluster" style="left:47%;top:57%"><u class="g8"></u>135</span>
+                <span class="cluster" style="left:63%;top:62%"><u class="g10"></u>4,791</span>
+                <span class="cluster" style="left:70%;top:41%"><u class="g7"></u>465</span>
+                <span class="cluster" style="left:28%;top:56%"><u class="g9"></u>50</span>
+                <span class="cluster cluster--light" style="left:36%;top:47%"><u class="g11"></u>60</span>
+                <span class="cluster" style="left:80%;top:31%"><u class="g12"></u>46</span>
+                <span class="cluster" style="left:66%;top:24%"><u class="g1"></u>30</span>
+              </div>
+            </div>
+          </div>
+          <p class="cap">聚合簇的角标与点开后的列表张数严格一致——这是足迹地图唯一的验收标准。</p>
+        </div>
+      </div>
 
-        <article class="b b--wide">
-          <span class="tag">文件与分享</span>
-          <h3>把磁盘分享出去</h3>
-          <p>文件浏览、上传下载、加密空间（AES）；通过 WebDAV / FTP / SFTP 等协议把磁盘分享出去，远程挂载网络磁盘，随时查看系统监控与后台任务。</p>
-        </article>
+      <div class="feat-grid" id="photo-clean">
+        <div class="feat">
+          <h4><i>票</i>票夹与行程</h4>
+          <p>OCR 读出火车票、机票、电影票的关键字段，按时间与行程归组；出差回来不用再翻相册找那张报销凭证。</p>
+        </div>
+        <div class="feat">
+          <h4><i>清</i>重复与相似清理</h4>
+          <p>重复按内容 MD5 分组、相似按特征聚类；清理先预演再执行，撤销能回到清理前。只在恰好留一张时合并收藏、相册、场景、活动、人脸与位置。</p>
+        </div>
+        <div class="feat">
+          <h4><i>私</i>按用户隔离</h4>
+          <p>每个账号只看到自己名下的照片，时间线、人脸、地点、相册、收藏、回收站与 AI 搜索统一口径，超管也没有例外；底层索引仍然全局共用，不重复计算。</p>
+        </div>
+        <div class="feat">
+          <h4><i>模</i>模型目录</h4>
+          <p>人脸、OCR、场景、CLIP 四类模型集中查看与切换，能按需下载或替换；AI 队列支持一键暂停 / 恢复。</p>
+        </div>
+        <div class="feat">
+          <h4><i>开</i>只读开放平台</h4>
+          <p><code>/api/mcp</code> 暴露 6 个只读工具（搜索照片、读时间线、看人物与地点等），用独立令牌鉴权，令牌只在轮换时明文出现一次。</p>
+        </div>
+        <div class="feat">
+          <h4><i>备</i>手机相册备份</h4>
+          <p>整机单配置，按「大小 + 内容 MD5」去重，重复文件直接跳过，不在服务端留第二份。</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
-        <article class="b">
-          <span class="tag">多端同步</span>
-          <h3>三向比对 · 三种方向</h3>
-          <p><strong>同一套引擎</strong>：Windows 独立同步端 <code>WaterNasSync.exe</code> 与桌面主客户端共用 <code>nascab_sync_core</code>，行为完全一致。<br>
-             <strong>三向比对</strong>：本地状态 vs 本地 baseline（sync.db）vs 远端，先算差异再决定动作，不做全量重传；同一文件判定为「大小相等且 mtime 差 ≤ 2000ms」，上下行都回写 mtime，避免每轮重复下载。<br>
-             <strong>方向与规则</strong>：双向 / 仅上传 / 仅下载，包含与排除规则、按文件夹建任务；每次运行都写同步记录可查。<br>
-             手机相册自动备份，按「大小 + 内容 MD5」去重。</p>
-        </article>
+  <section class="section" id="movie">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">核心能力 02</span>
+        <h2>影视库：画质、字幕、音轨<br>都替你想过了</h2>
+        <p>建库、刮削、播放、转码是一条完整链路。手机、电视、桌面各播各的，服务端只负责把对的码流送到对的端。</p>
+      </div>
 
-        <article class="b">
-          <span class="tag">进阶与权限</span>
-          <h3>子账号细粒度权限</h3>
-          <p>Transmission BT 下载、Docker 管理、远程终端；子账号应用级白名单 + 路径级细粒度权限。</p>
-        </article>
+      <div class="feat-grid" style="margin-top:0">
+        <div class="feat">
+          <h4><i>库</i>四类库各自独立</h4>
+          <p>电影 / 电视剧 / 图片 / 混合四类库，各自有「在主页显示」开关。图片库与混合库有专属网格与全屏查看器：自然序、瀑布流、文件夹层级、封面缩略图开关，全部按库记忆。</p>
+        </div>
+        <div class="feat">
+          <h4><i>画</i>按编码分档</h4>
+          <p>H.264 与 HEVC 各有各的档位表——同码率下 265 能承载更高分辨率。默认档位按「端 + 用户」分别记忆，手机不迁就电视，电视也不迁就手机。</p>
+        </div>
+        <div class="feat">
+          <h4><i>降</i>失败自动降级</h4>
+          <p>HLS fMP4 转码初始化段写绝对路径；转码失败或编码不兼容时，自动回退 H.264 并从原进度续播，安卓端还允许 FFmpeg 软解兜底。</p>
+        </div>
+        <div class="feat">
+          <h4><i>声</i>响度与音轨</h4>
+          <p>可选两遍 loudnorm 响度归一（按库开关），支持降混；没有音轨的视频走「仅转音频」，画面直接复制不重编码，省 CPU。</p>
+        </div>
+        <div class="feat">
+          <h4><i>字</i>字幕不掉黑边</h4>
+          <p>默认字幕语言（简中 / 繁中 / 英文 / 日语 / 韩语 / 不加载）自动匹配同名外挂；内嵌文本轨客户端渲染，PGS / VobSub 图形字幕转码烧录；字幕按真实宽高比避让，始终压在画面上。</p>
+        </div>
+        <div class="feat">
+          <h4><i>满</i>全屏铺满</h4>
+          <p>默认按屏幕铺满，四周不再留黑边；一键切回「适应」保留完整画面。安卓端改原生 PlayerView 的缩放模式，桌面与网页走 cover。</p>
+        </div>
+      </div>
+
+      <div class="sub-head">
+        <h3>画质档位怎么选</h3>
+        <p>影片信息卡直接读 ffprobe 元数据，4K / HDR10+ / 杜比视界 / 全景声一眼可见</p>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr><th>编码</th><th>可选档位</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>H.264</td><td>原画 / 1080p / 720p / 480p</td><td>兼容性最好，也是所有降级路径的终点；浏览器与老设备都能播。</td></tr>
+            <tr><td>HEVC (H.265)</td><td>原画 / 4K / 1440p / 1080p / 720p / 480p</td><td>同码率承载更高分辨率，设备支持时优先；不支持则自动落到 H.264。</td></tr>
+            <tr><td>原画</td><td>—</td><td>不转码，直接送原始文件；带宽够、设备能解时最省 CPU。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><b>HLS fMP4</b><span>切片转码，边转边播</span></div>
+        <div class="kpi"><b>6 档</b><span>最高 4K 画质</span></div>
+        <div class="kpi"><b>5 种</b><span>默认字幕语言</span></div>
+        <div class="kpi"><b>0 黑边</b><span>默认全屏铺满</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt" id="sync">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">核心能力 03</span>
+        <h2>目录同步：先算差异，再动手</h2>
+        <p>独立同步端 <code style="font-size:14px">WaterNasSync.exe</code> 与桌面主客户端共用 <code style="font-size:14px">nascab_sync_core</code>：
+           同一套引擎、同一套规则、同一份记录，不会出现「两个客户端行为不一致」。</p>
+      </div>
+
+      <div class="flow">
+        <div class="flow__row">
+          <div class="flow__node"><b>本地状态</b><span>当前磁盘上真实的文件与修改时间</span></div>
+          <div class="flow__arrow">→</div>
+          <div class="flow__node"><b>本地 baseline</b><span><code>sync.db</code> 记录的上次同步结果</span></div>
+          <div class="flow__arrow">→</div>
+          <div class="flow__node"><b>远端目录</b><span>服务端当前的目录树与文件信息</span></div>
+        </div>
+        <div class="flow__out">
+          <div class="flow__step"><b>三向比对</b>：三方差异先算清楚，得到「新增 / 覆盖 / 删除 / 跳过」的动作清单。</div>
+          <div class="flow__step"><b>按模式执行</b>：双向 / 仅上传 / 仅下载，规则定了就不越界。</div>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:56px">
+        <div class="split__text">
+          <span class="eyebrow-sm">为什么不做全量重传</span>
+          <h3>「同一个文件」判定得足够稳，才敢跳过</h3>
+          <p>同步最怕两件事：该传的没传、传过的反复传。前者靠三向比对，后者靠同一文件判定——大小相等，且修改时间差不超过 2000ms。
+             并且无论上传还是下载，两端都会把 mtime 回写，所以下一轮不会又认成「新文件」。</p>
+          <ul class="bullets">
+            <li><b>设备识别</b>：Windows 用 <code>MachineGuid</code>、macOS 用 <code>IOPlatformUUID</code>、Linux 用 <code>machine-id</code>，同一台机器只算一个设备。</li>
+            <li><b>任务粒度</b>：按文件夹建任务，支持包含 / 排除规则，缓存目录与临时文件不会跟着乱跑。</li>
+            <li><b>留痕</b>：服务端 <code>/api/sync</code> 命名空间 + 任务表 / 记录表，每次运行都能查到「传了什么、跳过了什么」。</li>
+          </ul>
+        </div>
+        <div class="split__media">
+          <div class="kpis" style="margin-top:0;grid-template-columns:1fr 1fr">
+            <div class="kpi"><b>3 种</b><span>双向 / 仅上传 / 仅下载</span></div>
+            <div class="kpi"><b>2000ms</b><span>同一文件的 mtime 容差</span></div>
+            <div class="kpi"><b>1 套</b><span>引擎两端共用</span></div>
+            <div class="kpi"><b>0 次</b><span>全量重传</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="more">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">其余能力</span>
+        <h2>该有的都有，而且都在本地</h2>
+        <p>三大核心之外，还有二十来个独立应用各自干活：文件、音乐、图书、笔记、加密、备份、下载、终端、监控。</p>
+      </div>
+
+      <div class="feat-grid" style="margin-top:0">
+        <div class="feat">
+          <h4><i>乐</i>音乐与图书</h4>
+          <p>歌曲、专辑、歌手、播放列表、合集与收藏；全屏播放器带动态歌词、唱片动效与后台播放。EPUB / MOBI / AZW3 / PDF / TXT 即点即读。</p>
+        </div>
+        <div class="feat">
+          <h4><i>文</i>文件管理与分享</h4>
+          <p>盘符与目录树浏览、上传下载、收藏与最近访问；通过 WebDAV / FTP / SFTP 把磁盘分享出去，也能把网络磁盘挂载回服务器当本地目录用。</p>
+        </div>
+        <div class="feat">
+          <h4><i>密</i>加密空间</h4>
+          <p>AES 加密保存文件，密码加密后存本机数据库；敏感资料单独放一层，不跟普通目录混在一起。</p>
+        </div>
+        <div class="feat">
+          <h4><i>权</i>子账号细粒度权限</h4>
+          <p>应用级白名单 + 路径级权限：哪个账号能用哪个 App、能看哪个目录，都能单独配；管理类应用默认只对管理员可见。</p>
+        </div>
+        <div class="feat">
+          <h4><i>下</i>下载与容器</h4>
+          <p>Transmission BT 下载管理、Docker 镜像容器管理、远程终端（屏蔽 rm、unlink 等敏感命令），都是一个服务端里的独立 App。</p>
+        </div>
+        <div class="feat">
+          <h4><i>监</i>监控与任务</h4>
+          <p>实时 CPU / 内存 / 磁盘 / 网络；后台任务中心能看到索引、转码、识别队列的进度与失败原因。</p>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><b>553</b><span>个 API 路径（OpenAPI 单一真源）</span></div>
+        <div class="kpi"><b>13</b><span>个语言包同步维护</span></div>
+        <div class="kpi"><b>26 套</b><span>运行时主题配色</span></div>
+        <div class="kpi"><b>全本地</b><span>无公有云依赖</span></div>
       </div>
     </div>
   </section>
@@ -234,29 +703,29 @@
       <div class="section__head">
         <span class="section__eyebrow">全端覆盖</span>
         <h2>同一套服务端，四种终端</h2>
-        <p>手机、电脑、电视与网页端共用同一套服务端与数据，各端专注自己的场景。</p>
+        <p>手机、电脑、电视与网页端共用同一套服务端与数据，各端专注自己的场景；账号、权限、进度全部互通。</p>
       </div>
 
       <div class="tiles">
         <div class="tile">
           <div class="tile__ico">服</div>
           <h3>Windows 服务端</h3>
-          <p>常驻运行的服务核心，提供全部 API、任务队列与存储管理，是整套系统的心脏。</p>
+          <p>常驻运行的服务核心，提供全部 API、任务队列与存储管理，是整套系统的心脏。安装包 1.26 GB，运行时与模型内置。</p>
         </div>
         <div class="tile">
           <div class="tile__ico">桌</div>
           <h3>Windows 桌面端 / 同步端</h3>
-          <p>WaterNasClient 主客户端 + WaterNasSync 独立同步端，一个管全家桶应用，一个专心同步目录。</p>
+          <p><code>WaterNasClient</code> 主客户端管全部应用，<code>WaterNasSync</code> 独立同步端专心同步目录，两者共用一套同步引擎。</p>
         </div>
         <div class="tile">
           <div class="tile__ico">端</div>
           <h3>Android 三端</h3>
-          <p>主端、相册端、音乐端三个 APK 各自独立，图标与启动模式分离，按需安装。</p>
+          <p>主端、相册端、音乐端三个 APK 各自独立，图标与启动模式分离，按需安装；装一个也不影响用另一个。</p>
         </div>
         <div class="tile">
           <div class="tile__ico">视</div>
           <h3>TV 与网页端</h3>
-          <p>Android TV / Apple TV 大屏播放；浏览器直接访问网页端，零安装即可管理。</p>
+          <p>Android TV / Apple TV 大屏播放，遥控器操作；浏览器直接访问网页端，零安装即可管理，内网也能用。</p>
         </div>
       </div>
     </div>
@@ -267,7 +736,7 @@
       <div class="section__head">
         <span class="section__eyebrow">下载</span>
         <h2>WaterNasOS v2.0.0</h2>
-        <p>v2.0.0：智能发现与记忆、人生章节书本、影视全屏铺满、地名单语言。安装包托管在 GitHub Releases，点击包名直达下载页。</p>
+        <p>v2.0.0：智能发现与记忆、人生章节书本、影视全屏铺满、地名单语言。七个包都在 GitHub Releases，点击包名直达下载。</p>
       </div>
 
       <div class="dl-table">
@@ -343,17 +812,59 @@
         安装包统一发布在 GitHub Releases：<a href="https://github.com/colaKot/WaterNasOS/releases" target="_blank" rel="noopener noreferrer">github.com/colaKot/WaterNasOS/releases</a>。
         历史版本、更新日志与校验信息都在该页面。<br>
         国内直连 GitHub 慢时点「加速」：走公共镜像 <code>ghfast.top</code> 中转，文件与校验值和 GitHub 完全一致（同一份字节流）。
-        若某个镜像临时不可用，把下载链接里的 <code>https://github.com/</code> 换成 <code>https://gh-proxy.com/</code> 前缀即可。
+        若某个镜像临时不可用，把下载链接里的 <code>https://github.com/</code> 换成 <code>https://gh-proxy.com/</code> 前缀即可。<br>
+        服务端为 Windows x64 专用；客户端与安卓包按终端分开下载，装哪个用哪个。
       </div>
     </div>
   </section>
 
-  <section class="section section--alt" id="github">
+  <section class="section section--alt" id="apps">
     <div class="wrap">
       <div class="section__head">
-        <span class="section__eyebrow">开源</span>
+        <span class="section__eyebrow">内置应用</span>
+        <h2>22 个独立应用，一个服务端托底</h2>
+        <p>每项功能都是独立 App：有自己的图标、独立页面栈、独立的服务端 API 命名空间，桌面端还能单独开窗。
+           默认列表由服务端下发，用户可在设置里隐藏或重新排序。</p>
+      </div>
+
+      <div class="apps-grid">
+        <div class="app"><span class="app__ico">文</span><div><h4>文件管理</h4><p>浏览、上传下载、分享<br><code>folder</code></p></div></div>
+        <div class="app"><span class="app__ico">相</span><div><h4>照片管理</h4><p>AI 相册<br><code>photo</code></p></div></div>
+        <div class="app"><span class="app__ico">影</span><div><h4>影视库</h4><p>电影 / 剧集 / 图片 / 混合<br><code>movie</code></p></div></div>
+        <div class="app"><span class="app__ico">书</span><div><h4>图书馆</h4><p>EPUB / MOBI / PDF<br><code>book</code></p></div></div>
+        <div class="app"><span class="app__ico">乐</span><div><h4>音乐库</h4><p>歌曲、专辑、播放列表<br><code>music</code></p></div></div>
+        <div class="app"><span class="app__ico">记</span><div><h4>笔记</h4><p>富文本笔记<br><code>note</code></p></div></div>
+        <div class="app"><span class="app__ico">密</span><div><h4>加密空间</h4><p>AES 加密存储<br><code>encrypted</code></p></div></div>
+        <div class="app"><span class="app__ico">媒</span><div><h4>媒体工具</h4><p>批量压缩、格式转换<br><code>media_tool</code></p></div></div>
+        <div class="app"><span class="app__ico">同</span><div><h4>同步管理</h4><p>目录同步任务与记录<br><code>sync</code></p></div></div>
+        <div class="app"><span class="app__ico">终</span><div><h4>终端</h4><p>远程终端，敏感命令拦截<br><code>terminal</code></p></div></div>
+        <div class="app"><span class="app__ico">BT</span><div><h4>Transmission</h4><p>BT 下载管理<br><code>transmission</code></p></div></div>
+        <div class="app"><span class="app__ico">D</span><div><h4>Docker</h4><p>镜像、容器、任务<br><code>docker</code></p></div></div>
+        <div class="app"><span class="app__ico">备</span><div><h4>备份</h4><p>手机相册与文件备份<br><code>backup</code></p></div></div>
+        <div class="app"><span class="app__ico">挂</span><div><h4>远程挂载</h4><p>网络磁盘挂到服务器<br><code>mounts</code></p></div></div>
+        <div class="app"><span class="app__ico">享</span><div><h4>分享管理</h4><p>WebDAV / FTP / SFTP<br><code>share</code></p></div></div>
+        <div class="app"><span class="app__ico">监</span><div><h4>系统监控</h4><p>实时硬件使用<br><code>monitor</code></p></div></div>
+        <div class="app"><span class="app__ico">务</span><div><h4>任务中心</h4><p>后台任务进度<br><code>task_center</code></p></div></div>
+        <div class="app"><span class="app__ico">安</span><div><h4>安全中心</h4><p>登录与安全设置<br><code>security</code></p></div></div>
+        <div class="app"><span class="app__ico">用</span><div><h4>用户管理</h4><p>账号、白名单、路径权限<br><code>user</code></p></div></div>
+        <div class="app"><span class="app__ico">程</span><div><h4>进程</h4><p>进程查看<br><code>process</code></p></div></div>
+        <div class="app"><span class="app__ico">服</span><div><h4>服务</h4><p>服务端状态与账户<br><code>nascab_service</code></p></div></div>
+        <div class="app"><span class="app__ico">设</span><div><h4>配置中心</h4><p>主题 / 语言 / 缓存 / AI<br><code>setting</code></p></div></div>
+      </div>
+
+      <div class="note" style="text-align:center">
+        <code>transmission</code>、<code>terminal</code>、<code>user</code>、<code>mounts</code>、<code>docker</code>、
+        <code>nascab_service</code>、<code>monitor</code>、<code>process</code> 默认只对管理员可见。
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="github">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">开源与许可</span>
         <h2>代码与 issue，都在 GitHub</h2>
-        <p>WaterNasOS 以 GNU GPL v3.0 发布，欢迎 Star、提交 Issue 与 PR。</p>
+        <p>WaterNasOS 以 GNU GPL v3.0 发布，欢迎 Star、提交 Issue 与 PR。源码、构建脚本与文档都在仓库里。</p>
       </div>
 
       <div class="repo-card">
@@ -361,21 +872,72 @@
           <svg viewBox="0 0 16 16" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
           <a href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">colaKot / WaterNasOS</a>
         </div>
-        <p>跨平台 NAS 软件：照片、影音、音乐、图书、文件一套服务端多端共用，支持文件分享、Transmission 下载、Docker 管理、远程终端与多端目录同步。</p>
+        <p>跨平台 NAS 软件：AI 相册、影视库、目录同步三大核心，外加文件、音乐、图书、笔记、备份、下载与终端。
+           服务端 Electron + Express + SQLite，客户端 Flutter，同步核心包两端共用。</p>
         <div class="repo-card__links">
           <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS" target="_blank" rel="noopener noreferrer">仓库主页</a>
           <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/releases" target="_blank" rel="noopener noreferrer">Releases</a>
           <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/issues" target="_blank" rel="noopener noreferrer">Issues</a>
-          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">许可证</a>
+          <a class="btn btn--line" href="https://github.com/colaKot/WaterNasOS/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">许可证全文</a>
         </div>
       </div>
 
       <div class="note">
-        WaterNasOS 基于 <a href="https://github.com/nascab/NasCabOS" target="_blank" rel="noopener noreferrer">NasCabOS</a> 二次开发：
-        上游原始版权归 Beijing Yunpiao Piao Technology Co., Ltd. 所有（© 2025），
-        本仓库新增与修改部分的版权归 colaKot 所有（© 2026），整体以 GPL-3.0 授权发布。
+        <b style="color:var(--ink-2)">GPL-3.0 与上游声明</b>：WaterNasOS 是 <a href="https://github.com/nascab/NasCabOS" target="_blank" rel="noopener noreferrer">NasCabOS</a> 的衍生作品，
+        以 GNU GPL v3.0 分发。上游原始版权归 Beijing Yunpiao Piao Technology Co., Ltd. 所有（© 2025），此声明原样保留、不可移除；
+        本仓库新增与修改部分的版权归 colaKot 所有（© 2026），同样以 GPL-3.0 授权。<br>
+        任何再分发者均须保留上述版权声明与许可证全文；若把本软件（含修改版）对外分发或提供下载，须一并提供对应的完整源代码（GPL-3.0 §3 / §5）。
+        本站提供的是面向用户的介绍，完整源代码以 GitHub 仓库为准。
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt" id="credits">
+    <div class="wrap">
+      <div class="section__head">
+        <span class="section__eyebrow">第三方资源与致谢</span>
+        <h2>站在谁的肩膀上</h2>
+        <p>WaterNasOS 自己写业务与产品，但底座上用了不少优秀的开源项目与模型，一并说明来源与许可。</p>
       </div>
 
+      <div class="credits">
+        <div class="credit">
+          <div class="credit__name">NasCabOS<span>上游项目 · GPL-3.0</span></div>
+          <div class="credit__body">
+            本项目的上游与衍生基础，原始版权归 <b>Beijing Yunpiao Piao Technology Co., Ltd.</b> 所有（© 2025）。
+            我们在此基础上做了大量改造：相册用户隔离、多端目录同步、影视多库与画质分档、主题系统、AI 识别链路等。
+            上游版权声明与 GPL-3.0 许可证全文随仓库一并保留。
+            <a href="https://github.com/nascab/NasCabOS" target="_blank" rel="noopener noreferrer">github.com/nascab/NasCabOS</a>
+          </div>
+        </div>
+
+        <div class="credit">
+          <div class="credit__name">Tabler Icons<span>界面图标 · MIT</span></div>
+          <div class="credit__body">
+            客户端与网页端的界面图标来自 Tabler Icons（© Paweł Kuna，MIT 许可），通过 <code>tabler_icons_plus</code> 引入。
+            本项目未修改图标本身，仅按 MIT 许可在界面中使用。
+          </div>
+        </div>
+
+        <div class="credit">
+          <div class="credit__name">TrailSnap（行影集）<span>产品思路参考</span></div>
+          <div class="credit__body">
+            TrailSnap 是一款独立开发的 AI 相册应用（Vue3 + FastAPI + PostgreSQL/pgvector），
+            定位是「把旅行从拍过变成可留念、可展示、可分享」。我们在做相册域的功能规划时相册域产品化思路参考了它，
+            <b>本项目未包含 TrailSnap 的任何代码、模型或数据产物</b>。
+            <a href="https://github.com/LC044/TrailSnap" target="_blank" rel="noopener noreferrer">github.com/LC044/TrailSnap</a>
+          </div>
+        </div>
+
+        <div class="credit">
+          <div class="credit__name">AI 模型<span>各自许可 · 本地推理</span></div>
+          <div class="credit__body">
+            <b>EdgeFace</b>（人脸）、<b>SigLIP2</b>（场景/语义）、<b>DETR-R50</b>（目标检测）、
+            <b>PP-OCR</b>（文字识别）、<b>CLIP</b>（图文对齐）等模型版权归各自作者所有，
+            本项目仅按各自许可证在本地推理使用，不上传任何图片到外部服务。
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -390,18 +952,19 @@
           <span class="footer-brand__name">WaterNasOS</span>
         </div>
         <p>
-          开源跨平台 NAS 系统，照片、影音、音乐、图书、文件一套服务端多端共用。
-          由广州番禺粤饮越泳软件开发工作室维护。
+          开源跨平台 NAS 系统：AI 相册、影视库、目录同步，照片影音文件一套服务端多端共用。
+          由广州番禺粤饮越泳软件开发工作室维护，以 GPL-3.0 发布。
         </p>
       </div>
       <div>
         <h4>本站导航</h4>
         <ul class="footer-links">
           <li><a href="index.html">首页</a></li>
+          <li><a href="#core">核心功能</a></li>
           <li><a href="#server">Windows NAS</a></li>
-          <li><a href="#features">功能特性</a></li>
+          <li><a href="#apps">内置应用</a></li>
           <li><a href="#download">下载</a></li>
-          <li><a href="#github">GitHub</a></li>
+          <li><a href="#credits">第三方致谢</a></li>
         </ul>
       </div>
       <div>
@@ -421,7 +984,7 @@
         <span class="sep">|</span>
         <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备18009785号</a>
       </div>
-      <div class="copyright">© 2026 colaKot　·　GPL-3.0</div>
+      <div class="copyright">© 2026 colaKot　·　GPL-3.0　·　基于 NasCabOS</div>
     </div>
   </div>
 </footer>

@@ -104,43 +104,6 @@ WaterNasOS 是一套**跑在 Windows 上的自托管 NAS 系统**：手机、电
 - **任务与记录**：服务端 `/api/sync` 命名空间 + 同步任务 / 同步记录两张表，每次运行都留痕可查。
 
 ---
-
-## 内置应用
-
-每项功能都是**独立 App**：有自己的图标、独立页面栈、独立的服务端 API 命名空间，
-PC 端还能从主窗口单独打开。默认应用列表由服务端下发（`electron_server/src/config/config.js` 的 `defaultApps`），
-用户可在设置里隐藏或重新排序。
-
-| 应用 | key | 说明 |
-| --- | --- | --- |
-| 文件管理 | `folder` | 文件浏览、上传下载、分享 |
-| 照片管理 | `photo` | AI 相册（见上） |
-| 影视库 | `movie` | 电影 / 剧集 / 图片 / 混合多库 |
-| 图书馆 | `book` | EPUB / MOBI / AZW3 / PDF / TXT |
-| 音乐库 | `music` | 歌曲、专辑、歌手、播放列表、合集、收藏；全屏播放器（动态歌词、唱片动效、后台播放） |
-| 笔记 | `note` | 富文本笔记 |
-| 加密空间 | `encrypted` | AES 加密保存文件，密码加密后存本机数据库 |
-| 媒体工具 | `media_tool` | 批量压缩图片、视频转换 |
-| 同步管理 | `sync` | 目录同步任务与记录 |
-| 终端 | `terminal` | 远程终端，屏蔽 rm、unlink 等敏感命令 |
-| Transmission | `transmission` | BT 下载管理 |
-| Docker | `docker` | 宿主机镜像、容器、任务管理 |
-| 备份 | `backup` | 手机相册与文件备份 |
-| 远程挂载 | `mounts` | 把网络磁盘挂载到服务器目录 |
-| 分享管理 | `share` | WebDAV / FTP / SFTP 等协议分享磁盘 |
-| 系统监控 | `monitor` | 实时硬件使用情况 |
-| 任务中心 | `task_center` | 后台任务查看 |
-| 安全中心 | `security` | 登录与安全设置 |
-| 用户管理 | `user` | 用户与权限管理（应用级白名单 + 路径级权限） |
-| 进程 | `process` | 进程查看 |
-| 服务 | `nascab_service` | 服务端状态与账户 |
-| 配置中心 | `setting` | 全局设置（主题 / 语言 / 缓存目录 / 播放 / AI） |
-
-> `transmission`、`terminal`、`user`、`mounts`、`docker`、`nascab_service`、`monitor`、`process`
-> 默认对普通用户隐藏，仅管理员可见。
-
----
-
 ## 本版本（v2.0.0）更新
 
 ### 智能发现（新增）
@@ -231,39 +194,6 @@ PC 端还能从主窗口单独打开。默认应用列表由服务端下发（`e
 
 ---
 
-## 关于 TrailSnap（行影集）
-
-[TrailSnap](https://github.com/LC044/TrailSnap) 是一款**独立开发的 AI 相册应用**（Vue3 + FastAPI + PostgreSQL/pgvector），
-定位是「把旅行从拍过变成可留念、可展示、可分享」。我们在做相册域的功能规划时，**把它当作产品化参照系**读了一遍源码，
-下面这些「产品化动作」是我们明确借鉴的。
-
-**说明：本项目未包含 TrailSnap 的任何代码、模型或数据产物**——两边技术栈完全不同（Flutter + Node/Express + SQLite vs Vue + Python），
-我们只借鉴**产品思路与交互结构**，实现全部重写。
-
-### 借鉴了什么
-
-| 借鉴点 | TrailSnap 的做法 | 我们在 WaterNasOS 里的落地 |
-| --- | --- | --- |
-| **写操作可撤销** | `agent_action_plans`：预演(proposed) → 确认 → 执行(executed) → 可撤销(undone)，带 `preview` / `undo_data`、7 天 TTL | `photo_operation_log` + `/operation/{undo,recent}`；重复清理支持 `dry_run` 预演，撤销可回到清理前 |
-| **记忆系统的产品化** | 自动发现候选事件（线索召回 + 证据 + 置信度）→ 用户确认 → 正式记忆，六张子表 | 记忆页三态（我的 / 待确认 / 已忽略）+ 红点提醒；卡片只留「确认 / 忽略」；逐张移出不删原图 |
-| **叙事层** | 人生章节书架 + 日记本翻书 + AI 日文案 | 人生章节书本：一页一天、双页对开、键盘翻页；文案只用真实标签拼接，**不编故事** |
-| **一日一帧 / 年度报告** | 一日一帧影片作品；年度报告 10+ 章节 | 一日一帧 + 年度记录（张数 / 地点 / 人物 / 场景），发现页集中入口 |
-| **票据 / 行程** | YOLO 检框 + OCR + 正则解析，3351 个车站白名单 | 票夹：识别火车票 / 机票 / 电影票并按行程归组 |
-| **开放平台** | MCP Server（Streamable HTTP）+ 独立前缀的 Agent Token + scopes | `/api/mcp` 6 个只读工具 + `wnos_` 令牌 + scope 校验；**只读**是刻意的边界 |
-| **AI 任务的可控性** | 三条优先队列、资源级信号量、按类暂停、空闲回收、指数退避重试 | AI worker 生命周期重做（干净退出也要按需重启）、重试封顶（永久错立即弃）、队列暂停/恢复、串行建会话避免 ONNX 崩溃 |
-| **进度可视化** | `TaskManager` + 独立 worker 子进程 + DB 当队列 + SSE 进度 | 任务中心 + AI 队列状态（待处理 / 已完成 / 失败 / 跳过），`/app_ai/overview` 汇总 |
-| **模型目录** | `model_catalog.json` 声明 13 个模型，可运行时切换 / 删除 / 自动下载 | 模型目录页：人脸 / OCR / 场景 / CLIP 集中查看与切换（本地模型随包或按需下载） |
-| **备份去重口径** | `backup_key` 唯一索引 + `check_content` | 相册备份 `check_content`：size 粗筛 + `content_md5` 惰性计算 |
-
-### 我们**没有**照抄的部分
-
-- **底层 AI 能力**：人脸用 EdgeFace、场景用 SigLIP2 + DETR、OCR 用 PP-OCRv6，都是本地 ONNX 推理 + 我们自己的重试与并发治理；
-  没有引入它的分类闭集、LLM 视觉描述、llama.cpp 本地模型。
-- **Cesium 3D 地图**：我们坚持**聚合口径正确**（角标 == 列表张数）优先，用自研聚合 + 普通地图组件，不引入 3D 渲染栈。
-- **以图搜图之外的「Agent 站内全家桶」**：不做站内 Agent、Skill 市场、需求交付平台——NAS 的边界是数据，不是聊天。
-
----
-
 ## 项目结构
 
 | 项目 | 说明 |
@@ -276,6 +206,44 @@ PC 端还能从主窗口单独打开。默认应用列表由服务端下发（`e
 | `harmony_client` | 鸿蒙端（开发中） |
 | `tv_android` / `tv_apple` | Android TV / Apple TV 端 |
 | `tool` | 开发环境与构建脚本、静态自检脚本 |
+
+---
+
+## 内置应用
+
+每项功能都是**独立 App**：有自己的图标、独立页面栈、独立的服务端 API 命名空间，
+PC 端还能从主窗口单独打开。默认应用列表由服务端下发（`electron_server/src/config/config.js` 的 `defaultApps`），
+用户可在设置里隐藏或重新排序。
+
+| 应用 | key | 说明 |
+| --- | --- | --- |
+| 文件管理 | `folder` | 文件浏览、上传下载、分享 |
+| 照片管理 | `photo` | AI 相册（见上） |
+| 影视库 | `movie` | 电影 / 剧集 / 图片 / 混合多库 |
+| 图书馆 | `book` | EPUB / MOBI / AZW3 / PDF / TXT |
+| 音乐库 | `music` | 歌曲、专辑、歌手、播放列表、合集、收藏；全屏播放器（动态歌词、唱片动效、后台播放） |
+| 笔记 | `note` | 富文本笔记 |
+| 加密空间 | `encrypted` | AES 加密保存文件，密码加密后存本机数据库 |
+| 媒体工具 | `media_tool` | 批量压缩图片、视频转换 |
+| 同步管理 | `sync` | 目录同步任务与记录 |
+| 终端 | `terminal` | 远程终端，屏蔽 rm、unlink 等敏感命令 |
+| Transmission | `transmission` | BT 下载管理 |
+| Docker | `docker` | 宿主机镜像、容器、任务管理 |
+| 备份 | `backup` | 手机相册与文件备份 |
+| 远程挂载 | `mounts` | 把网络磁盘挂载到服务器目录 |
+| 分享管理 | `share` | WebDAV / FTP / SFTP 等协议分享磁盘 |
+| 系统监控 | `monitor` | 实时硬件使用情况 |
+| 任务中心 | `task_center` | 后台任务查看 |
+| 安全中心 | `security` | 登录与安全设置 |
+| 用户管理 | `user` | 用户与权限管理（应用级白名单 + 路径级权限） |
+| 进程 | `process` | 进程查看 |
+| 服务 | `nascab_service` | 服务端状态与账户 |
+| 配置中心 | `setting` | 全局设置（主题 / 语言 / 缓存目录 / 播放 / AI） |
+
+> `transmission`、`terminal`、`user`、`mounts`、`docker`、`nascab_service`、`monitor`、`process`
+> 默认对普通用户隐藏，仅管理员可见。
+
+---
 
 ## 运行方式
 
@@ -319,6 +287,5 @@ flutter run -d windows   # 或 android / ios / macos
 ## 第三方资源与致谢
 
 - [Tabler Icons](https://github.com/tabler/tabler-icons)：界面图标（MIT，© Paweł Kuna），通过 `tabler_icons_plus` 引入。
-- [TrailSnap（行影集）](https://github.com/LC044/TrailSnap)：独立开发的 AI 相册应用。本项目的**相册域产品化思路**参考了它，具体借鉴点见上文「关于 TrailSnap」。
-  > 本项目**未包含** TrailSnap 的任何代码、模型或数据产物。
+- **TrailSnap**（[github.com/LC044/TrailSnap](https://github.com/LC044/TrailSnap)）：TrailSnap 是一款独立开发的 AI 相册应用（Vue3 + FastAPI + PostgreSQL/pgvector），定位是「把旅行从拍过变成可留念、可展示、可分享」。我们在做相册域的功能规划时相册域产品化思路参考了它，本项目未包含 TrailSnap 的任何代码、模型或数据产物。
 - 各 AI 模型（EdgeFace / SigLIP2 / DETR / PP-OCR / CLIP）版权归各自作者所有，本项目仅按各自许可证在本地推理使用。

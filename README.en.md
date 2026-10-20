@@ -92,41 +92,6 @@ with no public cloud in the loop.
 - **Tasks and records**: `/api/sync` namespace plus task and record tables — every run leaves a trace.
 
 ---
-
-## Built-in apps
-
-Every feature is an **independent app**: its own icon, page stack and server API namespace, and on desktop it can be opened as its own window.
-The default app list is served by the backend (`defaultApps` in `electron_server/src/config/config.js`) and can be hidden / reordered per user.
-
-| App | key | Description |
-| --- | --- | --- |
-| Files | `folder` | Browse, upload/download, share |
-| Photos | `photo` | AI photo library (see above) |
-| Media | `movie` | Movie / TV / image / mixed libraries |
-| Books | `book` | EPUB / MOBI / AZW3 / PDF / TXT |
-| Music | `music` | Songs, albums, artists, playlists, collections; fullscreen player with animated lyrics |
-| Notes | `note` | Rich-text notes |
-| Encrypted space | `encrypted` | AES-encrypted storage, password stored encrypted locally |
-| Media tools | `media_tool` | Batch image compression, video conversion |
-| Sync | `sync` | Directory sync tasks and records |
-| Terminal | `terminal` | Remote shell with destructive commands blocked |
-| Transmission | `transmission` | BitTorrent |
-| Docker | `docker` | Images, containers, tasks |
-| Backup | `backup` | Phone photo / file backup |
-| Mounts | `mounts` | Mount network shares into server folders |
-| Sharing | `share` | WebDAV / FTP / SFTP shares |
-| Monitor | `monitor` | Live hardware usage |
-| Task centre | `task_center` | Background tasks |
-| Security | `security` | Sign-in and security |
-| Users | `user` | Users, app-level allow-lists, path-level permissions |
-| Processes | `process` | Process list |
-| Service | `nascab_service` | Server status and account |
-| Settings | `setting` | Theme / language / cache location / playback / AI |
-
-> `transmission`, `terminal`, `user`, `mounts`, `docker`, `nascab_service`, `monitor`, `process` are admin-only by default.
-
----
-
 ## What's new in v2.0.0
 
 ### Smart discovery (new)
@@ -210,37 +175,6 @@ The default app list is served by the backend (`defaultApps` in `electron_server
 
 ---
 
-## About TrailSnap
-
-[TrailSnap (行影集)](https://github.com/LC044/TrailSnap) is an **independently developed AI photo application** (Vue3 + FastAPI + PostgreSQL/pgvector).
-We read its source as a **productisation reference** for the photo domain. These are the ideas we explicitly borrowed.
-
-**No code, model or data artifact from TrailSnap is included in this project.** The stacks are entirely different
-(Flutter + Node/Express + SQLite versus Vue + Python); only product concepts and interaction patterns were borrowed,
-and every implementation here is our own.
-
-| Borrowed idea | How TrailSnap does it | How it landed in WaterNasOS |
-| --- | --- | --- |
-| **Undoable writes** | `agent_action_plans`: proposed → confirmed → executed → undone, with `preview` / `undo_data` and a 7-day TTL | `photo_operation_log` + `/operation/{undo,recent}`; duplicate cleanup supports `dry_run` preview and undo |
-| **Memories as a product** | Candidate events (recall + evidence + confidence) → user confirms → real memory, six child tables | Three memory states (mine / pending / ignored) with a red dot; each card only offers confirm / ignore; removing photos keeps the originals |
-| **Storytelling layer** | Chapter bookshelf + flip-book diary + AI daily copy | Life-chapter book: one page per day, two-page spread, keyboard paging; copy is assembled from real labels only — **no invented stories** |
-| **One frame a day / yearly recap** | One-frame-a-day renders; 10+ chapter yearly report | One frame a day plus a yearly recap (count / places / people / scenes) behind one discovery page |
-| **Tickets and trips** | YOLO detection + OCR + regex parsing, 3351-station allow-list | Ticket wallet: train / flight / cinema tickets grouped into trips |
-| **Open platform** | MCP server (Streamable HTTP), prefixed agent token, scopes | `/api/mcp` with 6 read-only tools, a `wnos_` token and scope checks — **read-only is deliberate** |
-| **Controllable AI work** | Three priority queues, resource semaphores, per-class pause, idle recycling, exponential backoff | AI worker lifecycle rebuilt (restart on clean exit too), bounded retries, queue pause/resume, serial session creation to avoid ONNX crashes |
-| **Progress visibility** | `TaskManager` + worker subprocess + DB-backed queue + SSE progress | Task centre plus AI queue overview (pending / done / failed / skipped) via `/app_ai/overview` |
-| **Model catalogue** | `model_catalog.json` with 13 models, switchable and downloadable at runtime | Model catalogue page for faces / OCR / scenes / CLIP |
-| **Backup dedupe** | `backup_key` unique index + `check_content` | `check_content` on backup: size pre-filter plus lazily computed `content_md5` |
-
-### What we deliberately did **not** copy
-
-- **The underlying AI stack**: EdgeFace, SigLIP2 + DETR and PP-OCRv6 run locally through ONNX with our own retry and concurrency handling;
-  no closed-set classifier, no VLM descriptions, no llama.cpp.
-- **Cesium 3D maps**: correct aggregation (badge == list length) matters more than 3D; we use our own clustering on a normal map widget.
-- **The in-app agent ecosystem** (agent, skills marketplace, requirement delivery platform): a NAS owns data, not conversations.
-
----
-
 ## Repository layout
 
 | Project | Description |
@@ -253,6 +187,42 @@ and every implementation here is our own.
 | `harmony_client` | HarmonyOS client (work in progress) |
 | `tv_android` / `tv_apple` | Android TV / Apple TV |
 | `tool` | Build and static-check scripts |
+
+---
+
+## Built-in apps
+
+Every feature is an **independent app**: its own icon, page stack and server API namespace, and on desktop it can be opened as its own window.
+The default app list is served by the backend (`defaultApps` in `electron_server/src/config/config.js`) and can be hidden / reordered per user.
+
+| App | key | Description |
+| --- | --- | --- |
+| Files | `folder` | Browse, upload/download, share |
+| Photos | `photo` | AI photo library (see above) |
+| Media | `movie` | Movie / TV / image / mixed libraries |
+| Books | `book` | EPUB / MOBI / AZW3 / PDF / TXT |
+| Music | `music` | Songs, albums, artists, playlists, collections; fullscreen player with animated lyrics |
+| Notes | `note` | Rich-text notes |
+| Encrypted space | `encrypted` | AES-encrypted storage, password stored encrypted locally |
+| Media tools | `media_tool` | Batch image compression, video conversion |
+| Sync | `sync` | Directory sync tasks and records |
+| Terminal | `terminal` | Remote shell with destructive commands blocked |
+| Transmission | `transmission` | BitTorrent |
+| Docker | `docker` | Images, containers, tasks |
+| Backup | `backup` | Phone photo / file backup |
+| Mounts | `mounts` | Mount network shares into server folders |
+| Sharing | `share` | WebDAV / FTP / SFTP shares |
+| Monitor | `monitor` | Live hardware usage |
+| Task centre | `task_center` | Background tasks |
+| Security | `security` | Sign-in and security |
+| Users | `user` | Users, app-level allow-lists, path-level permissions |
+| Processes | `process` | Process list |
+| Service | `nascab_service` | Server status and account |
+| Settings | `setting` | Theme / language / cache location / playback / AI |
+
+> `transmission`, `terminal`, `user`, `mounts`, `docker`, `nascab_service`, `monitor`, `process` are admin-only by default.
+
+---
 
 ## Running
 
@@ -296,5 +266,5 @@ This repository is a derivative work of [NasCabOS](https://github.com/nascab/Nas
 ## Third-party credits
 
 - [Tabler Icons](https://github.com/tabler/tabler-icons) — UI icons (MIT, © Paweł Kuna), via `tabler_icons_plus`.
-- [TrailSnap (行影集)](https://github.com/LC044/TrailSnap) — an independently developed AI photo app whose productisation ideas inspired parts of our photo domain (see "About TrailSnap" above). **No TrailSnap code, model or data is included.**
+- **TrailSnap** ([github.com/LC044/TrailSnap](https://github.com/LC044/TrailSnap)) — an independently developed AI photo application (Vue3 + FastAPI + PostgreSQL/pgvector) positioned as "turning travels from merely shot into something worth keeping, showing and sharing." Our product planning for the photo domain referenced its productisation approach; **no TrailSnap code, model or data artifact is included in this project**.
 - AI models (EdgeFace / SigLIP2 / DETR / PP-OCR / CLIP) remain under their own licences and run locally.
